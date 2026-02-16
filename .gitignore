@@ -16,3 +16,6 @@ Thumbs.db
 
 # Claude AI
 .claude/
+
+# Credentials (secrets)
+**/credentials.h
