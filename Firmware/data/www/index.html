@@ -116,8 +116,37 @@
   <section class="schedule collapsible">
     <h2 class="section-header">Schedule <span class="chevron"></span></h2>
     <div class="section-body">
-      <div class="sched-grid" id="sched-grid"></div>
-      <button class="sched-add-btn" id="sched-add" title="Add schedule slot">+ Add</button>
+      <div class="sched-mode-toggle" id="sched-mode-toggle">
+        <button class="sched-mode-btn active" data-mode="0">Custom</button>
+        <button class="sched-mode-btn" data-mode="1">Interval</button>
+      </div>
+
+      <div id="sched-custom-panel">
+        <div class="sched-grid" id="sched-grid"></div>
+        <button class="sched-add-btn" id="sched-add" title="Add schedule slot">+ Add</button>
+      </div>
+
+      <div id="sched-interval-panel" style="display:none">
+        <div class="interval-config">
+          <label>Every
+            <select id="sched-interval-hours">
+              <option value="1">1 hour</option>
+              <option value="2">2 hours</option>
+              <option value="3">3 hours</option>
+              <option value="4">4 hours</option>
+              <option value="6" selected>6 hours</option>
+              <option value="8">8 hours</option>
+              <option value="12">12 hours</option>
+              <option value="24">24 hours</option>
+            </select>
+          </label>
+          <label>Anchor Time
+            <input type="time" id="sched-anchor-time" value="06:00">
+          </label>
+        </div>
+        <div class="interval-preview" id="interval-preview"></div>
+      </div>
+
       <div class="next-meas">Next: <span id="next-meas">--</span></div>
     </div>
   </section>

@@ -33,7 +33,7 @@ private:
   MQTTDisconnectCallback onDisconnectCb = nullptr;
 
   // Track subscriptions for re-subscribing after reconnect
-  static const uint8_t MAX_SUBSCRIPTIONS = 20;
+  static const uint8_t MAX_SUBSCRIPTIONS = 24;
   const char* subscriptions[MAX_SUBSCRIPTIONS];
   uint8_t subscriptionCount = 0;
 

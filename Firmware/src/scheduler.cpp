@@ -9,6 +9,39 @@ void Scheduler::begin() {
   lastMeasurementTime = millis();
 }
 
+uint8_t Scheduler::computeIntervalSlots(uint16_t* outSlots, uint8_t maxSlots) {
+  uint8_t interval = configStore.getIntervalHours();
+  uint16_t anchor = configStore.getAnchorTime();
+  if (interval == 0) interval = 6;
+
+  uint16_t intervalMins = (uint16_t)interval * 60;
+  uint16_t first = anchor % intervalMins;
+
+  uint8_t count = 0;
+  for (uint16_t t = first; t < 1440 && count < maxSlots; t += intervalMins) {
+    outSlots[count++] = t;
+  }
+  return count;
+}
+
+uint8_t Scheduler::buildEffectiveSlots(uint16_t* slots, uint8_t maxSlots) {
+  if (configStore.getScheduleMode() == 1) {
+    return computeIntervalSlots(slots, maxSlots);
+  }
+  // Custom mode
+  uint8_t count = configStore.getScheduleCount();
+  if (count > 8) count = 8;
+  if (count > maxSlots) count = maxSlots;
+  for (uint8_t i = 0; i < count; i++) {
+    slots[i] = configStore.getScheduleTime(i);
+  }
+  return count;
+}
+
+void Scheduler::resetDailyFlags() {
+  memset(alreadyRanToday, 0, sizeof(alreadyRanToday));
+}
+
 void Scheduler::loop() {
   if (!callback) return;
 
@@ -39,13 +72,14 @@ void Scheduler::loop() {
       lastDay = currentDay;
     }
 
-    uint8_t count = configStore.getScheduleCount();
-    for (uint8_t i = 0; i < count && i < 8; i++) {
-      uint16_t schedTime = configStore.getScheduleTime(i);
+    uint16_t slots[24];
+    uint8_t count = buildEffectiveSlots(slots, 24);
+
+    for (uint8_t i = 0; i < count; i++) {
       // Within a 2-minute window of schedule time, and not yet run today
       if (!alreadyRanToday[i] &&
-          currentMinutes >= schedTime &&
-          currentMinutes < schedTime + 2) {
+          currentMinutes >= slots[i] &&
+          currentMinutes < slots[i] + 2) {
         alreadyRanToday[i] = true;
         Serial.printf("Scheduled measurement %d triggered at %02d:%02d\n",
                        i, timeinfo.tm_hour, timeinfo.tm_min);
@@ -78,23 +112,23 @@ String Scheduler::getNextMeasurementTime() {
   if (!getLocalTime(&timeinfo)) return "unknown";
 
   uint16_t currentMinutes = timeinfo.tm_hour * 60 + timeinfo.tm_min;
-  uint8_t count = configStore.getScheduleCount();
+
+  uint16_t slots[24];
+  uint8_t count = buildEffectiveSlots(slots, 24);
   uint16_t nextTime = 0xFFFF;
 
   // Find next schedule time today (skip already-ran slots)
-  for (uint8_t i = 0; i < count && i < 8; i++) {
-    uint16_t schedTime = configStore.getScheduleTime(i);
-    if (!alreadyRanToday[i] && schedTime > currentMinutes && schedTime < nextTime) {
-      nextTime = schedTime;
+  for (uint8_t i = 0; i < count; i++) {
+    if (!alreadyRanToday[i] && slots[i] > currentMinutes && slots[i] < nextTime) {
+      nextTime = slots[i];
     }
   }
 
   // If none found today, get the earliest tomorrow
   if (nextTime == 0xFFFF) {
-    for (uint8_t i = 0; i < count && i < 8; i++) {
-      uint16_t schedTime = configStore.getScheduleTime(i);
-      if (schedTime < nextTime) {
-        nextTime = schedTime;
+    for (uint8_t i = 0; i < count; i++) {
+      if (slots[i] < nextTime) {
+        nextTime = slots[i];
       }
     }
   }

@@ -159,6 +159,20 @@ static void handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
 
       broadcastState(); // Confirm the update
     } else if (strcmp(type, "schedule") == 0) {
+      // Schedule mode (0=custom, 1=interval)
+      if (doc.containsKey("mode")) {
+        configStore.setScheduleMode(doc["mode"].as<uint8_t>());
+        scheduler.resetDailyFlags();
+      }
+      if (doc.containsKey("intervalHours")) {
+        configStore.setIntervalHours(doc["intervalHours"].as<uint8_t>());
+        scheduler.resetDailyFlags();
+      }
+      if (doc.containsKey("anchorTime")) {
+        configStore.setAnchorTime(doc["anchorTime"].as<uint16_t>());
+        scheduler.resetDailyFlags();
+      }
+      // Custom mode slots
       JsonArray slots = doc["slots"];
       if (slots) {
         uint8_t count = min((size_t)slots.size(), (size_t)8);
@@ -292,7 +306,7 @@ void broadcastTitrationStart() {
 void broadcastState() {
   if (ws.count() == 0) return;
 
-  StaticJsonDocument<768> doc;
+  StaticJsonDocument<1024> doc;
   doc["type"] = "state";
   doc["ph"] = pH;
   doc["startPh"] = startPH;
@@ -318,13 +332,17 @@ void broadcastState() {
   cfg["fast_ph"] = configStore.getFastTitrationPH();
 
   // Schedule
+  doc["schedMode"] = configStore.getScheduleMode();
+  doc["intervalHours"] = configStore.getIntervalHours();
+  doc["anchorTime"] = configStore.getAnchorTime();
+
   JsonArray sched = doc.createNestedArray("schedule");
   uint8_t count = configStore.getScheduleCount();
   for (uint8_t i = 0; i < count; i++) {
     sched.add(configStore.getScheduleTime(i));
   }
 
-  char buf[768];
+  char buf[1024];
   serializeJson(doc, buf, sizeof(buf));
   ws.textAll(buf);
 }

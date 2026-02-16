@@ -153,6 +153,23 @@
 
     // Schedule
     if (d.schedule) updateScheduleInputs(d.schedule);
+
+    // Schedule mode
+    if (d.schedMode !== undefined) {
+      currentSchedMode = d.schedMode;
+      setSchedModeUI(currentSchedMode);
+    }
+    if (d.intervalHours !== undefined) {
+      currentIntervalHours = d.intervalHours;
+      var sel = document.getElementById('sched-interval-hours');
+      if (sel && document.activeElement !== sel) sel.value = d.intervalHours;
+    }
+    if (d.anchorTime !== undefined) {
+      currentAnchorTime = d.anchorTime;
+      var anchInp = document.getElementById('sched-anchor-time');
+      if (anchInp && document.activeElement !== anchInp) anchInp.value = minsToTime(d.anchorTime);
+    }
+    updateIntervalPreview();
   }
 
   function updateLivePH(d) {
@@ -268,6 +285,9 @@
 
   // --- Schedule (dynamic add/remove) ---
   var currentSlots = [];
+  var currentSchedMode = 0; // 0=custom, 1=interval
+  var currentIntervalHours = 6;
+  var currentAnchorTime = 360; // minutes from midnight
   var schedLocalUntil = 0; // suppress server updates briefly after local changes
 
   function renderScheduleInputs() {
@@ -343,12 +363,73 @@
 
   function sendSchedule() {
     schedLocalUntil = Date.now() + 3000;
-    send({ type: 'schedule', slots: currentSlots });
+    send({ type: 'schedule', mode: currentSchedMode, slots: currentSlots });
+  }
+
+  function sendScheduleMode() {
+    schedLocalUntil = Date.now() + 3000;
+    send({
+      type: 'schedule',
+      mode: currentSchedMode,
+      intervalHours: currentIntervalHours,
+      anchorTime: currentAnchorTime,
+      slots: currentSlots
+    });
+  }
+
+  function setSchedModeUI(mode) {
+    var btns = document.querySelectorAll('.sched-mode-btn');
+    btns.forEach(function(b) {
+      b.classList.toggle('active', parseInt(b.dataset.mode) === mode);
+    });
+    var customPanel = document.getElementById('sched-custom-panel');
+    var intervalPanel = document.getElementById('sched-interval-panel');
+    if (customPanel) customPanel.style.display = (mode === 0) ? '' : 'none';
+    if (intervalPanel) intervalPanel.style.display = (mode === 1) ? '' : 'none';
+  }
+
+  function updateIntervalPreview() {
+    var el = document.getElementById('interval-preview');
+    if (!el) return;
+    if (currentSchedMode !== 1) { el.textContent = ''; return; }
+    var intervalMins = currentIntervalHours * 60;
+    var first = currentAnchorTime % intervalMins;
+    var times = [];
+    for (var t = first; t < 1440; t += intervalMins) {
+      times.push(minsToTime(t));
+    }
+    el.textContent = 'Measurements at: ' + times.join(', ');
   }
 
   function initSchedule() {
     var addBtn = document.getElementById('sched-add');
     if (addBtn) addBtn.addEventListener('click', onSchedAdd);
+
+    // Mode toggle
+    document.querySelectorAll('.sched-mode-btn').forEach(function(btn) {
+      btn.addEventListener('click', function() {
+        currentSchedMode = parseInt(btn.dataset.mode);
+        setSchedModeUI(currentSchedMode);
+        updateIntervalPreview();
+        sendScheduleMode();
+      });
+    });
+
+    // Interval hours
+    var intSel = document.getElementById('sched-interval-hours');
+    if (intSel) intSel.addEventListener('change', function() {
+      currentIntervalHours = parseInt(intSel.value);
+      updateIntervalPreview();
+      sendScheduleMode();
+    });
+
+    // Anchor time
+    var anchInp = document.getElementById('sched-anchor-time');
+    if (anchInp) anchInp.addEventListener('change', function() {
+      currentAnchorTime = timeToMins(anchInp.value);
+      updateIntervalPreview();
+      sendScheduleMode();
+    });
   }
 
   // --- Helpers ---

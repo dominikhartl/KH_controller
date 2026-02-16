@@ -43,6 +43,16 @@ public:
   void setScheduleCount(uint8_t count);
   void setScheduleTime(uint8_t index, uint16_t minutesFromMidnight);
 
+  // Schedule mode (0=custom, 1=interval)
+  uint8_t getScheduleMode();
+  void setScheduleMode(uint8_t mode);
+
+  // Interval mode parameters
+  uint8_t getIntervalHours();        // one of {1,2,3,4,6,8,12,24}
+  void setIntervalHours(uint8_t h);
+  uint16_t getAnchorTime();          // minutes from midnight
+  void setAnchorTime(uint16_t mins);
+
 private:
   Preferences prefs;
   void migrateFromEEPROM();

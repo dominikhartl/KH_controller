@@ -155,6 +155,49 @@ h2{font-size:.8em;font-weight:600;color:var(--text-secondary);text-transform:upp
 .sched-add-btn:active{color:var(--accent);border-color:var(--accent)}
 .next-meas{font-size:.8em;color:var(--text-secondary);margin-top:10px;text-align:center}
 
+/* Schedule mode toggle */
+.sched-mode-toggle{
+  display:flex;gap:4px;padding:3px;
+  background:var(--card-elevated);border-radius:var(--radius-sm);
+  margin-bottom:12px;
+}
+.sched-mode-btn{
+  flex:1;background:transparent;border:none;
+  color:var(--text-secondary);padding:7px 12px;border-radius:6px;
+  cursor:pointer;font-size:.8em;font-weight:500;
+  transition:all .2s ease;
+  -webkit-tap-highlight-color:transparent;
+}
+.sched-mode-btn.active{
+  background:var(--card);color:var(--text-primary);
+  box-shadow:0 1px 4px rgba(0,0,0,.3);
+}
+
+/* Interval config */
+.interval-config{
+  display:grid;grid-template-columns:1fr 1fr;gap:12px;
+}
+.interval-config label{
+  display:flex;flex-direction:column;
+  font-size:.7em;font-weight:500;color:var(--text-secondary);
+  gap:5px;text-transform:uppercase;letter-spacing:.03em;
+}
+.interval-config select,
+.interval-config input[type=time]{
+  background:var(--card-elevated);border:1px solid var(--separator);
+  color:var(--text-primary);padding:10px;border-radius:var(--radius-sm);
+  font-size:1em;outline:none;
+  transition:border-color .2s,box-shadow .2s;
+}
+.interval-config select:focus,
+.interval-config input[type=time]:focus{
+  border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-dim);
+}
+.interval-preview{
+  font-size:.8em;color:var(--text-secondary);margin-top:10px;
+  text-align:center;
+}
+
 /* === Progress bar === */
 .progress-section{
   background:var(--card);border-radius:var(--radius);

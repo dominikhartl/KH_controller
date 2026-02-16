@@ -1,5 +1,6 @@
 #include "ha_discovery.h"
 #include "config_store.h"
+#include "scheduler.h"
 #include "wifi_manager.h"
 #include "web_server.h"
 #include <config.h>
@@ -14,6 +15,9 @@ char topicCfgHclVol[60];
 char topicCfgCalDrops[60];
 char topicCfgFastPH[60];
 char topicCfgSched[8][60];
+char topicCfgSchedMode[60];
+char topicCfgIntervalHours[60];
+char topicCfgAnchorTime[60];
 char topicDiagnostics[60];
 
 // Set command topics
@@ -25,6 +29,9 @@ static char topicCfgHclVolSet[60];
 static char topicCfgCalDropsSet[60];
 static char topicCfgFastPHSet[60];
 static char topicCfgSchedSet[8][60];
+static char topicCfgSchedModeSet[60];
+static char topicCfgIntervalHoursSet[60];
+static char topicCfgAnchorTimeSet[60];
 
 static const char* availability_topic = nullptr;
 static char availTopic[60];
@@ -53,6 +60,13 @@ static void initTopics() {
     snprintf(topicCfgSched[i], sizeof(topicCfgSched[i]), "%s/config/sched_%d", DEVICE_NAME, i);
     snprintf(topicCfgSchedSet[i], sizeof(topicCfgSchedSet[i]), "%s/config/sched_%d/set", DEVICE_NAME, i);
   }
+
+  snprintf(topicCfgSchedMode, sizeof(topicCfgSchedMode), "%s/config/sched_mode", DEVICE_NAME);
+  snprintf(topicCfgSchedModeSet, sizeof(topicCfgSchedModeSet), "%s/config/sched_mode/set", DEVICE_NAME);
+  snprintf(topicCfgIntervalHours, sizeof(topicCfgIntervalHours), "%s/config/interval_hours", DEVICE_NAME);
+  snprintf(topicCfgIntervalHoursSet, sizeof(topicCfgIntervalHoursSet), "%s/config/interval_hours/set", DEVICE_NAME);
+  snprintf(topicCfgAnchorTime, sizeof(topicCfgAnchorTime), "%s/config/anchor_time", DEVICE_NAME);
+  snprintf(topicCfgAnchorTimeSet, sizeof(topicCfgAnchorTimeSet), "%s/config/anchor_time/set", DEVICE_NAME);
 }
 
 // Helper: convert minutes from midnight to "HH:MM" string
@@ -146,6 +160,26 @@ static void publishButtonDiscovery(const char* id, const char* name,
 
   char discTopic[128];
   snprintf(discTopic, sizeof(discTopic), "homeassistant/button/khcontrollerv3/%s/config", id);
+  publishDiscoveryPayload(discTopic, doc);
+}
+
+static void publishSelectDiscovery(const char* id, const char* name,
+                                    const char* statTopic, const char* cmdTopic,
+                                    const char** options, uint8_t optCount) {
+  StaticJsonDocument<768> doc;
+  doc["name"] = name;
+  doc["stat_t"] = statTopic;
+  doc["cmd_t"] = cmdTopic;
+  doc["uniq_id"] = id;
+  doc["avty_t"] = availability_topic;
+  doc["ent_cat"] = "config";
+  JsonArray opts = doc.createNestedArray("options");
+  for (uint8_t i = 0; i < optCount; i++) opts.add(options[i]);
+  JsonObject root = doc.as<JsonObject>();
+  addDeviceBlock(root);
+
+  char discTopic[128];
+  snprintf(discTopic, sizeof(discTopic), "homeassistant/select/khcontrollerv3/%s/config", id);
   publishDiscoveryPayload(discTopic, doc);
 }
 
@@ -255,6 +289,38 @@ void publishAllDiscovery() {
     publishDiscoveryPayload(discTopic, doc);
   }
 
+  // Schedule mode select
+  {
+    const char* modeOpts[] = {"custom", "interval"};
+    publishSelectDiscovery("khv3_sched_mode", "Schedule Mode",
+                            topicCfgSchedMode, topicCfgSchedModeSet,
+                            modeOpts, 2);
+  }
+
+  // Interval hours select
+  {
+    const char* intOpts[] = {"1", "2", "3", "4", "6", "8", "12", "24"};
+    publishSelectDiscovery("khv3_interval_hours", "Interval Hours",
+                            topicCfgIntervalHours, topicCfgIntervalHoursSet,
+                            intOpts, 8);
+  }
+
+  // Anchor time text input
+  {
+    StaticJsonDocument<768> doc;
+    doc["name"] = "Anchor Time";
+    doc["stat_t"] = topicCfgAnchorTime;
+    doc["cmd_t"] = topicCfgAnchorTimeSet;
+    doc["uniq_id"] = "khv3_anchor_time";
+    doc["avty_t"] = availability_topic;
+    doc["pattern"] = "^([01]?[0-9]|2[0-3]):[0-5][0-9]$";
+    doc["ent_cat"] = "config";
+    JsonObject root = doc.as<JsonObject>();
+    addDeviceBlock(root);
+    publishDiscoveryPayload(
+      "homeassistant/text/khcontrollerv3/khv3_anchor_time/config", doc);
+  }
+
   // Buttons
   publishButtonDiscovery("khv3_btn_kh", "Measure KH", cmdTopic, "k", nullptr);
   publishButtonDiscovery("khv3_btn_ph", "Measure pH", cmdTopic, "p", nullptr);
@@ -280,6 +346,9 @@ void publishAllDiscovery() {
   for (int i = 0; i < 8; i++) {
     mqttManager.subscribe(topicCfgSchedSet[i]);
   }
+  mqttManager.subscribe(topicCfgSchedModeSet);
+  mqttManager.subscribe(topicCfgIntervalHoursSet);
+  mqttManager.subscribe(topicCfgAnchorTimeSet);
 }
 
 void publishAllConfigStates() {
@@ -295,6 +364,17 @@ void publishAllConfigStates() {
     char timeBuf[6];
     minsToTimeStr(configStore.getScheduleTime(i), timeBuf, sizeof(timeBuf));
     mqttManager.publish(topicCfgSched[i], timeBuf, true);
+  }
+
+  // Schedule mode
+  mqttManager.publish(topicCfgSchedMode,
+                      (configStore.getScheduleMode() == 1) ? "interval" : "custom", true);
+  mqttManager.publish(topicCfgIntervalHours,
+                      String(configStore.getIntervalHours()).c_str(), true);
+  {
+    char timeBuf[6];
+    minsToTimeStr(configStore.getAnchorTime(), timeBuf, sizeof(timeBuf));
+    mqttManager.publish(topicCfgAnchorTime, timeBuf, true);
   }
 }
 
@@ -333,6 +413,23 @@ void handleConfigSet(const char* topic, const char* payload) {
   } else if (strcmp(topic, topicCfgFastPHSet) == 0) {
     configStore.setFastTitrationPH(val);
     mqttManager.publish(topicCfgFastPH, String(val, 1).c_str(), true);
+  } else if (strcmp(topic, topicCfgSchedModeSet) == 0) {
+    uint8_t mode = (strcmp(payload, "interval") == 0) ? 1 : 0;
+    configStore.setScheduleMode(mode);
+    scheduler.resetDailyFlags();
+    mqttManager.publish(topicCfgSchedMode, (mode == 1) ? "interval" : "custom", true);
+  } else if (strcmp(topic, topicCfgIntervalHoursSet) == 0) {
+    uint8_t h = (uint8_t)atoi(payload);
+    configStore.setIntervalHours(h);
+    scheduler.resetDailyFlags();
+    mqttManager.publish(topicCfgIntervalHours, String(configStore.getIntervalHours()).c_str(), true);
+  } else if (strcmp(topic, topicCfgAnchorTimeSet) == 0) {
+    uint16_t mins = timeStrToMins(payload);
+    configStore.setAnchorTime(mins);
+    scheduler.resetDailyFlags();
+    char timeBuf[6];
+    minsToTimeStr(mins, timeBuf, sizeof(timeBuf));
+    mqttManager.publish(topicCfgAnchorTime, timeBuf, true);
   } else {
     // Check schedule topics (payload is "HH:MM" string)
     for (int i = 0; i < 8; i++) {

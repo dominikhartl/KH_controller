@@ -86,3 +86,26 @@ void ConfigStore::setScheduleTime(uint8_t index, uint16_t minutesFromMidnight) {
   snprintf(key, sizeof(key), "sched_%d", index);
   prefs.putUShort(key, minutesFromMidnight);
 }
+
+// Schedule mode
+uint8_t ConfigStore::getScheduleMode() { return prefs.getUChar("sched_mode", 0); }
+void ConfigStore::setScheduleMode(uint8_t mode) {
+  if (mode > 1) mode = 0;
+  prefs.putUChar("sched_mode", mode);
+}
+
+// Interval mode parameters
+uint8_t ConfigStore::getIntervalHours() { return prefs.getUChar("sched_intv", 6); }
+void ConfigStore::setIntervalHours(uint8_t h) {
+  const uint8_t valid[] = {1, 2, 3, 4, 6, 8, 12, 24};
+  bool ok = false;
+  for (int i = 0; i < 8; i++) { if (h == valid[i]) { ok = true; break; } }
+  if (!ok) h = 6;
+  prefs.putUChar("sched_intv", h);
+}
+
+uint16_t ConfigStore::getAnchorTime() { return prefs.getUShort("sched_anch", 360); }
+void ConfigStore::setAnchorTime(uint16_t mins) {
+  if (mins > 1439) mins = 1439;
+  prefs.putUShort("sched_anch", mins);
+}
