@@ -1,128 +1,113 @@
-# KHcontroller_V3
+# KH Controller
 
-![](3dPrints/KHcontroller.jpeg)
+![KH Controller](docs/images/KHcontroller.jpeg)
 
-## Introduction
-This is my version of a DIY KH measurement device for my reef tank. It is built from standard, easy to acquire parts and proved for me to be very robust and accurate using it the last years. I did this project initially without thinking about shaing, so the software side is not plug and play. I am happy if somebody wants to contriubute to make it easier also for people who do not have much experience with software development.
+An ESP32-based automated carbonate hardness (KH) and pH measurement device for reef and freshwater aquariums. It performs acid-base titration to measure alkalinity with high accuracy and integrates seamlessly with Home Assistant.
 
-The device is controlled by an ESP32 module and a custom-designed PCB that connects the ESP32, the pH meter, stepper motors, and stirrer and all the peripherals. The principle is simple: HCl is titrated into the water sample, and the volume needed to reach a pH of 4.5 is used as the basis for calculating alkalinity. When I built the first prototype, I made an explanatory video (in English):
-https://youtu.be/9Bjq2lXnfBI?si=s0VGVHdJ8H3_aLlS
+When I built the first prototype, I made an explanatory video (in English):
+[YouTube: KH Controller explained](https://youtu.be/9Bjq2lXnfBI?si=s0VGVHdJ8H3_aLlS)
 
-To achieve higher accuracy and reliability, I use 0.02 molar HCl, commercial devices usually use higher molarity. Why exactly 0.02? - Because that's 10 ml of 37% HCl in 5 L of reverse osmosis water, and it's easy to prepare.
+## How It Works
 
-In my case, the device is controlled and the data visualized on a Raspberry Pi Node-RED dashboard, but you can build your own solution. The data is transmitted via MQTT.
+The device takes a water sample from the aquarium and titrates it with dilute hydrochloric acid (HCl). The volume of acid needed to lower the pH to 4.3 determines the carbonate hardness. The firmware uses a two-phase titration approach:
 
-Why is this device so accurate/reliable? Things I've tested over time that make a big difference in accuracy:
-- Low acid concentration: the lower the concentration, the smaller the effect of errors during titration (e.g., air bubbles).
-- Titration with "pressure" to titrate small volumes, enabling titration of volumes smaller than a drop.
-- Firmware optimization of the titration process (more measurement points and longer stirring as you get closer to 4.5).
-These points ensure that even a cheap pH probe is sufficient to get accurate results.
+1. **Fast phase** - Dispenses acid in 200-drop batches until approaching the endpoint pH
+2. **Precise phase** - Adaptive 2-4 drop steps with high-precision pH measurement and endpoint interpolation
 
-## BOM
+### Why Is It Accurate?
 
-- 1x Wemos D1 mini ESP32
-- 1x DF-Robot pH-Meter V2
-- 2x Nema 17 stepper motor  42Ncm 1,5A 42x42x38mm
-- JST-XH 2-, 3- and 4-pin
-- 1x LM2596S, set to 5V output
-- 2x TMC2208 drivers
-- 1x TIP120
-- 1x 2,2 K resistor
-- 2x 100uF capacitor
-- 1x 4,7 uF capacitor
-- 2x Nema 17 perestaltic pumps
-- 1x 100 ml Beaker
-- Silicone tube 2/4 or 4/6
-- 1x 60mm PC cooling fan
-- 1x magnetic stirrer ca 1cm length
-- 2x flat magnets, ca. 1 cm length, 2mm height
-- 1x 12V Powersupply > 2A
-- 0.02M HCl
+- **Low acid concentration** (0.02 mol/L HCl): Errors from air bubbles or small dosing variations have minimal impact
+- **Pressure titration**: Peristaltic pumps can dispense sub-drop volumes for fine control
+- **Adaptive measurement**: More readings and longer mixing time near the endpoint
+- **Outlier rejection**: Median-filtered pH readings with automatic outlier removal
+- **3-point pH calibration**: Linear least-squares fit across pH 4, 7, and 10 buffer solutions
 
+## Features
 
-## PCB Layout
+- Automated KH measurement via acid-base titration
+- Real-time pH monitoring with 3-point calibration
+- **Home Assistant integration** via MQTT auto-discovery
+- **Web dashboard** with live titration charts, gauges, and configuration
+- Scheduled measurements (up to 8 daily time slots, NTP-synced)
+- HCl consumption tracking with low-level warnings
+- Over-the-air (OTA) firmware updates
+- Persistent configuration stored in NVS (flash)
 
-The PCB is designed as follows:
-![](PCB/Layout.png)
+## Hardware
 
+### Bill of Materials
 
-You can use the gerber file shared here to order your own PCB. I indicated on the PCB which components to solder where.
-There are quite some unused interfaces to allow for extension of the functionality with e.g. temperature sensors or dosing pumps. The required interfaces are labelled (except for the encoder one, this one is not necessary for function)
+| Component | Quantity | Notes |
+|-----------|----------|-------|
+| Wemos D1 Mini ESP32 | 1 | Main controller |
+| DF-Robot pH Meter V2 | 1 | Analog pH probe |
+| NEMA 17 stepper motor (42Ncm, 1.5A) | 2 | For peristaltic pumps |
+| TMC2208 stepper driver | 2 | Silent stepper drivers |
+| NEMA 17 peristaltic pump | 2 | Sample and titration pumps |
+| LM2596S buck converter | 1 | Set to 5V output |
+| TIP120 transistor | 1 | Stirrer motor driver |
+| 2.2k resistor | 1 | TIP120 base resistor |
+| 100uF capacitor | 2 | Power filtering |
+| 4.7uF capacitor | 1 | Power filtering |
+| 60mm PC cooling fan | 1 | Used as magnetic stirrer motor |
+| Magnetic stirrer bar (~1cm) | 1 | Placed in beaker |
+| Flat magnets (~1cm, 2mm height) | 2 | Attached to fan |
+| 100 mL beaker | 1 | Measurement chamber |
+| Silicone tubing (2/4 or 4/6mm) | - | For peristaltic pumps |
+| 12V power supply (>2A) | 1 | Main power |
+| JST-XH connectors (2/3/4-pin) | - | PCB connections |
+| 0.02M HCl solution | - | See preparation below |
+
+### Preparing 0.02M HCl
+
+Mix 10 mL of 37% hydrochloric acid into 5 L of reverse osmosis water (**always add acid to water, never the reverse**). This gives a good balance between accuracy and practical handling volumes.
+
+### PCB Layout
+
+![PCB Layout](docs/images/pcb_layout.png)
+
+The PCB connects the ESP32, pH meter, stepper drivers, stirrer, and all peripherals. Component positions are labeled on the board. Gerber files for manufacturing are in the `PCB/` directory.
+
+### Pin Configuration
+
+| Function | GPIO | Notes |
+|----------|------|-------|
+| Sample pump ENABLE | 25 | Stepper motor 1 |
+| Sample pump DIR | 32 | Stepper motor 1 |
+| Sample pump STEP | 2 | Stepper motor 1 |
+| Titration pump ENABLE | 22 | Stepper motor 2 |
+| Titration pump DIR | 27 | Stepper motor 2 |
+| Titration pump STEP | 4 | Stepper motor 2 |
+| Stirrer motor | 16 | PWM via TIP120 |
+| pH sensor (ADC) | 35 | Analog input |
+
+### 3D Printed Parts
+
+The enclosure consists of three 3D-printed parts (STL files in `3dPrints/`):
+
+- **Corpus.stl** - Main enclosure body
+- **ControllerLid.stl** - Controller compartment lid
+- **StirrLid.stl** - Stirrer compartment lid
 
 ## Firmware
 
-You can upload the firmware using the PlatformIO extension in Visual Studio Code. OTA firmware updates are enabled.
-Make sure to add your WIFI SSID, password and the mqtt broker IP in the main.cpp src/main.cpp file.
+The firmware is a PlatformIO project in the `Firmware/` directory. See the [Firmware documentation](Firmware/README.md) for build instructions, configuration, web interface, Home Assistant integration, MQTT topics, and architecture details.
 
-## MQTT channels
+## Repository Structure
 
-- KHcontrollerV3/message -> any messages of the device
-- KHcontrollerV3/error -> channel to post errors
-- KHcontrollerV3/mes_pH -> channel where current pH during titration is published
-- KHcontrollerV3/KH -> publishes the number of drops used for titration
-- KHcontrollerV3/startPH -> publishes the pH at start of titration
-- KHcontrollerV3/output -> channel where commands to the controller can be published
-
-## Commands
-
-Commands can be given to the device via mqtt (output channel) or via the serial interface
-- Measure KH: k
-- measure pH: p
-- fill titration tube: f
-- measure sample volume: s
-- measure titration volume: t
-- start stirrer: m
-- end stirrer: e
-- remove sample: r
-- reset: o
-- calibrate pH4: 4
-- calibrate pH7: 7
-- measure pH probe voltage: v
-
-
-## calculating KH
-
-KH [dKH] = (drops / 6000) * titration volume / sample Volume * 2800 * conc HCL * correction factor
-
-- Titration and sample volume are measured when using the t and s commands, measure the volumes as accurately as possible to get accurate results.
-- Standard HCl concentration is 0.02M which equates to 10 ml 37% HCl in 5 L water (first Water then acid!). This for me is the best balance between accuracy/reproducibility and reasonable volumes to handle.
-
-
-
-## Installing and setting up Mosquitto
-On your Raspberry pi run on the command line:
-
-```
-sudo apt update && sudo apt upgrade
-sudo apt install -y mosquitto mosquitto-clients
-sudo systemctl enable mosquitto.service
+```text
+KH_controller/
+├── Firmware/          ESP32 firmware (PlatformIO project)
+│   ├── src/           Source code (modular C++ architecture)
+│   ├── include/       Configuration and pin definitions
+│   ├── data/www/      Web dashboard (HTML, CSS, JavaScript)
+│   └── README.md      Firmware documentation
+├── PCB/               PCB design files (Gerber + layout)
+├── 3dPrints/          3D-printable enclosure parts (STL)
+├── docs/images/       Documentation images
+└── LICENSE            MIT License
 ```
 
-Open:
-```
-sudo nano /etc/mosquitto/mosquitto.conf
-```
+## License
 
-At the top of the file paste:
-```
-per_listener_settings false
-```
-
-And paste at the end of the file:
-```
-listener 1883
-allow_anonymous true
-password_file /etc/mosquitto/passwd
-```
-Then, press CTRL-X to exit and save the file. Press Y and Enter.
- 
-Restart Mosquitto for the changes to take effect:
-```
-sudo systemctl restart mosquitto
-```
-
-
-## Node Red Dashboard
-
-I use Node Red to manage the workflows and as dashboard. You can use my backuped workflow. Just make sure to change this to the IP of your mqtt broker in the file:
-"broker": "homeserver.local"
+This project is licensed under the MIT License. See [LICENSE](LICENSE) for details.

@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>KH Controller V3</title>
+  <link rel="stylesheet" href="style.css?v=4">
+</head>
+<body>
+  <header>
+    <h1>KH Controller V3</h1>
+    <div class="status-dots">
+      <span id="dot-wifi" class="dot off" title="WiFi"></span>
+      <span id="dot-mqtt" class="dot off" title="MQTT"></span>
+      <span id="dot-ntp" class="dot off" title="NTP"></span>
+      <span id="dot-ws" class="dot off" title="WebSocket"></span>
+    </div>
+  </header>
+
+  <section class="gauges">
+    <div class="gauge-card">
+      <div class="gauge-visual">
+        <svg viewBox="0 0 120 80" class="gauge-svg">
+          <path d="M15 70 A50 50 0 0 1 105 70" fill="none" stroke="#333" stroke-width="8" stroke-linecap="round"/>
+          <path id="gauge-kh-arc" d="M15 70 A50 50 0 0 1 105 70" fill="none" stroke="#0a84ff" stroke-width="8" stroke-linecap="round" stroke-dasharray="0 999"/>
+        </svg>
+      </div>
+      <div class="gauge-value" id="val-kh">--</div>
+      <div class="gauge-label">KH (dKH)</div>
+    </div>
+    <div class="gauge-card">
+      <div class="gauge-visual">
+        <svg viewBox="0 0 120 80" class="gauge-svg">
+          <path d="M15 70 A50 50 0 0 1 105 70" fill="none" stroke="#333" stroke-width="8" stroke-linecap="round"/>
+          <path id="gauge-ph-arc" d="M15 70 A50 50 0 0 1 105 70" fill="none" stroke="#30d158" stroke-width="8" stroke-linecap="round" stroke-dasharray="0 999"/>
+        </svg>
+      </div>
+      <div class="gauge-value" id="val-ph">--</div>
+      <div class="gauge-label">pH</div>
+    </div>
+    <div class="gauge-card">
+      <div class="gauge-visual">
+        <div class="hcl-tank">
+          <div class="hcl-fill" id="hcl-fill"></div>
+        </div>
+      </div>
+      <div class="gauge-value" id="val-hcl">--</div>
+      <div class="gauge-label">HCl (mL)</div>
+    </div>
+  </section>
+
+  <section class="charts">
+    <div class="tab-bar">
+      <button class="tab active" data-tab="kh">KH</button>
+      <button class="tab" data-tab="ph">pH</button>
+      <button class="tab" data-tab="live">Live pH</button>
+    </div>
+    <div class="chart-container">
+      <canvas id="chart-kh"></canvas>
+      <canvas id="chart-ph" style="display:none"></canvas>
+      <canvas id="chart-live" style="display:none"></canvas>
+    </div>
+  </section>
+
+  <section class="progress-section" id="progress-section" style="display:none">
+    <div class="progress-bar"><div class="progress-fill" id="progress-fill"></div></div>
+    <div class="progress-label" id="progress-label">0%</div>
+  </section>
+
+  <section class="buttons collapsible">
+    <h2 class="section-header">Commands <span class="chevron"></span></h2>
+    <div class="section-body">
+      <div class="btn-grid">
+        <button class="cmd-btn primary" data-cmd="k">Measure KH</button>
+        <button class="cmd-btn primary" data-cmd="p">Measure pH</button>
+        <button class="cmd-btn" data-cmd="s">Cal Sample</button>
+        <button class="cmd-btn" data-cmd="f">Fill</button>
+        <button class="cmd-btn" data-cmd="t">Cal Titration</button>
+        <button class="cmd-btn cal" data-cmd="4">Cal pH 4</button>
+        <button class="cmd-btn cal" data-cmd="7">Cal pH 7</button>
+        <button class="cmd-btn cal" data-cmd="10">Cal pH 10</button>
+        <button class="cmd-btn warn" data-cmd="o">Restart</button>
+      </div>
+    </div>
+  </section>
+
+  <section class="config collapsible">
+    <h2 class="section-header">Configuration <span class="chevron"></span></h2>
+    <div class="section-body">
+      <div class="config-grid">
+        <label>Titration Vol (mL)
+          <input type="number" id="cfg-titration_vol" step="0.1" min="0.1" max="50">
+        </label>
+        <label>Sample Vol (mL)
+          <input type="number" id="cfg-sample_vol" step="0.1" min="1" max="200">
+        </label>
+        <label>Correction Factor
+          <input type="number" id="cfg-correction_factor" step="0.01" min="0.5" max="2">
+        </label>
+        <label>HCl Molarity (mol/L)
+          <input type="number" id="cfg-hcl_molarity" step="0.001" min="0.001" max="1">
+        </label>
+        <label>HCl Volume (mL)
+          <input type="number" id="cfg-hcl_volume" step="1" min="0" max="5000">
+        </label>
+        <label>Calibration Drops
+          <input type="number" id="cfg-cal_drops" step="100" min="1000" max="20000">
+        </label>
+        <label>Fast Titration pH
+          <input type="number" id="cfg-fast_ph" step="0.1" min="4.5" max="7.0">
+        </label>
+      </div>
+    </div>
+  </section>
+
+  <section class="schedule collapsible">
+    <h2 class="section-header">Schedule <span class="chevron"></span></h2>
+    <div class="section-body">
+      <div class="sched-grid" id="sched-grid"></div>
+      <button class="sched-add-btn" id="sched-add" title="Add schedule slot">+ Add</button>
+      <div class="next-meas">Next: <span id="next-meas">--</span></div>
+    </div>
+  </section>
+
+  <section class="event-log">
+    <h2>Event Log</h2>
+    <div class="log-container" id="log-container"></div>
+  </section>
+
+  <section class="status-bar">
+    <div><strong>RSSI:</strong> <span id="rssi">--</span> dBm</div>
+    <div><strong>Uptime:</strong> <span id="uptime">--</span></div>
+  </section>
+
+  <script src="chart.min.js?v=2"></script>
+  <script src="app.js?v=3"></script>
+</body>
+</html>

@@ -1,0 +1,18 @@
+# macOS
+.DS_Store
+
+# Windows
+Thumbs.db
+
+# Editor files
+*.swp
+*.swo
+*.save
+*~
+
+# IDE
+.vscode/
+.idea/
+
+# Claude AI
+.claude/

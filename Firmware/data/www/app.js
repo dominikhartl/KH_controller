@@ -1,0 +1,414 @@
+(function() {
+  'use strict';
+
+  var MAX_SCHEDULES = 8;
+
+  // --- WebSocket ---
+  var ws, wsOk = false, reconnTimer;
+
+  function connect() {
+    var host = location.hostname || 'khcontrollerv3.local';
+    ws = new WebSocket('ws://' + host + '/ws');
+    ws.onopen = function() {
+      wsOk = true;
+      setDot('ws', true);
+      ws.send(JSON.stringify({type:'getHistory', sensor:'kh'}));
+      ws.send(JSON.stringify({type:'getHistory', sensor:'ph'}));
+    };
+    ws.onclose = function() {
+      wsOk = false;
+      setDot('ws', false);
+      reconnTimer = setTimeout(connect, 3000);
+    };
+    ws.onmessage = function(e) {
+      try { handleMsg(JSON.parse(e.data)); } catch(ex) { console.error('WS parse error:', ex, e.data); }
+    };
+  }
+
+  function send(obj) {
+    if (ws && ws.readyState === 1) ws.send(JSON.stringify(obj));
+  }
+
+  // --- Event log ---
+  var LOG_MAX = 50;
+
+  function addLogEntry(type, text, epochTs) {
+    var container = document.getElementById('log-container');
+    if (!container) return;
+    var entry = document.createElement('div');
+    entry.className = 'log-entry ' + type;
+    var t = epochTs ? new Date(epochTs * 1000) : new Date();
+    entry.innerHTML = '<span class="log-time">' + pad(t.getHours()) + ':' + pad(t.getMinutes()) + ':' + pad(t.getSeconds()) + '</span><span class="log-text">' + escHtml(text) + '</span>';
+    container.insertBefore(entry, container.firstChild);
+    while (container.children.length > LOG_MAX) {
+      container.removeChild(container.lastChild);
+    }
+  }
+
+  function loadLogData(entries) {
+    var container = document.getElementById('log-container');
+    if (!container || !entries || entries.length === 0) return;
+    container.innerHTML = '';
+    // entries are oldest-first from server; insert each at top so newest ends up on top
+    for (var i = 0; i < entries.length; i++) {
+      addLogEntry(entries[i].t, entries[i].text, entries[i].ts);
+    }
+  }
+
+  function escHtml(s) {
+    var d = document.createElement('div');
+    d.textContent = s;
+    return d.innerHTML;
+  }
+
+  // --- Progress bar ---
+  function updateProgress(pct) {
+    var section = document.getElementById('progress-section');
+    var fill = document.getElementById('progress-fill');
+    var label = document.getElementById('progress-label');
+    if (!section || !fill || !label) return;
+    if (pct >= 100) {
+      section.style.display = 'none';
+      return;
+    }
+    section.style.display = 'flex';
+    fill.style.width = pct + '%';
+    label.textContent = pct + '%';
+  }
+
+  // --- State handling ---
+  function handleMsg(d) {
+    if (d.type === 'state') updateState(d);
+    else if (d.type === 'mesPh') updateLivePH(d);
+    else if (d.type === 'mesStart') clearLiveChart();
+    else if (d.type === 'mesData') loadMesData(d);
+    else if (d.type === 'history') updateHistory(d);
+    else if (d.type === 'msg') addLogEntry('msg', d.text);
+    else if (d.type === 'error') addLogEntry('error', d.text);
+    else if (d.type === 'logData') loadLogData(d.entries);
+    else if (d.type === 'progress') updateProgress(d.pct);
+  }
+
+  function clearLiveChart() {
+    if (liveChart) {
+      liveChart.data.labels = [];
+      liveChart.data.datasets[0].data = [];
+      liveChart.update();
+    }
+  }
+
+  function loadMesData(d) {
+    if (!liveChart || !d.data || d.data.length === 0) return;
+    if (d.chunk === 0) {
+      liveChart.data.labels = [];
+      liveChart.data.datasets[0].data = [];
+    }
+    for (var i = 0; i < d.data.length; i++) {
+      liveChart.data.labels.push(d.data[i][0]);
+      liveChart.data.datasets[0].data.push(d.data[i][1]);
+    }
+    if (d.chunk === d.total - 1) liveChart.update();
+  }
+
+  function updateState(d) {
+    // KH gauge
+    var khVal = (d.kh > 0) ? d.kh : 0;
+    setGaugeArc('gauge-kh-arc', khVal, 0, 15);
+    setText('val-kh', (d.kh > 0) ? d.kh.toFixed(1) : '--');
+
+    // pH gauge
+    var phVal = (d.lastStartPh > 0) ? d.lastStartPh : 0;
+    setGaugeArc('gauge-ph-arc', phVal, 6, 9);
+    setText('val-ph', (d.lastStartPh > 0) ? d.lastStartPh.toFixed(2) : '--');
+
+    // HCl tank
+    var hclMax = 5000;
+    var hclPct = Math.max(0, Math.min(100, ((d.hclVol || 0) / hclMax) * 100));
+    var fill = document.getElementById('hcl-fill');
+    if (fill) fill.style.height = hclPct + '%';
+    setText('val-hcl', d.hclVol ? Math.round(d.hclVol) : '--');
+
+    // Status dots
+    setDot('wifi', d.wifiOk);
+    setDot('mqtt', d.mqttOk);
+    setDot('ntp', d.ntpOk);
+
+    // Status bar
+    setText('rssi', d.rssi || '--');
+    setText('uptime', fmtUptime(d.uptime || 0));
+
+    // Next measurement (server sends formatted string)
+    if (d.nextMeas) setText('next-meas', d.nextMeas);
+
+    // Config values
+    if (d.config) {
+      setInput('cfg-titration_vol', d.config.titration_vol);
+      setInput('cfg-sample_vol', d.config.sample_vol);
+      setInput('cfg-correction_factor', d.config.correction_factor);
+      setInput('cfg-hcl_molarity', d.config.hcl_molarity);
+      setInput('cfg-hcl_volume', d.config.hcl_volume);
+      setInput('cfg-cal_drops', d.config.cal_drops);
+      setInput('cfg-fast_ph', d.config.fast_ph);
+    }
+
+    // Schedule
+    if (d.schedule) updateScheduleInputs(d.schedule);
+  }
+
+  function updateLivePH(d) {
+    if (liveChart) {
+      liveChart.data.labels.push(d.drops);
+      liveChart.data.datasets[0].data.push(d.ph);
+      liveChart.update('none');
+    }
+  }
+
+  function updateHistory(d) {
+    if (!d.data || !d.sensor) return;
+    var chart = (d.sensor === 'kh') ? khChart : phChart;
+    if (!chart) return;
+    chart.data.labels = d.data.map(function(p) { return fmtDate(p[0]); });
+    chart.data.datasets[0].data = d.data.map(function(p) { return p[1]; });
+    chart.update();
+  }
+
+  // --- Gauge arc math ---
+  var ARC_LEN = 157;
+  function setGaugeArc(id, val, min, max) {
+    var el = document.getElementById(id);
+    if (!el) return;
+    var pct = Math.max(0, Math.min(1, (val - min) / (max - min)));
+    el.setAttribute('stroke-dasharray', (pct * ARC_LEN) + ' ' + ARC_LEN);
+  }
+
+  // --- Charts ---
+  var khChart, phChart, liveChart;
+  var chartOpts = {
+    responsive: true,
+    maintainAspectRatio: false,
+    animation: false,
+    plugins: { legend: { display: false } },
+    scales: {
+      x: { ticks: { color: '#8e8e93', maxTicksLimit: 6, font: { size: 10 } }, grid: { color: '#38383a' } },
+      y: { ticks: { color: '#8e8e93', font: { size: 10 } }, grid: { color: '#38383a' } }
+    }
+  };
+
+  function initCharts() {
+    khChart = new Chart(document.getElementById('chart-kh'), {
+      type: 'line',
+      data: { labels: [], datasets: [{ data: [], borderColor: '#0a84ff', borderWidth: 2, pointRadius: 3, tension: 0.1 }] },
+      options: chartOpts
+    });
+    phChart = new Chart(document.getElementById('chart-ph'), {
+      type: 'line',
+      data: { labels: [], datasets: [{ data: [], borderColor: '#30d158', borderWidth: 2, pointRadius: 3, tension: 0.1 }] },
+      options: chartOpts
+    });
+    liveChart = new Chart(document.getElementById('chart-live'), {
+      type: 'line',
+      data: { labels: [], datasets: [{ data: [], borderColor: '#ff9f0a', borderWidth: 2, pointRadius: 0, tension: 0 }] },
+      options: Object.assign({}, chartOpts, {
+        scales: {
+          x: { title: { display: true, text: 'Drops', color: '#8e8e93' }, ticks: { color: '#8e8e93', font: { size: 10 } }, grid: { color: '#38383a' } },
+          y: { title: { display: true, text: 'pH', color: '#8e8e93' }, ticks: { color: '#8e8e93', font: { size: 10 } }, grid: { color: '#38383a' } }
+        }
+      })
+    });
+  }
+
+  // --- Tabs ---
+  function initTabs() {
+    var tabs = document.querySelectorAll('.tab');
+    tabs.forEach(function(t) {
+      t.addEventListener('click', function() {
+        tabs.forEach(function(tt) { tt.classList.remove('active'); });
+        t.classList.add('active');
+        var sel = t.getAttribute('data-tab');
+        ['kh','ph','live'].forEach(function(id) {
+          document.getElementById('chart-' + id).style.display = (id === sel) ? 'block' : 'none';
+        });
+        if (sel === 'live' && liveChart) liveChart.resize();
+        else if (sel === 'kh' && khChart) khChart.resize();
+        else if (sel === 'ph' && phChart) phChart.resize();
+      });
+    });
+  }
+
+  // --- Collapsible sections ---
+  function initCollapsible() {
+    document.querySelectorAll('.section-header').forEach(function(header) {
+      header.addEventListener('click', function() {
+        var section = header.parentElement;
+        section.classList.toggle('collapsed');
+      });
+    });
+  }
+
+  // --- Buttons ---
+  function initButtons() {
+    document.querySelectorAll('.cmd-btn').forEach(function(btn) {
+      btn.addEventListener('click', function() {
+        var cmd = btn.getAttribute('data-cmd');
+        if (cmd === 'o' && !confirm('Restart the device?')) return;
+        send({ type: 'cmd', cmd: cmd });
+      });
+    });
+  }
+
+  // --- Config inputs ---
+  function initConfigInputs() {
+    document.querySelectorAll('.config-grid input').forEach(function(inp) {
+      inp.addEventListener('change', function() {
+        var key = inp.id.replace('cfg-', '');
+        send({ type: 'config', key: key, value: parseFloat(inp.value) });
+      });
+    });
+  }
+
+  // --- Schedule (dynamic add/remove) ---
+  var currentSlots = [];
+  var schedLocalUntil = 0; // suppress server updates briefly after local changes
+
+  function renderScheduleInputs() {
+    var grid = document.getElementById('sched-grid');
+    grid.innerHTML = '';
+    for (var i = 0; i < currentSlots.length; i++) {
+      var row = document.createElement('div');
+      row.className = 'sched-row';
+
+      var inp = document.createElement('input');
+      inp.type = 'time';
+      inp.value = minsToTime(currentSlots[i]);
+      inp.dataset.idx = i;
+      inp.addEventListener('change', onSchedChange);
+
+      var rmBtn = document.createElement('button');
+      rmBtn.className = 'sched-rm';
+      rmBtn.textContent = '\u00d7';
+      rmBtn.title = 'Remove';
+      rmBtn.dataset.idx = i;
+      rmBtn.addEventListener('click', onSchedRemove);
+
+      row.appendChild(inp);
+      row.appendChild(rmBtn);
+      grid.appendChild(row);
+    }
+
+    // Add button (if under max)
+    var addBtn = document.getElementById('sched-add');
+    if (addBtn) addBtn.style.display = (currentSlots.length < MAX_SCHEDULES) ? '' : 'none';
+  }
+
+  function updateScheduleInputs(slots) {
+    // Same slot count: update values in-place (preserves DOM, keeps pickers open)
+    var inputs = document.querySelectorAll('#sched-grid input[type=time]');
+    if (inputs.length === slots.length) {
+      for (var i = 0; i < slots.length; i++) {
+        currentSlots[i] = slots[i];
+        if (document.activeElement !== inputs[i]) {
+          inputs[i].value = minsToTime(slots[i]);
+        }
+      }
+      return;
+    }
+    // Slot count changed — suppress stale broadcasts briefly after local changes
+    if (Date.now() < schedLocalUntil) return;
+    currentSlots = slots.slice();
+    renderScheduleInputs();
+  }
+
+  function onSchedChange(e) {
+    var idx = parseInt(e.target.dataset.idx);
+    currentSlots[idx] = timeToMins(e.target.value);
+    sendSchedule();
+  }
+
+  function onSchedRemove(e) {
+    var idx = parseInt(e.target.dataset.idx);
+    currentSlots.splice(idx, 1);
+    renderScheduleInputs();
+    sendSchedule();
+  }
+
+  function onSchedAdd() {
+    if (currentSlots.length >= MAX_SCHEDULES) return;
+    currentSlots.push(0);
+    renderScheduleInputs();
+    sendSchedule();
+    // Focus the new input
+    var inputs = document.querySelectorAll('#sched-grid input[type=time]');
+    if (inputs.length > 0) inputs[inputs.length - 1].focus();
+  }
+
+  function sendSchedule() {
+    schedLocalUntil = Date.now() + 3000;
+    send({ type: 'schedule', slots: currentSlots });
+  }
+
+  function initSchedule() {
+    var addBtn = document.getElementById('sched-add');
+    if (addBtn) addBtn.addEventListener('click', onSchedAdd);
+  }
+
+  // --- Helpers ---
+  function setText(id, val) {
+    var el = document.getElementById(id);
+    if (el) el.textContent = val;
+  }
+
+  function setInput(id, val) {
+    var el = document.getElementById(id);
+    if (el && document.activeElement !== el && val !== undefined) {
+      el.value = val;
+    }
+  }
+
+  function setDot(name, on) {
+    var el = document.getElementById('dot-' + name);
+    if (el) { el.className = 'dot ' + (on ? 'on' : 'off'); }
+  }
+
+  function fmtUptime(sec) {
+    var d = Math.floor(sec / 86400);
+    var h = Math.floor((sec % 86400) / 3600);
+    var m = Math.floor((sec % 3600) / 60);
+    if (d > 0) return d + 'd ' + h + 'h';
+    if (h > 0) return h + 'h ' + m + 'm';
+    return m + 'm';
+  }
+
+  function fmtDate(ts) {
+    var d = new Date(ts * 1000);
+    return (d.getMonth() + 1) + '/' + d.getDate() + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes());
+  }
+
+  function minsToTime(mins) {
+    return pad(Math.floor(mins / 60)) + ':' + pad(mins % 60);
+  }
+
+  function timeToMins(t) {
+    if (!t) return 0;
+    var parts = t.split(':');
+    return parseInt(parts[0]) * 60 + parseInt(parts[1]);
+  }
+
+  function pad(n) { return n < 10 ? '0' + n : '' + n; }
+
+  // --- Init ---
+  function init() {
+    initCharts();
+    initTabs();
+    initCollapsible();
+    initButtons();
+    initConfigInputs();
+    initSchedule();
+    connect();
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', init);
+  } else {
+    init();
+  }
+})();
