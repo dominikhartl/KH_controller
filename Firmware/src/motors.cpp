@@ -157,16 +157,12 @@ void titrate(int volume, int stepDelay) {
 
     int stepsDone = 0;
 
-    // Yield every 500 steps (~2s at slowest speed) to prevent WDT reset
-    static const int WDT_YIELD_STEPS = 500;
-
     // Acceleration
     float acc = MOTOR_START_SPEED;
     while (acc > (float)stepDelay && stepsDone < decelStart) {
       stepPulse(STEP_PIN2, acc);
       acc *= MOTOR_ACCEL_FACTOR;
       stepsDone++;
-      if (stepsDone % WDT_YIELD_STEPS == 0) delay(1);
     }
 
     // Record actual speed reached (may not have hit target if ramp > totalSteps/2)
@@ -177,8 +173,7 @@ void titrate(int volume, int stepDelay) {
       stepPulse(STEP_PIN2, (float)stepDelay);
       stepsDone++;
       speedReached = (float)stepDelay;
-      if (stepsDone % WDT_YIELD_STEPS == 0) {
-        delay(1);
+      if (stepsDone % (MOTOR_STEPS_PER_UNIT * MOTOR_YIELD_INTERVAL * 50) == 0) {
         if (yieldCb) yieldCb();
         if (millis() - startTime > TITRATION_TIMEOUT_MS) {
           Serial.println("ERROR: Titration timeout!");
@@ -194,7 +189,6 @@ void titrate(int volume, int stepDelay) {
       acc /= MOTOR_ACCEL_FACTOR;
       if (acc > MOTOR_START_SPEED) acc = MOTOR_START_SPEED;
       stepsDone++;
-      if (stepsDone % WDT_YIELD_STEPS == 0) delay(1);
     }
   } else {
     // Small volume (typical titration steps): run directly, no ramp needed

@@ -64,8 +64,7 @@ void subtractHCl(int unitsUsed) {
 void calibrateTitrationPump() {
   publishMessage("Calibrating pump");
   units = 0;
-  // Pump CALIBRATION_TARGET_UNITS in 200-unit batches
-  // Peristaltic pump delivers fixed volume per revolution regardless of speed
+  // Use small batches (below TITRATE_ACCEL_THRESHOLD) to avoid acceleration path
   const int BATCH = 200;
   while (units < CALIBRATION_TARGET_UNITS) {
     int batch = min(BATCH, CALIBRATION_TARGET_UNITS - units);
@@ -74,7 +73,6 @@ void calibrateTitrationPump() {
     delay(TITRATION_MIX_DELAY_FAST_MS);
     mqttManager.loop();
     ArduinoOTA.handle();
-    ws.cleanupClients();
     if (units % 1000 == 0) {
       char buf[48];
       snprintf(buf, sizeof(buf), "Units: %d / %d", units, CALIBRATION_TARGET_UNITS);
@@ -461,6 +459,7 @@ void setup() {
 
   // Web server + WebSocket dashboard
   setupWebServer();
+  publishMessage("BOOT");
 
   // Scheduler with NTP
   scheduler.begin();
