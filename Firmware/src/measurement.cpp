@@ -3,6 +3,7 @@
 #include <pins.h>
 #include <config.h>
 #include <math.h>
+#include "driver/adc.h"
 
 // Measurement state
 float voltage = 0;
@@ -53,6 +54,8 @@ static float medianFilteredMean(float* sorted, int count, float outlierThreshold
 
 void initADC() {
   analogSetPinAttenuation(PH_PIN, ADC_11db);
+  adc_power_acquire();  // Keep ADC powered to prevent hall sensor glitches on GPIO35
+  analogReadMilliVolts(PH_PIN);  // Dummy read to prime SAR ADC
 }
 
 void updateCalibrationFit() {
@@ -132,25 +135,53 @@ float getProbeAsymmetry() {
 }
 
 const char* getProbeHealth() {
+  return getProbeHealthDetail(nullptr, 0);
+}
+
+const char* getProbeHealthDetail(char* reasonBuf, size_t reasonLen) {
   float acidEff = getAcidEfficiency();
-  if (isnan(acidEff)) return "Unknown";
+  if (isnan(acidEff)) {
+    if (reasonBuf) snprintf(reasonBuf, reasonLen, "no calibration data");
+    return "Unknown";
+  }
 
   // Primary check: Nernst efficiency of acid slope (measurement range)
-  if (acidEff < PROBE_EFFICIENCY_FAIR) return "Replace";
-  if (acidEff < PROBE_EFFICIENCY_GOOD) return "Fair";
+  if (acidEff < PROBE_EFFICIENCY_FAIR) {
+    if (reasonBuf) snprintf(reasonBuf, reasonLen, "acid slope efficiency %.0f%% (need >%.0f%%)", acidEff, PROBE_EFFICIENCY_FAIR);
+    return "Replace";
+  }
+  if (acidEff < PROBE_EFFICIENCY_GOOD) {
+    if (reasonBuf) snprintf(reasonBuf, reasonLen, "acid slope efficiency %.0f%% (need >%.0f%%)", acidEff, PROBE_EFFICIENCY_GOOD);
+    return "Fair";
+  }
 
   // Secondary: asymmetry and response time
   float asym = getProbeAsymmetry();
-  if (!isnan(asym) && asym > PROBE_ASYMMETRY_FAIR) return "Replace";
-  if (lastStabilizationMs >= PROBE_RESPONSE_FAIR_MS) return "Replace";
-  if (lastStabilizationMs >= PROBE_RESPONSE_GOOD_MS) return "Fair";
-  if (!isnan(asym) && asym > PROBE_ASYMMETRY_GOOD) return "Fair";
+  if (!isnan(asym) && asym > PROBE_ASYMMETRY_FAIR) {
+    if (reasonBuf) snprintf(reasonBuf, reasonLen, "asymmetry %.1f%% (limit %.0f%%)", asym, PROBE_ASYMMETRY_FAIR);
+    return "Replace";
+  }
+  if (lastStabilizationMs >= PROBE_RESPONSE_FAIR_MS) {
+    if (reasonBuf) snprintf(reasonBuf, reasonLen, "response time %lums (limit %lums)", lastStabilizationMs, PROBE_RESPONSE_FAIR_MS);
+    return "Replace";
+  }
+  if (lastStabilizationMs >= PROBE_RESPONSE_GOOD_MS) {
+    if (reasonBuf) snprintf(reasonBuf, reasonLen, "response time %lums (limit %lums)", lastStabilizationMs, PROBE_RESPONSE_GOOD_MS);
+    return "Fair";
+  }
+  if (!isnan(asym) && asym > PROBE_ASYMMETRY_GOOD) {
+    if (reasonBuf) snprintf(reasonBuf, reasonLen, "asymmetry %.1f%% (limit %.0f%%)", asym, PROBE_ASYMMETRY_GOOD);
+    return "Fair";
+  }
 
+  if (reasonBuf && reasonLen > 0) reasonBuf[0] = '\0';
   return "Good";
 }
 
 // Wait for ADC readings to converge instead of fixed delay
 static void waitForStabilization() {
+  analogReadMilliVolts(PH_PIN);  // Dummy read to prime ADC after idle
+  delayMicroseconds(100);
   float prev = (float)analogReadMilliVolts(PH_PIN);
   delay(50);
   unsigned long start = millis();
@@ -274,38 +305,101 @@ float measureVoltage(int nreadings) {
 
 // --- Gran transformation endpoint detection ---
 
-float granAnalysis(TitrationPoint* points, int nPoints,
-                   float sampleVol, float titVol, float calDrops,
-                   float* outR2) {
-  if (nPoints < 3 || calDrops <= 0) return NAN;
-
-  float k = titVol / calDrops;  // mL per unit
-
-  // Select points in the linear Gran region (excess acid past equivalence)
+// Internal: linear regression on Gran function values
+// excluded[] marks points to skip; returns false if regression fails
+static bool granRegression(TitrationPoint* points, int nPoints,
+                           float sampleVol, float k, bool* excluded,
+                           float* outSlope, float* outIntercept,
+                           float* outR2, float* outSsRes, int* outCount) {
   float sumX = 0, sumY = 0, sumXX = 0, sumXY = 0, sumYY = 0;
   int count = 0;
 
   for (int i = 0; i < nPoints; i++) {
+    if (excluded[i]) continue;
     if (points[i].pH < GRAN_REGION_PH && points[i].pH > GRAN_STOP_PH) {
       float x = points[i].units;
       float totalVol = sampleVol + x * k;
       float y = totalVol * powf(10.0f, -points[i].pH);
-      sumX += x;
-      sumY += y;
-      sumXX += x * x;
-      sumXY += x * y;
-      sumYY += y * y;
+      sumX += x; sumY += y; sumXX += x * x; sumXY += x * y; sumYY += y * y;
       count++;
     }
   }
 
-  if (count < MIN_GRAN_POINTS) return NAN;
+  if (count < MIN_GRAN_POINTS) return false;
 
   float denom = (float)count * sumXX - sumX * sumX;
-  if (fabsf(denom) < 1e-12f) return NAN;
+  if (fabsf(denom) < 1e-12f) return false;
 
-  float slope = ((float)count * sumXY - sumX * sumY) / denom;
-  float intercept = (sumY - slope * sumX) / (float)count;
+  *outSlope = ((float)count * sumXY - sumX * sumY) / denom;
+  *outIntercept = (sumY - *outSlope * sumX) / (float)count;
+  *outCount = count;
+
+  // Compute R²
+  float meanY = sumY / (float)count;
+  float ssTot = sumYY - (float)count * meanY * meanY;
+  float ssRes = 0;
+  for (int i = 0; i < nPoints; i++) {
+    if (excluded[i]) continue;
+    if (points[i].pH < GRAN_REGION_PH && points[i].pH > GRAN_STOP_PH) {
+      float x = points[i].units;
+      float totalVol = sampleVol + x * k;
+      float y = totalVol * powf(10.0f, -points[i].pH);
+      float pred = *outSlope * x + *outIntercept;
+      float res = y - pred;
+      ssRes += res * res;
+    }
+  }
+  *outR2 = (ssTot > 1e-12f) ? 1.0f - ssRes / ssTot : 0.0f;
+  *outSsRes = ssRes;
+  return true;
+}
+
+float granAnalysis(TitrationPoint* points, int nPoints,
+                   float sampleVol, float titVol, float calUnits,
+                   float* outR2) {
+  if (nPoints < 3 || calUnits <= 0) return NAN;
+
+  float k = titVol / calUnits;  // mL per unit
+
+  // Exclusion flags for iterative outlier removal
+  static bool excluded[MAX_TITRATION_POINTS];
+  for (int i = 0; i < nPoints; i++) excluded[i] = false;
+
+  float slope, intercept, r2, ssRes;
+  int count;
+
+  if (!granRegression(points, nPoints, sampleVol, k, excluded,
+                      &slope, &intercept, &r2, &ssRes, &count))
+    return NAN;
+
+  // Iterative outlier rejection: up to 2 rounds, remove worst 2σ outlier
+  for (int round = 0; round < 2; round++) {
+    if (count <= MIN_GRAN_POINTS) break;  // Don't remove if at minimum
+
+    float sigma = sqrtf(ssRes / (float)(count - 2));
+    float worstRes = 0;
+    int worstIdx = -1;
+
+    for (int i = 0; i < nPoints; i++) {
+      if (excluded[i]) continue;
+      if (points[i].pH < GRAN_REGION_PH && points[i].pH > GRAN_STOP_PH) {
+        float x = points[i].units;
+        float totalVol = sampleVol + x * k;
+        float y = totalVol * powf(10.0f, -points[i].pH);
+        float res = fabsf(y - (slope * x + intercept));
+        if (res > 2.0f * sigma && res > worstRes) {
+          worstRes = res;
+          worstIdx = i;
+        }
+      }
+    }
+    if (worstIdx < 0) break;  // No outliers
+
+    excluded[worstIdx] = true;
+    if (!granRegression(points, nPoints, sampleVol, k, excluded,
+                        &slope, &intercept, &r2, &ssRes, &count))
+      return NAN;
+  }
 
   // Slope must be positive (F increases with acid volume)
   if (slope <= 0) return NAN;
@@ -313,30 +407,13 @@ float granAnalysis(TitrationPoint* points, int nPoints,
   // Equivalence point: where F = 0 → x = -intercept/slope
   float eqUnits = -intercept / slope;
 
-  // Sanity: equivalence must be before the first Gran-region point
-  // (the equivalence is where excess acid starts, so it's before our regression data)
+  // Sanity checks
   if (eqUnits < 0) return NAN;
   if (eqUnits > points[nPoints - 1].units) return NAN;
 
-  // Compute R² for fit quality
   if (outR2) {
-    float meanY = sumY / (float)count;
-    float ssTot = sumYY - (float)count * meanY * meanY;
-    float ssRes = 0;
-    for (int i = 0; i < nPoints; i++) {
-      if (points[i].pH < GRAN_REGION_PH && points[i].pH > GRAN_STOP_PH) {
-        float x = points[i].units;
-        float totalVol = sampleVol + x * k;
-        float y = totalVol * powf(10.0f, -points[i].pH);
-        float pred = slope * x + intercept;
-        float res = y - pred;
-        ssRes += res * res;
-      }
-    }
-    *outR2 = (ssTot > 1e-12f) ? 1.0f - ssRes / ssTot : 0.0f;
-
-    // Reject poor fits
-    if (*outR2 < 0.95f) return NAN;
+    *outR2 = r2;
+    if (r2 < 0.99f) return NAN;  // Reject poor fits
   }
 
   return eqUnits;

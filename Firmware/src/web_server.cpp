@@ -156,7 +156,7 @@ static void handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
       else if (strcmp(key, "correction_factor") == 0) configStore.setCorrectionFactor(value);
       else if (strcmp(key, "hcl_molarity") == 0) configStore.setHClMolarity(value);
       else if (strcmp(key, "hcl_volume") == 0) configStore.setHClVolume(value);
-      else if (strcmp(key, "cal_drops") == 0) configStore.setCalDrops((int)value);
+      else if (strcmp(key, "cal_drops") == 0) configStore.setCalUnits((int)value);
       else if (strcmp(key, "fast_ph") == 0) configStore.setFastTitrationPH(value);
 
       broadcastState(); // Confirm the update
@@ -228,6 +228,31 @@ static void handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
   }
 }
 
+static void calibratePH(int bufferPH) {
+  startStirrer();
+  delay(STIRRER_WARMUP_MS);
+  float v = measureVoltage(100);
+  stopStirrer();
+  switch (bufferPH) {
+    case 4:  voltage_4PH = v;  configStore.setVoltage4PH(v);  break;
+    case 7:  voltage_7PH = v;  configStore.setVoltage7PH(v);  break;
+    case 10: voltage_10PH = v; configStore.setVoltage10PH(v); break;
+  }
+  updateCalibrationFit();
+  configStore.setCalTimestamp((uint32_t)time(nullptr));
+  if (isCalibrationValid()) configStore.addSlopeEntry((uint32_t)time(nullptr), getAcidSlope());
+  char msg[24];
+  snprintf(msg, sizeof(msg), "Calibrated pH %d", bufferPH);
+  publishMessage(msg);
+  char reason[96];
+  const char* health = getProbeHealthDetail(reason, sizeof(reason));
+  if (strcmp(health, "Good") != 0) {
+    char hBuf[128];
+    snprintf(hBuf, sizeof(hBuf), "Warning: Probe %s — %s", health, reason);
+    publishError(hBuf);
+  }
+}
+
 void executeCommand(const char* cmd) {
   if (strcmp(cmd, "k") == 0) {
     publishMessage("Measuring KH!");
@@ -273,53 +298,11 @@ void executeCommand(const char* cmd) {
     snprintf(vBuf, sizeof(vBuf), "Voltage: %.1f mV", v);
     publishMessage(vBuf);
   } else if (strcmp(cmd, "4") == 0) {
-    startStirrer();
-    delay(STIRRER_WARMUP_MS);
-    voltage_4PH = measureVoltage(100);
-    stopStirrer();
-    configStore.setVoltage4PH(voltage_4PH);
-    updateCalibrationFit();
-    configStore.setCalTimestamp((uint32_t)time(nullptr));
-    if (isCalibrationValid()) configStore.addSlopeEntry((uint32_t)time(nullptr), getAcidSlope());
-    publishMessage("Calibrated pH 4");
-    const char* health = getProbeHealth();
-    if (strcmp(health, "Good") != 0) {
-      char hBuf[64];
-      snprintf(hBuf, sizeof(hBuf), "Warning: Probe health: %s", health);
-      publishError(hBuf);
-    }
+    calibratePH(4);
   } else if (strcmp(cmd, "7") == 0) {
-    startStirrer();
-    delay(STIRRER_WARMUP_MS);
-    voltage_7PH = measureVoltage(100);
-    stopStirrer();
-    configStore.setVoltage7PH(voltage_7PH);
-    updateCalibrationFit();
-    configStore.setCalTimestamp((uint32_t)time(nullptr));
-    if (isCalibrationValid()) configStore.addSlopeEntry((uint32_t)time(nullptr), getAcidSlope());
-    publishMessage("Calibrated pH 7");
-    const char* health = getProbeHealth();
-    if (strcmp(health, "Good") != 0) {
-      char hBuf[64];
-      snprintf(hBuf, sizeof(hBuf), "Warning: Probe health: %s", health);
-      publishError(hBuf);
-    }
+    calibratePH(7);
   } else if (strcmp(cmd, "10") == 0) {
-    startStirrer();
-    delay(STIRRER_WARMUP_MS);
-    voltage_10PH = measureVoltage(100);
-    stopStirrer();
-    configStore.setVoltage10PH(voltage_10PH);
-    updateCalibrationFit();
-    configStore.setCalTimestamp((uint32_t)time(nullptr));
-    if (isCalibrationValid()) configStore.addSlopeEntry((uint32_t)time(nullptr), getAcidSlope());
-    publishMessage("Calibrated pH 10");
-    const char* health = getProbeHealth();
-    if (strcmp(health, "Good") != 0) {
-      char hBuf[64];
-      snprintf(hBuf, sizeof(hBuf), "Warning: Probe health: %s", health);
-      publishError(hBuf);
-    }
+    calibratePH(10);
   }
   broadcastState();
 }
@@ -383,7 +366,7 @@ void broadcastState() {
   cfg["correction_factor"] = configStore.getCorrectionFactor();
   cfg["hcl_molarity"] = configStore.getHClMolarity();
   cfg["hcl_volume"] = configStore.getHClVolume();
-  cfg["cal_drops"] = configStore.getCalDrops();
+  cfg["cal_drops"] = configStore.getCalUnits();
   cfg["fast_ph"] = configStore.getFastTitrationPH();
 
   // Schedule

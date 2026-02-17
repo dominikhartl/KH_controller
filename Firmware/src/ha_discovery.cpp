@@ -292,7 +292,7 @@ void publishAllDiscovery() {
                           topicCfgHclMol, topicCfgHclMolSet, 0.001, 1.0, 0.001, "mol/L");
   publishNumberDiscovery("khv3_hcl_vol", "HCl Volume",
                           topicCfgHclVol, topicCfgHclVolSet, 0, 5000, 1, "mL");
-  publishNumberDiscovery("khv3_cal_drops", "Calibration Drops",
+  publishNumberDiscovery("khv3_cal_drops", "Calibration Units",
                           topicCfgCalDrops, topicCfgCalDropsSet, 1000, 20000, 100, nullptr);
   publishNumberDiscovery("khv3_fast_ph", "Fast Titration pH",
                           topicCfgFastPH, topicCfgFastPHSet, 4.5, 7.0, 0.1, "pH");
@@ -387,7 +387,7 @@ void publishAllConfigStates() {
   mqttManager.publish(topicCfgCorrF, String(configStore.getCorrectionFactor(), 2).c_str(), true);
   mqttManager.publish(topicCfgHclMol, String(configStore.getHClMolarity(), 3).c_str(), true);
   mqttManager.publish(topicCfgHclVol, String(configStore.getHClVolume(), 0).c_str(), true);
-  mqttManager.publish(topicCfgCalDrops, String(configStore.getCalDrops()).c_str(), true);
+  mqttManager.publish(topicCfgCalDrops, String(configStore.getCalUnits()).c_str(), true);
   mqttManager.publish(topicCfgFastPH, String(configStore.getFastTitrationPH(), 1).c_str(), true);
 
   for (int i = 0; i < 8; i++) {
@@ -457,7 +457,7 @@ void handleConfigSet(const char* topic, const char* payload) {
     configStore.setHClVolume(val);
     mqttManager.publish(topicCfgHclVol, String(val, 0).c_str(), true);
   } else if (strcmp(topic, topicCfgCalDropsSet) == 0) {
-    configStore.setCalDrops((int)val);
+    configStore.setCalUnits((int)val);
     mqttManager.publish(topicCfgCalDrops, String((int)val).c_str(), true);
   } else if (strcmp(topic, topicCfgFastPHSet) == 0) {
     configStore.setFastTitrationPH(val);

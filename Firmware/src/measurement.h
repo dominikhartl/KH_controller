@@ -31,6 +31,7 @@ float getAcidEfficiency();               // Nernst efficiency % for acid segment
 float getAlkalineEfficiency();           // Nernst efficiency % for alkaline segment
 float getProbeAsymmetry();               // % difference between acid/base slopes
 const char* getProbeHealth();            // "Good", "Fair", or "Replace"
+const char* getProbeHealthDetail(char* reasonBuf, size_t reasonLen);  // Same, with reason string
 
 // Gran transformation endpoint detection
 struct TitrationPoint {
@@ -41,7 +42,7 @@ struct TitrationPoint {
 // Determine equivalence point via Gran function linearization
 // Returns equivalence units, or NAN on failure. outR2 receives R² of fit.
 float granAnalysis(TitrationPoint* points, int nPoints,
-                   float sampleVol, float titVol, float calDrops,
+                   float sampleVol, float titVol, float calUnits,
                    float* outR2);
 
 // Fallback: linear interpolation to find where pH crosses targetPH

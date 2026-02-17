@@ -15,6 +15,7 @@ extern char topicCfgCorrF[60];
 extern char topicCfgHclMol[60];
 extern char topicCfgHclVol[60];
 extern char topicCfgCalDrops[60];
+extern char topicCfgFastPH[60];
 extern char topicCfgSched[8][60];
 extern char topicCfgSchedMode[60];
 extern char topicCfgIntervalHours[60];

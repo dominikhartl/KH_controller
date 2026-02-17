@@ -47,14 +47,14 @@ float ConfigStore::getSampleVolume() { return prefs.getFloat("sam_vol", 82.0); }
 float ConfigStore::getCorrectionFactor() { return prefs.getFloat("corr_f", 1.0); }
 float ConfigStore::getHClMolarity() { return prefs.getFloat("hcl_mol", 0.02); }
 float ConfigStore::getHClVolume() { return prefs.getFloat("hcl_vol", 5000.0); }
-int ConfigStore::getCalDrops() { return prefs.getInt("cal_drops", 6000); }
+int ConfigStore::getCalUnits() { return prefs.getInt("cal_drops", 6000); }
 float ConfigStore::getFastTitrationPH() { return prefs.getFloat("fast_ph", FAST_TITRATION_PH_DEFAULT); }
 void ConfigStore::setTitrationVolume(float v) { prefs.putFloat("tit_vol", v); }
 void ConfigStore::setSampleVolume(float v) { prefs.putFloat("sam_vol", v); }
 void ConfigStore::setCorrectionFactor(float v) { prefs.putFloat("corr_f", v); }
 void ConfigStore::setHClMolarity(float v) { prefs.putFloat("hcl_mol", v); }
 void ConfigStore::setHClVolume(float v) { prefs.putFloat("hcl_vol", v); }
-void ConfigStore::setCalDrops(int v) { prefs.putInt("cal_drops", v); }
+void ConfigStore::setCalUnits(int v) { prefs.putInt("cal_drops", v); }
 void ConfigStore::setFastTitrationPH(float v) { prefs.putFloat("fast_ph", v); }
 
 // Last measurement results

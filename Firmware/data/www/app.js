@@ -3,6 +3,11 @@
 
   var MAX_SCHEDULES = 8;
 
+  // Calibration values for unit→mL conversion on live chart
+  var calUnits = 6000, titrationVol = 13.4;
+
+  function unitsToML(u) { return (calUnits > 0) ? (u / calUnits * titrationVol) : u; }
+
   // --- WebSocket ---
   var ws, wsOk = false, reconnTimer;
 
@@ -104,7 +109,7 @@
       liveChart.data.datasets[0].data = [];
     }
     for (var i = 0; i < d.data.length; i++) {
-      liveChart.data.labels.push(d.data[i][0]);
+      liveChart.data.labels.push(unitsToML(d.data[i][0]).toFixed(2));
       liveChart.data.datasets[0].data.push(d.data[i][1]);
     }
     if (d.chunk === d.total - 1) liveChart.update();
@@ -142,6 +147,8 @@
 
     // Config values
     if (d.config) {
+      if (d.config.cal_drops > 0) calUnits = d.config.cal_drops;
+      if (d.config.titration_vol > 0) titrationVol = d.config.titration_vol;
       setInput('cfg-titration_vol', d.config.titration_vol);
       setInput('cfg-sample_vol', d.config.sample_vol);
       setInput('cfg-correction_factor', d.config.correction_factor);
@@ -253,7 +260,7 @@
 
   function updateLivePH(d) {
     if (liveChart) {
-      liveChart.data.labels.push(d.units);
+      liveChart.data.labels.push(unitsToML(d.units).toFixed(2));
       liveChart.data.datasets[0].data.push(d.ph);
       liveChart.update('none');
     }

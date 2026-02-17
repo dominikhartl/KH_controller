@@ -37,11 +37,22 @@ static int rampStepCount() {
   return count;
 }
 
+// Track last direction for backlash compensation
+static bool lastSampleDirection = true;
+
 // Shared sample pump logic — direction is the only difference between remove and fill
 static void runSamplePump(int volume, bool forward) {
   digitalWrite(EN_PIN1, LOW);
   delay(MOTOR_ENABLE_DELAY_MS);
   digitalWrite(DIR_PIN1, forward ? HIGH : LOW);
+
+  // Backlash compensation on direction reversal
+  if (forward != lastSampleDirection) {
+    for (int i = 0; i < BACKLASH_COMPENSATION_STEPS; i++) {
+      stepPulse(STEP_PIN1, MOTOR_START_SPEED);
+    }
+  }
+  lastSampleDirection = forward;
   unsigned long startTime = millis();
 
   int totalSteps = volume * STEPS_PER_REVOLUTION;
@@ -129,7 +140,7 @@ void titrate(int volume, int stepDelay) {
   digitalWrite(DIR_PIN2, LOW);
   unsigned long startTime = millis();
 
-  int totalSteps = volume * MOTOR_STEPS_PER_DROP;
+  int totalSteps = volume * MOTOR_STEPS_PER_UNIT;
 
   if (volume > TITRATE_ACCEL_THRESHOLD) {
     // Large volume: use acceleration/deceleration
@@ -146,19 +157,28 @@ void titrate(int volume, int stepDelay) {
 
     int stepsDone = 0;
 
+    // Yield every 500 steps (~2s at slowest speed) to prevent WDT reset
+    static const int WDT_YIELD_STEPS = 500;
+
     // Acceleration
     float acc = MOTOR_START_SPEED;
     while (acc > (float)stepDelay && stepsDone < decelStart) {
       stepPulse(STEP_PIN2, acc);
       acc *= MOTOR_ACCEL_FACTOR;
       stepsDone++;
+      if (stepsDone % WDT_YIELD_STEPS == 0) delay(1);
     }
+
+    // Record actual speed reached (may not have hit target if ramp > totalSteps/2)
+    float speedReached = acc;
 
     // Constant speed
     while (stepsDone < decelStart) {
       stepPulse(STEP_PIN2, (float)stepDelay);
       stepsDone++;
-      if (stepsDone % (MOTOR_STEPS_PER_DROP * MOTOR_YIELD_INTERVAL * 50) == 0) {
+      speedReached = (float)stepDelay;
+      if (stepsDone % WDT_YIELD_STEPS == 0) {
+        delay(1);
         if (yieldCb) yieldCb();
         if (millis() - startTime > TITRATION_TIMEOUT_MS) {
           Serial.println("ERROR: Titration timeout!");
@@ -167,16 +187,17 @@ void titrate(int volume, int stepDelay) {
       }
     }
 
-    // Deceleration
-    acc = (float)stepDelay;
+    // Deceleration — start from actual speed, not target
+    acc = speedReached;
     while (stepsDone < totalSteps) {
       stepPulse(STEP_PIN2, acc);
       acc /= MOTOR_ACCEL_FACTOR;
       if (acc > MOTOR_START_SPEED) acc = MOTOR_START_SPEED;
       stepsDone++;
+      if (stepsDone % WDT_YIELD_STEPS == 0) delay(1);
     }
   } else {
-    // Small volume (typical titration drops): run directly, no ramp needed
+    // Small volume (typical titration steps): run directly, no ramp needed
     for (int i = 0; i < totalSteps; i++) {
       stepPulse(STEP_PIN2, (float)stepDelay);
     }

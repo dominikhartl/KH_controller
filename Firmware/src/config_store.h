@@ -16,19 +16,19 @@ public:
   void setVoltage10PH(float v);
 
   // KH calculation parameters
-  float getTitrationVolume();   // mL per calDrops units (default 13.4)
+  float getTitrationVolume();   // mL per calUnits (default 13.4)
   float getSampleVolume();      // mL (default 82.0)
   float getCorrectionFactor();  // unitless (default 1.0)
   float getHClMolarity();       // mol/L (default 0.02)
   float getHClVolume();         // mL remaining (default 5000)
-  int getCalDrops();            // units per calibration run (default 6000)
+  int getCalUnits();             // units per calibration run (default 6000)
   float getFastTitrationPH();   // pH threshold: fast→precise (default 5.8)
   void setTitrationVolume(float v);
   void setSampleVolume(float v);
   void setCorrectionFactor(float v);
   void setHClMolarity(float v);
   void setHClVolume(float v);
-  void setCalDrops(int v);
+  void setCalUnits(int v);
   void setFastTitrationPH(float v);
 
   // Last measurement results (persistent across reboots)

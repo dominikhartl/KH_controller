@@ -46,14 +46,14 @@ void publishMessage(const char* message) {
 
 // --- HCl tracking helper ---
 void subtractHCl(int unitsUsed) {
-  float calDrops = (float)configStore.getCalDrops();
-  if (calDrops <= 0) {
-    publishError("Error: calDrops is zero, cannot track HCl!");
+  float calUnits = (float)configStore.getCalUnits();
+  if (calUnits <= 0) {
+    publishError("Error: calUnits is zero, cannot track HCl!");
     return;
   }
   float titVol = configStore.getTitrationVolume();
   float hclVol = configStore.getHClVolume();
-  float used = ((float)unitsUsed / calDrops) * titVol;
+  float used = ((float)unitsUsed / calUnits) * titVol;
   float remaining = hclVol - used;
   if (remaining < 0) remaining = 0;
   configStore.setHClVolume(remaining);
@@ -64,35 +64,24 @@ void subtractHCl(int unitsUsed) {
 void calibrateTitrationPump() {
   publishMessage("Calibrating pump");
   units = 0;
-  // Fast phase: 200-unit batches (matches measureKH fast phase)
-  const int FAST_BATCH = 200;
-  int fastTarget = CALIBRATION_TARGET_DROPS / 2;
-  while (units < fastTarget) {
-    int batch = min(FAST_BATCH, fastTarget - units);
+  // Pump CALIBRATION_TARGET_UNITS in 200-unit batches
+  // Peristaltic pump delivers fixed volume per revolution regardless of speed
+  const int BATCH = 200;
+  while (units < CALIBRATION_TARGET_UNITS) {
+    int batch = min(BATCH, CALIBRATION_TARGET_UNITS - units);
     titrate(batch, TITRATION_SPEED);
     units += batch;
     delay(TITRATION_MIX_DELAY_FAST_MS);
     mqttManager.loop();
     ArduinoOTA.handle();
+    ws.cleanupClients();
     if (units % 1000 == 0) {
       char buf[48];
-      snprintf(buf, sizeof(buf), "Units: %d / %d", units, CALIBRATION_TARGET_DROPS);
+      snprintf(buf, sizeof(buf), "Units: %d / %d", units, CALIBRATION_TARGET_UNITS);
       publishMessage(buf);
     }
   }
-  // Slow phase: 2-unit steps (matches measureKH precise phase)
-  while (units < CALIBRATION_TARGET_DROPS) {
-    titrate(TITRATION_STEP_SIZE, TITRATION_SPEED);
-    delay(TITRATION_MIX_DELAY_MS);
-    units += TITRATION_STEP_SIZE;
-    mqttManager.loop();
-    if (units % 1000 == 0) {
-      char buf[48];
-      snprintf(buf, sizeof(buf), "Units: %d / %d", units, CALIBRATION_TARGET_DROPS);
-      publishMessage(buf);
-    }
-  }
-  subtractHCl(CALIBRATION_TARGET_DROPS);
+  subtractHCl(CALIBRATION_TARGET_UNITS);
   units = 0;
   digitalWrite(EN_PIN2, HIGH);
   publishMessage("Pump calibration done");
@@ -135,9 +124,9 @@ void measureKH() {
     stopStirrer();
     digitalWrite(EN_PIN2, HIGH);
     errorflag = 1;
-  } else if (pH < ENDPOINT_PH + 1.0) {
+  } else if (pH < 7.0) {
     startPH = pH;
-    errorMessage = "Error: Starting pH too low";
+    errorMessage = "Error: Starting pH too low (possible carryover)";
     stopStirrer();
     digitalWrite(EN_PIN2, HIGH);
     errorflag = 1;
@@ -148,10 +137,11 @@ void measureKH() {
     mqttManager.loop();
 
     // Check probe health and calibration age
-    const char* health = getProbeHealth();
+    char reason[96];
+    const char* health = getProbeHealthDetail(reason, sizeof(reason));
     if (strcmp(health, "Good") != 0) {
-      char hBuf[64];
-      snprintf(hBuf, sizeof(hBuf), "Warning: Probe health: %s", health);
+      char hBuf[128];
+      snprintf(hBuf, sizeof(hBuf), "Warning: Probe %s — %s", health, reason);
       publishError(hBuf);
     }
     uint32_t calTs = configStore.getCalTimestamp();
@@ -167,7 +157,7 @@ void measureKH() {
 
     float fastPH = configStore.getFastTitrationPH();
 
-    // --- Fast phase: pump 200-unit batches until pH drops below fastPH ---
+    // --- Fast phase: pump 200-unit batches until pH falls below fastPH ---
     const int FAST_BATCH = 200;
     float lastFastPH = startPH;
     int stallCount = 0;
@@ -202,33 +192,42 @@ void measureKH() {
     int nPoints = 0;
     int granCount = 0;
 
-    // Record starting point from fast phase
-    dataPoints[nPoints++] = {(float)units, pH};
-
     if (errorflag == 0) {
       char buf[32];
       snprintf(buf, sizeof(buf), "Precise phase (pH %.1f)", pH);
       publishMessage(buf);
     }
 
+    // Store data points only near the endpoint (pH < 5.0) to avoid filling the buffer
+    // with useless high-pH coarse-step data
+    static const float DATA_STORE_PH = 5.0f;
+
     while (!isnan(pH) && pH > GRAN_STOP_PH && units < MAX_TITRATION_UNITS
-           && nPoints < MAX_TITRATION_POINTS && granCount < MAX_GRAN_POINTS && errorflag == 0) {
+           && granCount < MAX_GRAN_POINTS && errorflag == 0) {
       int stepVol;
-      if (pH > (ENDPOINT_PH + 0.5)) {
-        stepVol = TITRATION_STEP_SIZE * 2;  // 4 units: coarse steps far from endpoint
+      if (pH > DATA_STORE_PH) {
+        // Approach: large steps, just get near the endpoint
+        stepVol = TITRATION_STEP_SIZE * 10; // 20 units
         titrate(stepVol, TITRATION_SPEED);
         delay(TITRATION_MIX_DELAY_FAST_MS);
-        measurePHFast(10);
-      } else {
-        stepVol = TITRATION_STEP_SIZE;      // 2 units: fine steps through endpoint and beyond
+        measurePHFast(3);
+      } else if (pH > GRAN_REGION_PH) {
+        // Near endpoint: medium steps, fast measurement, store for interpolation
+        stepVol = TITRATION_STEP_SIZE * 4;  // 8 units
         titrate(stepVol, TITRATION_SPEED);
-        delay(TITRATION_MIX_DELAY_MS);
-        measurePH(20);
+        delay(TITRATION_MIX_DELAY_FAST_MS);
+        measurePHFast(5);
+      } else {
+        // Gran region: fine steps, precise measurement (stabilization handles equilibration)
+        stepVol = TITRATION_STEP_SIZE;      // 2 units
+        titrate(stepVol, TITRATION_SPEED);
+        delay(TITRATION_MIX_DELAY_FAST_MS);
+        measurePH(10);
       }
       units += stepVol;
 
-      // Store data point for Gran analysis
-      if (nPoints < MAX_TITRATION_POINTS) {
+      // Store data points near the endpoint for Gran analysis and interpolation
+      if (pH < DATA_STORE_PH && nPoints < MAX_TITRATION_POINTS) {
         dataPoints[nPoints++] = {(float)units, pH};
       }
       if (pH < GRAN_REGION_PH) granCount++;
@@ -252,14 +251,14 @@ void measureKH() {
     mqttManager.loop();
     if (errorflag == 0) {
       // Get calibration parameters
-      float calDrops = (float)configStore.getCalDrops();
+      float calUnits = (float)configStore.getCalUnits();
       float titVol = configStore.getTitrationVolume();
       float samVol = configStore.getSampleVolume();
       float corrF = configStore.getCorrectionFactor();
       float hclMol = configStore.getHClMolarity();
 
-      if (calDrops <= 0 || samVol <= 0) {
-        errorMessage = "Error: invalid calibration (calDrops or samVol is zero)";
+      if (calUnits <= 0 || samVol <= 0) {
+        errorMessage = "Error: invalid calibration (calUnits or samVol is zero)";
         errorflag = 1;
         publishError(errorMessage);
       } else {
@@ -269,7 +268,7 @@ void measureKH() {
         bool usedGran = false;
 
         if (granCount >= MIN_GRAN_POINTS) {
-          exactUnits = granAnalysis(dataPoints, nPoints, samVol, titVol, calDrops, &granR2);
+          exactUnits = granAnalysis(dataPoints, nPoints, samVol, titVol, calUnits, &granR2);
           if (!isnan(exactUnits)) {
             usedGran = true;
           } else {
@@ -286,7 +285,7 @@ void measureKH() {
           errorflag = 1;
           publishError(errorMessage);
         } else {
-          float hclUsed = (exactUnits / calDrops) * titVol;
+          float hclUsed = (exactUnits / calUnits) * titVol;
           float khValue = (hclUsed / samVol) * 2800.0f * hclMol * corrF;
           subtractHCl(units + FILL_VOLUME);
 
@@ -326,9 +325,24 @@ void measureKH() {
       publishError(errorMessage);
     }
   }
+  // Anti-suckback: small reverse to prevent drip from titration nozzle
+  digitalWrite(DIR_PIN2, HIGH);  // Reverse
+  for (int i = 0; i < ANTI_SUCKBACK_STEPS; i++) {
+    digitalWrite(STEP_PIN2, HIGH);
+    delayMicroseconds((unsigned int)MOTOR_START_SPEED);
+    digitalWrite(STEP_PIN2, LOW);
+    delayMicroseconds((unsigned int)MOTOR_START_SPEED);
+  }
+  digitalWrite(DIR_PIN2, LOW);   // Restore forward
   digitalWrite(EN_PIN2, HIGH);
+
   stopStirrer();
-  washSample(1.5, 1);
+
+  // Double rinse to eliminate acid carryover
+  washSample(1.5, 1.0);
+  delay(2000);
+  washSample(1.2, 1.0);
+
   if (errorflag == 0) {
     publishMessage("Done!");
   } else {
