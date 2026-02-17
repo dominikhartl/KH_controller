@@ -15,6 +15,9 @@ float voltage_10PH = 0;
 static float phSlope = 0;
 static float phOffset = 7.0;
 
+// Response time tracking
+static unsigned long lastStabilizationMs = 0;
+
 // Sort an array of floats in ascending order (bubble sort — sufficient for small N)
 static void sortFloats(float* arr, int count) {
   for (int i = 0; i < count - 1; i++) {
@@ -78,6 +81,74 @@ bool isCalibrationValid() {
   return true;
 }
 
+// --- Probe health metrics ---
+
+unsigned long getLastStabilizationMs() {
+  return lastStabilizationMs;
+}
+
+float getProbeSlope() {
+  if (!isCalibrationValid()) return NAN;
+  float slopeAcid = (voltage_7PH - voltage_4PH) / 3.0f;
+  float slopeBase = (voltage_10PH - voltage_7PH) / 3.0f;
+  return (slopeAcid + slopeBase) / 2.0f;
+}
+
+float getAcidSlope() {
+  if (!isCalibrationValid()) return NAN;
+  return (voltage_7PH - voltage_4PH) / 3.0f;  // Conditioned mV/pH for pH 4→7
+}
+
+float getAlkalineSlope() {
+  if (!isCalibrationValid()) return NAN;
+  return (voltage_10PH - voltage_7PH) / 3.0f;  // Conditioned mV/pH for pH 7→10
+}
+
+// Nernst efficiency: raw probe slope vs theoretical at measurement temperature
+// raw_slope = conditioned_slope / amplifier_gain
+// efficiency = |raw_slope| / nernst_at_temp * 100%
+static float slopeToEfficiency(float conditionedSlope) {
+  if (isnan(conditionedSlope)) return NAN;
+  float nernst = NERNST_FACTOR * (273.15f + MEASUREMENT_TEMP_C);
+  float rawSlope = fabsf(conditionedSlope) / PH_AMP_GAIN;
+  return (rawSlope / nernst) * 100.0f;
+}
+
+float getAcidEfficiency() {
+  return slopeToEfficiency(getAcidSlope());
+}
+
+float getAlkalineEfficiency() {
+  return slopeToEfficiency(getAlkalineSlope());
+}
+
+float getProbeAsymmetry() {
+  if (!isCalibrationValid()) return NAN;
+  float slopeAcid = fabsf((voltage_7PH - voltage_4PH) / 3.0f);
+  float slopeBase = fabsf((voltage_10PH - voltage_7PH) / 3.0f);
+  float avg = (slopeAcid + slopeBase) / 2.0f;
+  if (avg < 1.0f) return NAN;
+  return fabsf(slopeAcid - slopeBase) / avg * 100.0f;
+}
+
+const char* getProbeHealth() {
+  float acidEff = getAcidEfficiency();
+  if (isnan(acidEff)) return "Unknown";
+
+  // Primary check: Nernst efficiency of acid slope (measurement range)
+  if (acidEff < PROBE_EFFICIENCY_FAIR) return "Replace";
+  if (acidEff < PROBE_EFFICIENCY_GOOD) return "Fair";
+
+  // Secondary: asymmetry and response time
+  float asym = getProbeAsymmetry();
+  if (!isnan(asym) && asym > PROBE_ASYMMETRY_FAIR) return "Replace";
+  if (lastStabilizationMs >= PROBE_RESPONSE_FAIR_MS) return "Replace";
+  if (lastStabilizationMs >= PROBE_RESPONSE_GOOD_MS) return "Fair";
+  if (!isnan(asym) && asym > PROBE_ASYMMETRY_GOOD) return "Fair";
+
+  return "Good";
+}
+
 // Wait for ADC readings to converge instead of fixed delay
 static void waitForStabilization() {
   float prev = (float)analogReadMilliVolts(PH_PIN);
@@ -86,11 +157,13 @@ static void waitForStabilization() {
   while (millis() - start < STABILIZATION_TIMEOUT_MS) {
     float curr = (float)analogReadMilliVolts(PH_PIN);
     if (fabs(curr - prev) < STABILIZATION_THRESHOLD_MV) {
+      lastStabilizationMs = millis() - start;
       return;
     }
     prev = curr;
     delay(50);
   }
+  lastStabilizationMs = STABILIZATION_TIMEOUT_MS;  // Timed out
 }
 
 // pH measurement with adaptive stabilization, oversampling, and outlier removal
@@ -197,4 +270,88 @@ float measureVoltage(int nreadings) {
   float avgVoltage = sum / (endIdx - startIdx);
   voltage = avgVoltage;
   return avgVoltage;
+}
+
+// --- Gran transformation endpoint detection ---
+
+float granAnalysis(TitrationPoint* points, int nPoints,
+                   float sampleVol, float titVol, float calDrops,
+                   float* outR2) {
+  if (nPoints < 3 || calDrops <= 0) return NAN;
+
+  float k = titVol / calDrops;  // mL per unit
+
+  // Select points in the linear Gran region (excess acid past equivalence)
+  float sumX = 0, sumY = 0, sumXX = 0, sumXY = 0, sumYY = 0;
+  int count = 0;
+
+  for (int i = 0; i < nPoints; i++) {
+    if (points[i].pH < GRAN_REGION_PH && points[i].pH > GRAN_STOP_PH) {
+      float x = points[i].units;
+      float totalVol = sampleVol + x * k;
+      float y = totalVol * powf(10.0f, -points[i].pH);
+      sumX += x;
+      sumY += y;
+      sumXX += x * x;
+      sumXY += x * y;
+      sumYY += y * y;
+      count++;
+    }
+  }
+
+  if (count < MIN_GRAN_POINTS) return NAN;
+
+  float denom = (float)count * sumXX - sumX * sumX;
+  if (fabsf(denom) < 1e-12f) return NAN;
+
+  float slope = ((float)count * sumXY - sumX * sumY) / denom;
+  float intercept = (sumY - slope * sumX) / (float)count;
+
+  // Slope must be positive (F increases with acid volume)
+  if (slope <= 0) return NAN;
+
+  // Equivalence point: where F = 0 → x = -intercept/slope
+  float eqUnits = -intercept / slope;
+
+  // Sanity: equivalence must be before the first Gran-region point
+  // (the equivalence is where excess acid starts, so it's before our regression data)
+  if (eqUnits < 0) return NAN;
+  if (eqUnits > points[nPoints - 1].units) return NAN;
+
+  // Compute R² for fit quality
+  if (outR2) {
+    float meanY = sumY / (float)count;
+    float ssTot = sumYY - (float)count * meanY * meanY;
+    float ssRes = 0;
+    for (int i = 0; i < nPoints; i++) {
+      if (points[i].pH < GRAN_REGION_PH && points[i].pH > GRAN_STOP_PH) {
+        float x = points[i].units;
+        float totalVol = sampleVol + x * k;
+        float y = totalVol * powf(10.0f, -points[i].pH);
+        float pred = slope * x + intercept;
+        float res = y - pred;
+        ssRes += res * res;
+      }
+    }
+    *outR2 = (ssTot > 1e-12f) ? 1.0f - ssRes / ssTot : 0.0f;
+
+    // Reject poor fits
+    if (*outR2 < 0.95f) return NAN;
+  }
+
+  return eqUnits;
+}
+
+float interpolateAtPH(TitrationPoint* points, int nPoints, float targetPH) {
+  // Find two consecutive points that bracket the target pH (pH decreasing)
+  for (int i = 1; i < nPoints; i++) {
+    if (points[i - 1].pH > targetPH && points[i].pH <= targetPH) {
+      float prevPH = points[i - 1].pH;
+      float currPH = points[i].pH;
+      if (fabsf(prevPH - currPH) < 1e-6f) continue;
+      float fraction = (prevPH - targetPH) / (prevPH - currPH);
+      return points[i - 1].units + fraction * (points[i].units - points[i - 1].units);
+    }
+  }
+  return NAN;  // No crossing found
 }

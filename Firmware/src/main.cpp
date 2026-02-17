@@ -4,6 +4,7 @@
 #include <config.h>
 #include <ArduinoJson.h>
 #include <pins.h>
+#include <time.h>
 
 #include "motors.h"
 #include "stirrer.h"
@@ -16,7 +17,7 @@
 #include "web_server.h"
 
 // --- Global state ---
-int drops = 0;
+int units = 0;
 float startPH = 0;
 bool discoveryPublished = false;
 unsigned long lastDiagnosticsTime = 0;
@@ -44,7 +45,7 @@ void publishMessage(const char* message) {
 }
 
 // --- HCl tracking helper ---
-void subtractHCl(int dropsUsed) {
+void subtractHCl(int unitsUsed) {
   float calDrops = (float)configStore.getCalDrops();
   if (calDrops <= 0) {
     publishError("Error: calDrops is zero, cannot track HCl!");
@@ -52,7 +53,7 @@ void subtractHCl(int dropsUsed) {
   }
   float titVol = configStore.getTitrationVolume();
   float hclVol = configStore.getHClVolume();
-  float used = ((float)dropsUsed / calDrops) * titVol;
+  float used = ((float)unitsUsed / calDrops) * titVol;
   float remaining = hclVol - used;
   if (remaining < 0) remaining = 0;
   configStore.setHClVolume(remaining);
@@ -62,37 +63,37 @@ void subtractHCl(int dropsUsed) {
 
 void calibrateTitrationPump() {
   publishMessage("Calibrating pump");
-  drops = 0;
-  // Fast phase: 200-drop batches (matches measureKH fast phase)
+  units = 0;
+  // Fast phase: 200-unit batches (matches measureKH fast phase)
   const int FAST_BATCH = 200;
   int fastTarget = CALIBRATION_TARGET_DROPS / 2;
-  while (drops < fastTarget) {
-    int batch = min(FAST_BATCH, fastTarget - drops);
+  while (units < fastTarget) {
+    int batch = min(FAST_BATCH, fastTarget - units);
     titrate(batch, TITRATION_SPEED);
-    drops += batch;
+    units += batch;
     delay(TITRATION_MIX_DELAY_FAST_MS);
     mqttManager.loop();
     ArduinoOTA.handle();
-    if (drops % 1000 == 0) {
-      char dropsBuf[48];
-      snprintf(dropsBuf, sizeof(dropsBuf), "Drops: %d / %d", drops, CALIBRATION_TARGET_DROPS);
-      publishMessage(dropsBuf);
+    if (units % 1000 == 0) {
+      char buf[48];
+      snprintf(buf, sizeof(buf), "Units: %d / %d", units, CALIBRATION_TARGET_DROPS);
+      publishMessage(buf);
     }
   }
-  // Slow phase: 2-drop steps (matches measureKH precise phase)
-  while (drops < CALIBRATION_TARGET_DROPS) {
+  // Slow phase: 2-unit steps (matches measureKH precise phase)
+  while (units < CALIBRATION_TARGET_DROPS) {
     titrate(TITRATION_STEP_SIZE, TITRATION_SPEED);
     delay(TITRATION_MIX_DELAY_MS);
-    drops += TITRATION_STEP_SIZE;
+    units += TITRATION_STEP_SIZE;
     mqttManager.loop();
-    if (drops % 1000 == 0) {
-      char dropsBuf[48];
-      snprintf(dropsBuf, sizeof(dropsBuf), "Drops: %d / %d", drops, CALIBRATION_TARGET_DROPS);
-      publishMessage(dropsBuf);
+    if (units % 1000 == 0) {
+      char buf[48];
+      snprintf(buf, sizeof(buf), "Units: %d / %d", units, CALIBRATION_TARGET_DROPS);
+      publishMessage(buf);
     }
   }
   subtractHCl(CALIBRATION_TARGET_DROPS);
-  drops = 0;
+  units = 0;
   digitalWrite(EN_PIN2, HIGH);
   publishMessage("Pump calibration done");
 }
@@ -110,7 +111,7 @@ void measureKH() {
 
   broadcastTitrationStart();  // Signal dashboard to clear live pH chart
   int errorflag = 0;
-  drops = 0;
+  units = 0;
   const char* errorMessage = "";
   publishError("");  // Clear previous error
 
@@ -146,20 +147,38 @@ void measureKH() {
     startPH = pH;
     mqttManager.loop();
 
+    // Check probe health and calibration age
+    const char* health = getProbeHealth();
+    if (strcmp(health, "Good") != 0) {
+      char hBuf[64];
+      snprintf(hBuf, sizeof(hBuf), "Warning: Probe health: %s", health);
+      publishError(hBuf);
+    }
+    uint32_t calTs = configStore.getCalTimestamp();
+    time_t now = time(nullptr);
+    if (calTs > 0 && now > 1000000000) {
+      int calAgeDays = (int)((now - calTs) / 86400);
+      if (calAgeDays > CALIBRATION_AGE_WARNING_DAYS) {
+        char aBuf[64];
+        snprintf(aBuf, sizeof(aBuf), "Warning: Calibration is %d days old", calAgeDays);
+        publishError(aBuf);
+      }
+    }
+
     float fastPH = configStore.getFastTitrationPH();
 
-    // --- Fast phase: pump 200-drop batches until pH drops below fastPH ---
+    // --- Fast phase: pump 200-unit batches until pH drops below fastPH ---
     const int FAST_BATCH = 200;
     float lastFastPH = startPH;
     int stallCount = 0;
     publishMessage("Fast titration");
 
-    while (pH > fastPH && drops < MAX_TITRATION_DROPS && errorflag == 0) {
+    while (pH > fastPH && units < MAX_TITRATION_UNITS && errorflag == 0) {
       titrate(FAST_BATCH, TITRATION_SPEED);
-      drops += FAST_BATCH;
+      units += FAST_BATCH;
       delay(TITRATION_MIX_DELAY_FAST_MS);
       measurePHFast(5);
-      broadcastTitrationPH(pH, drops);
+      broadcastTitrationPH(pH, units);
       mqttManager.loop();
       ArduinoOTA.handle();
 
@@ -178,10 +197,13 @@ void measureKH() {
       }
     }
 
-    // --- Precise phase: adaptive steps with endpoint interpolation ---
-    float prevPH = pH;
-    int prevDrops = drops;
-    int lowcnt = 0;
+    // --- Precise phase: adaptive steps with Gran transformation ---
+    static TitrationPoint dataPoints[MAX_TITRATION_POINTS];
+    int nPoints = 0;
+    int granCount = 0;
+
+    // Record starting point from fast phase
+    dataPoints[nPoints++] = {(float)units, pH};
 
     if (errorflag == 0) {
       char buf[32];
@@ -189,44 +211,39 @@ void measureKH() {
       publishMessage(buf);
     }
 
-    while (!isnan(pH) && (pH > (ENDPOINT_PH - 0.1)) && (drops < MAX_TITRATION_DROPS) && (lowcnt < 3) && (errorflag == 0)) {
-      // Track previous reading for endpoint interpolation
-      prevPH = pH;
-      prevDrops = drops;
-
-      // Adaptive step size and measurement precision
+    while (!isnan(pH) && pH > GRAN_STOP_PH && units < MAX_TITRATION_UNITS
+           && nPoints < MAX_TITRATION_POINTS && granCount < MAX_GRAN_POINTS && errorflag == 0) {
       int stepVol;
       if (pH > (ENDPOINT_PH + 0.5)) {
-        stepVol = TITRATION_STEP_SIZE * 2;  // 4 drops
+        stepVol = TITRATION_STEP_SIZE * 2;  // 4 units: coarse steps far from endpoint
         titrate(stepVol, TITRATION_SPEED);
         delay(TITRATION_MIX_DELAY_FAST_MS);
         measurePHFast(10);
-      } else if (pH > ENDPOINT_PH) {
-        stepVol = TITRATION_STEP_SIZE;      // 2 drops
+      } else {
+        stepVol = TITRATION_STEP_SIZE;      // 2 units: fine steps through endpoint and beyond
         titrate(stepVol, TITRATION_SPEED);
         delay(TITRATION_MIX_DELAY_MS);
         measurePH(20);
-      } else {
-        // Below endpoint: confirmation with high precision
-        lowcnt++;
-        stepVol = TITRATION_STEP_SIZE;
-        titrate(stepVol, TITRATION_SPEED);
-        delay(TITRATION_MIX_DELAY_MS);
-        measurePH(30);
       }
-      drops += stepVol;
+      units += stepVol;
+
+      // Store data point for Gran analysis
+      if (nPoints < MAX_TITRATION_POINTS) {
+        dataPoints[nPoints++] = {(float)units, pH};
+      }
+      if (pH < GRAN_REGION_PH) granCount++;
 
       mqttManager.loop();
       ArduinoOTA.handle();
       ws.cleanupClients();
       mqttManager.publish(MQmespH, String(pH).c_str());
-      broadcastTitrationPH(pH, drops);
+      broadcastTitrationPH(pH, units);
 
       if (isnan(pH)) {
         errorMessage = "Error: pH probe not working!";
         errorflag = 1;
       }
-      if (drops >= MAX_TITRATION_DROPS - stepVol) {
+      if (units >= MAX_TITRATION_UNITS - stepVol) {
         errorMessage = "Error: reached acid max!";
         errorflag = 1;
       }
@@ -234,18 +251,7 @@ void measureKH() {
 
     mqttManager.loop();
     if (errorflag == 0) {
-      // Interpolate exact endpoint crossing for better accuracy
-      float exactDrops = (float)drops;
-      if (prevPH > ENDPOINT_PH && pH <= ENDPOINT_PH && prevPH > pH) {
-        float fraction = (prevPH - ENDPOINT_PH) / (prevPH - pH);
-        exactDrops = (float)prevDrops + fraction * (float)(drops - prevDrops);
-      }
-
-      publishMessage(("Drops: " + String((int)exactDrops)).c_str());
-      mqttManager.publish(MQKH, String((int)exactDrops).c_str());
-      mqttManager.publish(MQstartpH, String(startPH).c_str());
-
-      // Calculate KH on device
+      // Get calibration parameters
       float calDrops = (float)configStore.getCalDrops();
       float titVol = configStore.getTitrationVolume();
       float samVol = configStore.getSampleVolume();
@@ -257,29 +263,64 @@ void measureKH() {
         errorflag = 1;
         publishError(errorMessage);
       } else {
-        float hclUsed = (exactDrops / calDrops) * titVol;
-        float khValue = (hclUsed / samVol) * 2800.0f * hclMol * corrF;
-        subtractHCl(drops + FILL_VOLUME); // titration drops + prefill
+        // Determine equivalence point via Gran transformation
+        float granR2 = 0;
+        float exactUnits;
+        bool usedGran = false;
 
-        // HCl low-level warning
-        float remainingHCl = configStore.getHClVolume();
-        if (remainingHCl <= 0) {
-          publishError("Warning: HCl supply empty! Refill needed.");
-        } else if (remainingHCl < HCL_LOW_THRESHOLD_ML) {
-          char warnBuf[64];
-          snprintf(warnBuf, sizeof(warnBuf), "Warning: HCl low (%.0f mL remaining)", remainingHCl);
-          publishError(warnBuf);
+        if (granCount >= MIN_GRAN_POINTS) {
+          exactUnits = granAnalysis(dataPoints, nPoints, samVol, titVol, calDrops, &granR2);
+          if (!isnan(exactUnits)) {
+            usedGran = true;
+          } else {
+            exactUnits = interpolateAtPH(dataPoints, nPoints, ENDPOINT_PH);
+            publishMessage("Gran analysis failed, using interpolation");
+          }
+        } else {
+          exactUnits = interpolateAtPH(dataPoints, nPoints, ENDPOINT_PH);
+          publishMessage("Insufficient Gran data, using interpolation");
         }
 
-        mqttManager.publish(MQkhValue, String(khValue, 2).c_str(), true);
+        if (isnan(exactUnits)) {
+          errorMessage = "Error: could not determine equivalence point";
+          errorflag = 1;
+          publishError(errorMessage);
+        } else {
+          float hclUsed = (exactUnits / calDrops) * titVol;
+          float khValue = (hclUsed / samVol) * 2800.0f * hclMol * corrF;
+          subtractHCl(units + FILL_VOLUME);
 
-        // Save last measurement for persistent dashboard display
-        configStore.setLastKH(khValue);
-        configStore.setLastStartPH(startPH);
+          // Publish volume and endpoint info
+          char volBuf[64];
+          if (usedGran) {
+            snprintf(volBuf, sizeof(volBuf), "Endpoint: %.2f mL (Gran, R²=%.3f)", hclUsed, granR2);
+          } else {
+            snprintf(volBuf, sizeof(volBuf), "Endpoint: %.2f mL (interpolation at pH %.1f)", hclUsed, ENDPOINT_PH);
+          }
+          publishMessage(volBuf);
+          mqttManager.publish(MQKH, String(hclUsed, 2).c_str());
+          mqttManager.publish(MQstartpH, String(startPH).c_str());
 
-        // Store history for web dashboard charts
-        appendHistory("kh", khValue);
-        appendHistory("ph", startPH);
+          // HCl low-level warning
+          float remainingHCl = configStore.getHClVolume();
+          if (remainingHCl <= 0) {
+            publishError("Warning: HCl supply empty! Refill needed.");
+          } else if (remainingHCl < HCL_LOW_THRESHOLD_ML) {
+            char warnBuf[64];
+            snprintf(warnBuf, sizeof(warnBuf), "Warning: HCl low (%.0f mL remaining)", remainingHCl);
+            publishError(warnBuf);
+          }
+
+          mqttManager.publish(MQkhValue, String(khValue, 2).c_str(), true);
+
+          // Save last measurement for persistent dashboard display
+          configStore.setLastKH(khValue);
+          configStore.setLastStartPH(startPH);
+
+          // Store history for web dashboard charts
+          appendHistory("kh", khValue);
+          appendHistory("ph", startPH);
+        }
       }
     } else {
       publishError(errorMessage);

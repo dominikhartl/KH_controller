@@ -3,8 +3,11 @@
 #include "scheduler.h"
 #include "wifi_manager.h"
 #include "web_server.h"
+#include "measurement.h"
 #include <config.h>
 #include <ArduinoJson.h>
+#include <time.h>
+#include <math.h>
 
 // Config state topics
 char topicCfgTitVol[60];
@@ -208,6 +211,33 @@ void publishAllDiscovery() {
   publishSensorDiscovery("khv3_uptime", "Uptime", topicDiagnostics, "s", "duration",
                           "{{ value_json.uptime }}", "diagnostic");
 
+  // Probe health sensors
+  publishSensorDiscovery("khv3_acid_eff", "Acid Slope Efficiency", topicDiagnostics, "%", nullptr,
+                          "{{ value_json.acid_efficiency }}", "diagnostic");
+  publishSensorDiscovery("khv3_alk_eff", "Alkaline Slope Efficiency", topicDiagnostics, "%", nullptr,
+                          "{{ value_json.alk_efficiency }}", "diagnostic");
+  publishSensorDiscovery("khv3_probe_asym", "Probe Asymmetry", topicDiagnostics, "%", nullptr,
+                          "{{ value_json.probe_asymmetry }}", "diagnostic");
+  publishSensorDiscovery("khv3_probe_resp", "Probe Response Time", topicDiagnostics, "ms", nullptr,
+                          "{{ value_json.probe_response }}", "diagnostic");
+  publishSensorDiscovery("khv3_cal_age", "Calibration Age", topicDiagnostics, "d", nullptr,
+                          "{{ value_json.cal_age }}", "diagnostic");
+
+  // Probe health text sensor (no unit, no state_class)
+  {
+    StaticJsonDocument<512> doc;
+    doc["name"] = "Probe Health";
+    doc["stat_t"] = topicDiagnostics;
+    doc["uniq_id"] = "khv3_probe_health";
+    doc["avty_t"] = availability_topic;
+    doc["val_tpl"] = "{{ value_json.probe_health }}";
+    doc["ent_cat"] = "diagnostic";
+    JsonObject root = doc.as<JsonObject>();
+    addDeviceBlock(root);
+    publishDiscoveryPayload(
+      "homeassistant/sensor/khcontrollerv3/khv3_probe_health/config", doc);
+  }
+
   // Text sensors (no unit, no state_class)
   {
     StaticJsonDocument<512> doc;
@@ -379,14 +409,33 @@ void publishAllConfigStates() {
 }
 
 void publishDiagnostics() {
-  StaticJsonDocument<128> doc;
+  StaticJsonDocument<512> doc;
   doc["rssi"] = wifiManager.getRSSI();
   doc["uptime"] = millis() / 1000;
   doc["heap"] = ESP.getFreeHeap();
 
-  char buf[128];
+  // Probe health metrics — Nernst efficiency per segment
+  float acidEff = getAcidEfficiency();
+  float alkEff = getAlkalineEfficiency();
+  float asym = getProbeAsymmetry();
+  doc["acid_efficiency"] = isnan(acidEff) ? 0 : (int)(acidEff + 0.5f);
+  doc["alk_efficiency"] = isnan(alkEff) ? 0 : (int)(alkEff + 0.5f);
+  doc["probe_asymmetry"] = isnan(asym) ? 0 : asym;
+  doc["probe_response"] = getLastStabilizationMs();
+  doc["probe_health"] = getProbeHealth();
+
+  // Calibration age in days
+  uint32_t calTs = configStore.getCalTimestamp();
+  time_t now = time(nullptr);
+  if (calTs > 0 && now > 1000000000) {
+    doc["cal_age"] = (int)((now - calTs) / 86400);
+  } else {
+    doc["cal_age"] = -1;  // No calibration timestamp recorded
+  }
+
+  char buf[512];
   serializeJson(doc, buf, sizeof(buf));
-  mqttManager.publish(topicDiagnostics, buf);
+  mqttManager.publish(topicDiagnostics, buf, true);
 }
 
 void handleConfigSet(const char* topic, const char* payload) {

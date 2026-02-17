@@ -6,7 +6,7 @@
 void setupWebServer();
 void executeCommand(const char* cmd);
 void broadcastState();
-void broadcastTitrationPH(float ph, int drops);
+void broadcastTitrationPH(float ph, int units);
 void broadcastTitrationStart();
 void broadcastMessage(const char* msg);
 void broadcastError(const char* msg);

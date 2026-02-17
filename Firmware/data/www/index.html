@@ -156,6 +156,39 @@
     <div class="log-container" id="log-container"></div>
   </section>
 
+  <section class="probe-health collapsible collapsed">
+    <h2 class="section-header">Probe Health <span class="chevron"></span></h2>
+    <div class="section-body">
+      <div class="probe-grid">
+        <div class="probe-item">
+          <span class="probe-label">Status</span>
+          <span class="probe-value" id="probe-health"><span class="health-dot"></span>--</span>
+        </div>
+        <div class="probe-item">
+          <span class="probe-label">Acid Slope</span>
+          <span class="probe-value" id="probe-acid-eff"><span class="health-dot"></span>--</span>
+        </div>
+        <div class="probe-item">
+          <span class="probe-label">Alk Slope</span>
+          <span class="probe-value" id="probe-alk-eff"><span class="health-dot"></span>--</span>
+        </div>
+        <div class="probe-item">
+          <span class="probe-label">Asymmetry</span>
+          <span class="probe-value" id="probe-asymmetry">-- <small>%</small></span>
+        </div>
+        <div class="probe-item">
+          <span class="probe-label">Response</span>
+          <span class="probe-value" id="probe-response">-- <small>ms</small></span>
+        </div>
+        <div class="probe-item">
+          <span class="probe-label">Cal Age</span>
+          <span class="probe-value" id="probe-cal-age">--</span>
+        </div>
+      </div>
+      <div class="slope-trend" id="slope-trend"></div>
+    </div>
+  </section>
+
   <section class="status-bar">
     <div><strong>RSSI:</strong> <span id="rssi">--</span> dBm</div>
     <div><strong>Uptime:</strong> <span id="uptime">--</span></div>

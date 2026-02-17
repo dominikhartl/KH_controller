@@ -109,3 +109,51 @@ void ConfigStore::setAnchorTime(uint16_t mins) {
   if (mins > 1439) mins = 1439;
   prefs.putUShort("sched_anch", mins);
 }
+
+// Calibration timestamp
+uint32_t ConfigStore::getCalTimestamp() { return prefs.getULong("cal_ts", 0); }
+void ConfigStore::setCalTimestamp(uint32_t ts) { prefs.putULong("cal_ts", ts); }
+
+// Slope history
+int ConfigStore::getSlopeHistory(SlopeEntry* entries, int maxEntries) {
+  uint8_t count = prefs.getUChar("sl_cnt", 0);
+  if (count > MAX_SLOPE_HISTORY) count = MAX_SLOPE_HISTORY;
+  int toRead = (count < maxEntries) ? count : maxEntries;
+  if (toRead > 0) {
+    SlopeEntry all[MAX_SLOPE_HISTORY];
+    prefs.getBytes("sl_data", all, count * sizeof(SlopeEntry));
+    // Return the last toRead entries (newest)
+    int offset = count - toRead;
+    memcpy(entries, all + offset, toRead * sizeof(SlopeEntry));
+  }
+  return toRead;
+}
+
+void ConfigStore::addSlopeEntry(uint32_t timestamp, float slope) {
+  if (isnan(slope)) return;
+
+  SlopeEntry entries[MAX_SLOPE_HISTORY];
+  uint8_t count = prefs.getUChar("sl_cnt", 0);
+  if (count > MAX_SLOPE_HISTORY) count = MAX_SLOPE_HISTORY;
+  if (count > 0) {
+    prefs.getBytes("sl_data", entries, count * sizeof(SlopeEntry));
+  }
+
+  // Dedup: if last entry is within 1 hour, update it (same calibration session)
+  if (count > 0 && timestamp > entries[count - 1].timestamp
+      && (timestamp - entries[count - 1].timestamp) < 3600) {
+    entries[count - 1].slope = slope;
+    entries[count - 1].timestamp = timestamp;
+  } else {
+    // Shift oldest out if full
+    if (count >= MAX_SLOPE_HISTORY) {
+      memmove(entries, entries + 1, (MAX_SLOPE_HISTORY - 1) * sizeof(SlopeEntry));
+      count = MAX_SLOPE_HISTORY - 1;
+    }
+    entries[count].timestamp = timestamp;
+    entries[count].slope = slope;
+    count++;
+    prefs.putUChar("sl_cnt", count);
+  }
+  prefs.putBytes("sl_data", entries, count * sizeof(SlopeEntry));
+}

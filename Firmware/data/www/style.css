@@ -220,6 +220,22 @@ h2{font-size:.8em;font-weight:600;color:var(--text-secondary);text-transform:upp
 .log-entry.error .log-text{color:var(--red);font-weight:600}
 .log-entry.error .log-time{color:var(--red)}
 
+/* === Probe health === */
+.probe-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.probe-item{display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid rgba(255,255,255,.05)}
+.probe-item:last-child{border-bottom:none}
+.probe-grid .probe-item:first-child{grid-column:1/-1}
+.probe-label{font-size:.75em;font-weight:500;color:var(--text-secondary);text-transform:uppercase;letter-spacing:.04em}
+.probe-value{font-size:.9em;font-weight:600;font-variant-numeric:tabular-nums;display:flex;align-items:center;gap:6px}
+.probe-value small{font-weight:400;color:var(--text-tertiary);font-size:.8em}
+.health-dot{width:8px;height:8px;border-radius:50%;display:inline-block;flex-shrink:0}
+.health-dot.good{background:var(--green);box-shadow:0 0 6px rgba(48,209,88,.4)}
+.health-dot.fair{background:var(--orange);box-shadow:0 0 6px rgba(255,159,10,.4)}
+.health-dot.replace{background:var(--red);box-shadow:0 0 6px rgba(255,69,58,.4)}
+.slope-trend{margin-top:10px;padding-top:8px;border-top:1px solid rgba(255,255,255,.05)}
+.slope-trend:empty{display:none}
+.sparkline-svg{width:100%;height:40px;display:block}
+
 /* === Status bar === */
 .status-bar{
   background:var(--card);border-radius:var(--radius);

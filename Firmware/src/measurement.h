@@ -22,4 +22,29 @@ void measurePH(int nreadings);
 void measurePHFast(int nreadings);  // No stabilization, 8x oversample — for far from endpoint
 float measureVoltage(int nreadings);
 
+// Probe health metrics
+unsigned long getLastStabilizationMs();  // Last stabilization time in ms
+float getProbeSlope();                   // Average conditioned mV/pH from calibration
+float getAcidSlope();                    // Conditioned mV/pH for pH 4→7 segment
+float getAlkalineSlope();                // Conditioned mV/pH for pH 7→10 segment
+float getAcidEfficiency();               // Nernst efficiency % for acid segment
+float getAlkalineEfficiency();           // Nernst efficiency % for alkaline segment
+float getProbeAsymmetry();               // % difference between acid/base slopes
+const char* getProbeHealth();            // "Good", "Fair", or "Replace"
+
+// Gran transformation endpoint detection
+struct TitrationPoint {
+  float units;
+  float pH;
+};
+
+// Determine equivalence point via Gran function linearization
+// Returns equivalence units, or NAN on failure. outR2 receives R² of fit.
+float granAnalysis(TitrationPoint* points, int nPoints,
+                   float sampleVol, float titVol, float calDrops,
+                   float* outR2);
+
+// Fallback: linear interpolation to find where pH crosses targetPH
+float interpolateAtPH(TitrationPoint* points, int nPoints, float targetPH);
+
 #endif // MEASUREMENT_H

@@ -11,6 +11,8 @@
 #include <LittleFS.h>
 #include <config.h>
 #include <pins.h>
+#include <time.h>
+#include <math.h>
 
 AsyncWebServer server(80);
 AsyncWebSocket ws("/ws");
@@ -18,7 +20,7 @@ AsyncWebSocket ws("/ws");
 // In-memory buffer for live titration pH data (survives page reload)
 // When full, downsamples by averaging pairs -> halves count, then continues
 static const uint16_t MES_BUF_MAX = 2000;
-struct MesPoint { int drops; float ph; };
+struct MesPoint { int units; float ph; };
 static MesPoint mesBuffer[MES_BUF_MAX];
 static uint16_t mesCount = 0;
 
@@ -34,11 +36,11 @@ static uint8_t logCount = 0;   // total entries stored (up to LOG_BUF_MAX)
 static uint8_t logHead = 0;    // next write position
 
 // Forward declarations for command/config handlers from main
-extern int drops;
+extern int units;
 extern float startPH;
 extern void measureKH();
 extern void calibrateTitrationPump();
-extern void subtractHCl(int dropsUsed);
+extern void subtractHCl(int unitsUsed);
 extern void publishMessage(const char* message);
 extern void publishError(const char* errorMessage);
 
@@ -98,7 +100,7 @@ static void sendMesData(AsyncWebSocketClient* client) {
     JsonArray dataArr = doc.createNestedArray("data");
     for (uint16_t i = start; i < end; i++) {
       JsonArray point = dataArr.createNestedArray();
-      point.add(mesBuffer[i].drops);
+      point.add(mesBuffer[i].units);
       point.add(mesBuffer[i].ph);
     }
 
@@ -277,7 +279,15 @@ void executeCommand(const char* cmd) {
     stopStirrer();
     configStore.setVoltage4PH(voltage_4PH);
     updateCalibrationFit();
+    configStore.setCalTimestamp((uint32_t)time(nullptr));
+    if (isCalibrationValid()) configStore.addSlopeEntry((uint32_t)time(nullptr), getAcidSlope());
     publishMessage("Calibrated pH 4");
+    const char* health = getProbeHealth();
+    if (strcmp(health, "Good") != 0) {
+      char hBuf[64];
+      snprintf(hBuf, sizeof(hBuf), "Warning: Probe health: %s", health);
+      publishError(hBuf);
+    }
   } else if (strcmp(cmd, "7") == 0) {
     startStirrer();
     delay(STIRRER_WARMUP_MS);
@@ -285,7 +295,15 @@ void executeCommand(const char* cmd) {
     stopStirrer();
     configStore.setVoltage7PH(voltage_7PH);
     updateCalibrationFit();
+    configStore.setCalTimestamp((uint32_t)time(nullptr));
+    if (isCalibrationValid()) configStore.addSlopeEntry((uint32_t)time(nullptr), getAcidSlope());
     publishMessage("Calibrated pH 7");
+    const char* health = getProbeHealth();
+    if (strcmp(health, "Good") != 0) {
+      char hBuf[64];
+      snprintf(hBuf, sizeof(hBuf), "Warning: Probe health: %s", health);
+      publishError(hBuf);
+    }
   } else if (strcmp(cmd, "10") == 0) {
     startStirrer();
     delay(STIRRER_WARMUP_MS);
@@ -293,7 +311,15 @@ void executeCommand(const char* cmd) {
     stopStirrer();
     configStore.setVoltage10PH(voltage_10PH);
     updateCalibrationFit();
+    configStore.setCalTimestamp((uint32_t)time(nullptr));
+    if (isCalibrationValid()) configStore.addSlopeEntry((uint32_t)time(nullptr), getAcidSlope());
     publishMessage("Calibrated pH 10");
+    const char* health = getProbeHealth();
+    if (strcmp(health, "Good") != 0) {
+      char hBuf[64];
+      snprintf(hBuf, sizeof(hBuf), "Warning: Probe health: %s", health);
+      publishError(hBuf);
+    }
   }
   broadcastState();
 }
@@ -306,11 +332,11 @@ void broadcastTitrationStart() {
 void broadcastState() {
   if (ws.count() == 0) return;
 
-  StaticJsonDocument<1024> doc;
+  StaticJsonDocument<1536> doc;
   doc["type"] = "state";
   doc["ph"] = pH;
   doc["startPh"] = startPH;
-  doc["drops"] = drops;
+  doc["units"] = units;
   doc["kh"] = configStore.getLastKH();
   doc["lastStartPh"] = configStore.getLastStartPH();
   doc["hclVol"] = configStore.getHClVolume();
@@ -320,6 +346,35 @@ void broadcastState() {
   doc["wifiOk"] = wifiManager.isConnected();
   doc["ntpOk"] = scheduler.isTimeSynced();
   doc["nextMeas"] = scheduler.getNextMeasurementTime();
+
+  // Probe health
+  JsonObject probe = doc.createNestedObject("probe");
+  probe["acidEff"] = getAcidEfficiency();
+  probe["alkEff"] = getAlkalineEfficiency();
+  probe["asymmetry"] = getProbeAsymmetry();
+  probe["response"] = getLastStabilizationMs();
+  probe["health"] = getProbeHealth();
+  uint32_t calTs = configStore.getCalTimestamp();
+  if (calTs > 0) {
+    time_t now = time(nullptr);
+    probe["calAge"] = (now > (time_t)calTs) ? (int)((now - calTs) / 86400) : 0;
+  } else {
+    probe["calAge"] = -1;  // never calibrated
+  }
+
+  // Efficiency history (acid slope over time, converted to Nernst %)
+  ConfigStore::SlopeEntry slopeHist[ConfigStore::MAX_SLOPE_HISTORY];
+  int slopeCount = configStore.getSlopeHistory(slopeHist, ConfigStore::MAX_SLOPE_HISTORY);
+  if (slopeCount > 0) {
+    float nernst = NERNST_FACTOR * (273.15f + MEASUREMENT_TEMP_C);
+    JsonArray eh = probe.createNestedArray("effHist");
+    for (int i = 0; i < slopeCount; i++) {
+      JsonArray entry = eh.createNestedArray();
+      entry.add(slopeHist[i].timestamp);
+      float eff = fabsf(slopeHist[i].slope) / PH_AMP_GAIN / nernst * 100.0f;
+      entry.add((int)(eff * 10.0f + 0.5f) / 10.0f);  // 1 decimal
+    }
+  }
 
   // Config values
   JsonObject cfg = doc.createNestedObject("config");
@@ -342,23 +397,23 @@ void broadcastState() {
     sched.add(configStore.getScheduleTime(i));
   }
 
-  char buf[1024];
+  char buf[1536];
   serializeJson(doc, buf, sizeof(buf));
   ws.textAll(buf);
 }
 
-void broadcastTitrationPH(float phVal, int dropsVal) {
+void broadcastTitrationPH(float phVal, int unitsVal) {
   // Downsample when buffer is full: average pairs to halve the count
   if (mesCount >= MES_BUF_MAX) {
     uint16_t newCount = mesCount / 2;
     for (uint16_t i = 0; i < newCount; i++) {
-      mesBuffer[i].drops = mesBuffer[i * 2 + 1].drops; // keep later drop count
+      mesBuffer[i].units = mesBuffer[i * 2 + 1].units; // keep later unit count
       mesBuffer[i].ph = (mesBuffer[i * 2].ph + mesBuffer[i * 2 + 1].ph) / 2.0f;
     }
     mesCount = newCount;
   }
 
-  mesBuffer[mesCount].drops = dropsVal;
+  mesBuffer[mesCount].units = unitsVal;
   mesBuffer[mesCount].ph = phVal;
   mesCount++;
 
@@ -367,7 +422,7 @@ void broadcastTitrationPH(float phVal, int dropsVal) {
   StaticJsonDocument<64> doc;
   doc["type"] = "mesPh";
   doc["ph"] = phVal;
-  doc["drops"] = dropsVal;
+  doc["units"] = unitsVal;
 
   char buf[64];
   serializeJson(doc, buf, sizeof(buf));

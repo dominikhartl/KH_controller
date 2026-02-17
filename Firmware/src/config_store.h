@@ -16,12 +16,12 @@ public:
   void setVoltage10PH(float v);
 
   // KH calculation parameters
-  float getTitrationVolume();   // mL per calDrops drops (default 13.4)
+  float getTitrationVolume();   // mL per calDrops units (default 13.4)
   float getSampleVolume();      // mL (default 82.0)
   float getCorrectionFactor();  // unitless (default 1.0)
   float getHClMolarity();       // mol/L (default 0.02)
   float getHClVolume();         // mL remaining (default 5000)
-  int getCalDrops();            // drops per calibration run (default 6000)
+  int getCalDrops();            // units per calibration run (default 6000)
   float getFastTitrationPH();   // pH threshold: fast→precise (default 5.8)
   void setTitrationVolume(float v);
   void setSampleVolume(float v);
@@ -52,6 +52,19 @@ public:
   void setIntervalHours(uint8_t h);
   uint16_t getAnchorTime();          // minutes from midnight
   void setAnchorTime(uint16_t mins);
+
+  // Calibration timestamp (Unix epoch)
+  uint32_t getCalTimestamp();
+  void setCalTimestamp(uint32_t ts);
+
+  // Slope history (up to 10 entries, newest last)
+  static const int MAX_SLOPE_HISTORY = 10;
+  struct SlopeEntry {
+    uint32_t timestamp;
+    float slope;
+  };
+  int getSlopeHistory(SlopeEntry* entries, int maxEntries);
+  void addSlopeEntry(uint32_t timestamp, float slope);
 
 private:
   Preferences prefs;

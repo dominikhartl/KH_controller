@@ -170,11 +170,90 @@
       if (anchInp && document.activeElement !== anchInp) anchInp.value = minsToTime(d.anchorTime);
     }
     updateIntervalPreview();
+
+    // Probe health
+    if (d.probe) updateProbeHealth(d.probe);
+  }
+
+  function effClass(v) {
+    return (v >= 95) ? 'good' : (v >= 85) ? 'fair' : 'replace';
+  }
+
+  function updateProbeHealth(p) {
+    var healthEl = document.getElementById('probe-health');
+    if (healthEl) {
+      var h = p.health || '--';
+      var cls = (h === 'Good') ? 'good' : (h === 'Fair') ? 'fair' : (h === 'Replace') ? 'replace' : '';
+      healthEl.innerHTML = '<span class="health-dot ' + cls + '"></span>' + h;
+    }
+
+    // Acid slope Nernst efficiency
+    var acidEl = document.getElementById('probe-acid-eff');
+    if (acidEl && p.acidEff != null) {
+      var av = isNaN(p.acidEff) ? '--' : p.acidEff.toFixed(1);
+      acidEl.innerHTML = '<span class="health-dot ' + (isNaN(p.acidEff) ? '' : effClass(p.acidEff)) + '"></span>' + av + ' <small>%</small>';
+    }
+
+    // Alkaline slope Nernst efficiency
+    var alkEl = document.getElementById('probe-alk-eff');
+    if (alkEl && p.alkEff != null) {
+      var bv = isNaN(p.alkEff) ? '--' : p.alkEff.toFixed(1);
+      alkEl.innerHTML = '<span class="health-dot ' + (isNaN(p.alkEff) ? '' : effClass(p.alkEff)) + '"></span>' + bv + ' <small>%</small>';
+    }
+
+    var asymEl = document.getElementById('probe-asymmetry');
+    if (asymEl && p.asymmetry != null) {
+      var aVal = isNaN(p.asymmetry) ? '--' : p.asymmetry.toFixed(1);
+      var aCls = (p.asymmetry < 15) ? 'good' : (p.asymmetry < 25) ? 'fair' : 'replace';
+      asymEl.innerHTML = '<span class="health-dot ' + (isNaN(p.asymmetry) ? '' : aCls) + '"></span>' + aVal + ' <small>%</small>';
+    }
+    var respEl = document.getElementById('probe-response');
+    if (respEl && p.response != null) {
+      respEl.innerHTML = p.response + ' <small>ms</small>';
+    }
+    var calEl = document.getElementById('probe-cal-age');
+    if (calEl && p.calAge != null) {
+      if (p.calAge < 0) {
+        calEl.textContent = 'Never';
+      } else {
+        calEl.innerHTML = p.calAge + ' <small>days</small>';
+      }
+    }
+
+    // Efficiency trend sparkline (acid slope over calibrations)
+    var trendEl = document.getElementById('slope-trend');
+    if (p.effHist && p.effHist.length > 1 && trendEl) {
+      renderSparkline(trendEl, p.effHist);
+    } else if (trendEl) {
+      trendEl.innerHTML = '';
+    }
+  }
+
+  function renderSparkline(container, data) {
+    var W = 200, H = 40, PAD = 4;
+    var vals = data.map(function(e) { return e[1]; });
+    var min = Math.min.apply(null, vals) - 2;
+    var max = Math.max.apply(null, vals) + 2;
+    if (max - min < 5) { var mid = (max + min) / 2; min = mid - 5; max = mid + 5; }
+    var n = vals.length;
+    var pts = [];
+    for (var i = 0; i < n; i++) {
+      var x = PAD + (n > 1 ? i / (n - 1) : 0.5) * (W - 2 * PAD);
+      var y = PAD + (1 - (vals[i] - min) / (max - min)) * (H - 2 * PAD);
+      pts.push(x.toFixed(1) + ',' + y.toFixed(1));
+    }
+    var last = vals[n - 1];
+    var color = (last >= 95) ? '#30d158' : (last >= 85) ? '#ff9f0a' : '#ff453a';
+    container.innerHTML =
+      '<svg viewBox="0 0 ' + W + ' ' + H + '" class="sparkline-svg">' +
+      '<polyline points="' + pts.join(' ') + '" fill="none" stroke="' + color + '" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>' +
+      '<circle cx="' + pts[n - 1].split(',')[0] + '" cy="' + pts[n - 1].split(',')[1] + '" r="3" fill="' + color + '"/>' +
+      '</svg>';
   }
 
   function updateLivePH(d) {
     if (liveChart) {
-      liveChart.data.labels.push(d.drops);
+      liveChart.data.labels.push(d.units);
       liveChart.data.datasets[0].data.push(d.ph);
       liveChart.update('none');
     }
@@ -227,7 +306,7 @@
       data: { labels: [], datasets: [{ data: [], borderColor: '#ff9f0a', borderWidth: 2, pointRadius: 0, tension: 0 }] },
       options: Object.assign({}, chartOpts, {
         scales: {
-          x: { title: { display: true, text: 'Drops', color: '#8e8e93' }, ticks: { color: '#8e8e93', font: { size: 10 } }, grid: { color: '#38383a' } },
+          x: { title: { display: true, text: 'Volume (mL)', color: '#8e8e93' }, ticks: { color: '#8e8e93', font: { size: 10 } }, grid: { color: '#38383a' } },
           y: { title: { display: true, text: 'pH', color: '#8e8e93' }, ticks: { color: '#8e8e93', font: { size: 10 } }, grid: { color: '#38383a' } }
         }
       })
