@@ -10,9 +10,10 @@ void setMotorYieldCallback(MotorYieldCallback cb);
 typedef void (*MotorProgressCallback)(int percent);
 void setMotorProgressCallback(MotorProgressCallback cb);
 
-void removeSample(int volume);
-void takeSample(int volume);
-void washSample(float remPart, float fillPart);
-void titrate(int volume, float speedRpm);
+// All motor functions return true on success, false on timeout
+bool removeSample(int volume);
+bool takeSample(int volume);
+bool washSample(float remPart, float fillPart);
+bool titrate(int volume, float speedRpm);
 
 #endif // MOTORS_H

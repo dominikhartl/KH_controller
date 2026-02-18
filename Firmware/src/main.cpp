@@ -35,6 +35,7 @@ char MQKH[50];
 char MQstartpH[50];
 char MQmespH[50];
 char MQkhValue[50];
+char MQconfidence[50];
 
 // --- Deferred command execution ---
 // Long-running commands (measureKH, calibrate) must run on loopTask, not AsyncTCP.
@@ -53,6 +54,10 @@ struct KHResult {
   float granR2;
   float endpointPH;
   bool usedGran;
+  float confidence;    // 0.0-1.0 composite quality score
+  int dataPointCount;
+  int stabTimeouts;
+  unsigned long elapsedSec;
 };
 
 KHResult measureKH();
@@ -62,6 +67,8 @@ void measureKHWithValidation();
 static void publishKHResult(const KHResult& r) {
   { char mqBuf[16]; snprintf(mqBuf, sizeof(mqBuf), "%.2f", r.khValue);
     mqttManager.publish(MQkhValue, mqBuf, true); }
+  { char mqBuf[16]; snprintf(mqBuf, sizeof(mqBuf), "%.2f", r.confidence);
+    mqttManager.publish(MQconfidence, mqBuf, true); }
   configStore.setLastKH(r.khValue);
   configStore.setLastStartPH(r.startPH);
   appendHistory("kh", r.khValue);
@@ -199,7 +206,11 @@ void calibrateTitrationPump() {
 
   while (units < CALIBRATION_TARGET_UNITS) {
     int batch = min(BATCH, CALIBRATION_TARGET_UNITS - units);
-    titrate(batch, TITRATION_RPM);
+    if (!titrate(batch, TITRATION_RPM)) {
+      publishError("Error: titration pump timeout during calibration");
+      digitalWrite(EN_PIN2, HIGH);
+      return;
+    }
     units += batch;
     delay(TITRATION_MIX_DELAY_FAST_MS);
     ArduinoOTA.handle();
@@ -211,6 +222,38 @@ void calibrateTitrationPump() {
   units = 0;
   digitalWrite(EN_PIN2, HIGH);
   publishMessage("Pump calibration done");
+}
+
+// --- Measurement confidence score ---
+// Combines multiple quality signals into a 0.0-1.0 score
+static float computeConfidence(float granR2, bool usedGran, int nPoints,
+                                int stabTimeouts, const char* probeHealth) {
+  float score = 1.0f;
+  // Gran R² contribution
+  if (usedGran && granR2 > 0) {
+    score -= (1.0f - granR2) * 40.0f;  // R²=0.99 → -0.4, R²=0.999 → -0.04
+  }
+  // Data point count
+  if (nPoints < 15) score -= 0.1f;
+  if (nPoints < 10) score -= 0.1f;
+  // Stabilization timeout penalty
+  if (stabTimeouts > 0) score -= 0.1f;
+  if (stabTimeouts > 3) score -= 0.1f;
+  // Probe health penalty
+  if (strcmp(probeHealth, "Fair") == 0) score -= 0.1f;
+  else if (strcmp(probeHealth, "Replace") == 0) score -= 0.2f;
+  if (score < 0.0f) score = 0.0f;
+  return score;
+}
+
+// --- Adaptive fast-phase batch size ---
+// Reduces batch as pH approaches the fast/precise threshold to avoid overshoot
+static int computeFastBatch(float currentPH, float thresholdPH) {
+  if (currentPH >= FAST_RAMP_START_PH) return FAST_BATCH_MAX;
+  float lower = thresholdPH + 0.5f;
+  if (currentPH <= lower) return FAST_BATCH_MIN;
+  float fraction = (currentPH - lower) / (FAST_RAMP_START_PH - lower);
+  return FAST_BATCH_MIN + (int)(fraction * (FAST_BATCH_MAX - FAST_BATCH_MIN));
 }
 
 // --- MeasureKH ---
@@ -227,6 +270,10 @@ KHResult measureKH() {
   }
   measuring = true;
 
+  // Configure stabilization from NVS and reset per-measurement stats
+  setStabilizationTimeoutMs(configStore.getStabilizationTimeout());
+  resetStabilizationStats();
+
   broadcastTitrationStart();  // Signal dashboard to clear live pH chart
   int errorflag = 0;
   units = 0;
@@ -241,25 +288,58 @@ KHResult measureKH() {
     return result;
   }
 
-  titrate(FILL_VOLUME, PREFILL_RPM);
+  if (!titrate(FILL_VOLUME, PREFILL_RPM)) {
+    publishError("Error: titration pump timeout during prefill");
+    measuring = false;
+    return result;
+  }
   digitalWrite(EN_PIN2, HIGH);
   publishMessage("Taking sample");
-  washSample(1.2, 1.0);
+  if (!washSample(1.2, 1.0)) {
+    publishError("Error: sample pump timeout during wash");
+    measuring = false;
+    return result;
+  }
   delay(100);
   startStirrer();
   delay(STIRRER_WARMUP_MS);  // Wait for solution to homogenize
-  measurePH(100);
+  measurePH(40);
+  float minStartPH = configStore.getMinStartPH();
   if (isnan(pH)) {
     errorMessage = "Error: pH probe not working";
     stopStirrer();
     digitalWrite(EN_PIN2, HIGH);
     errorflag = 1;
-  } else if (pH < 7.0) {
+  } else if (pH < CARRYOVER_RETRY_PH) {
     startPH = pH;
-    errorMessage = "Error: Starting pH too low (possible carryover)";
+    errorMessage = "Error: Starting pH critically low (acid carryover)";
     stopStirrer();
     digitalWrite(EN_PIN2, HIGH);
     errorflag = 1;
+  } else if (pH < minStartPH) {
+    // Possible carryover — attempt one extra rinse
+    static char retryBuf[80];
+    snprintf(retryBuf, sizeof(retryBuf), "Warning: Starting pH %.2f < %.1f, extra rinse...", pH, minStartPH);
+    publishMessage(retryBuf);
+    stopStirrer();
+    washSample(1.5, 1.0);
+    delay(2000);
+    washSample(1.2, 1.0);
+    delay(100);
+    startStirrer();
+    delay(STIRRER_WARMUP_MS);
+    measurePH(40);
+    if (isnan(pH) || pH < minStartPH) {
+      startPH = isnan(pH) ? 0 : pH;
+      snprintf(retryBuf, sizeof(retryBuf), "Error: Starting pH still %.2f after rinse", pH);
+      errorMessage = retryBuf;
+      stopStirrer();
+      digitalWrite(EN_PIN2, HIGH);
+      errorflag = 1;
+    } else {
+      snprintf(retryBuf, sizeof(retryBuf), "Extra rinse recovered pH to %.2f", pH);
+      publishMessage(retryBuf);
+    }
   }
 
   if (errorflag == 0) {
@@ -287,15 +367,25 @@ KHResult measureKH() {
 
     float fastPH = configStore.getFastTitrationPH();
 
-    // --- Fast phase: pump 200-unit batches until pH falls below fastPH ---
-    const int FAST_BATCH = 200;
+    // --- Fast phase: adaptive batch size, reduces near threshold to avoid overshoot ---
     float lastFastPH = startPH;
     int stallCount = 0;
     publishMessage("Fast titration");
 
+    // Data point storage — declared early so fast-phase can store points near endpoint
+    static TitrationPoint dataPoints[MAX_TITRATION_POINTS];
+    int nPoints = 0;
+    int granCount = 0;
+    static const float DATA_STORE_PH = 5.0f;
+
     while (pH > fastPH && units < MAX_TITRATION_UNITS && errorflag == 0) {
-      titrate(FAST_BATCH, TITRATION_RPM);
-      units += FAST_BATCH;
+      int batch = computeFastBatch(pH, fastPH);
+      if (!titrate(batch, TITRATION_RPM)) {
+        errorMessage = "Error: titration pump timeout in fast phase";
+        errorflag = 1;
+        break;
+      }
+      units += batch;
       delay(TITRATION_MIX_DELAY_FAST_MS);
       measurePHFast(5);
       broadcastTitrationPH(pH, units);
@@ -305,22 +395,27 @@ KHResult measureKH() {
       if (isnan(pH)) {
         errorMessage = "Error: pH probe not working!";
         errorflag = 1;
-      } else if (pH > lastFastPH - 0.05) {
-        stallCount++;
-        if (stallCount >= 10) {
-          errorMessage = "Error: insufficient pH change";
-          errorflag = 1;
-        }
       } else {
-        stallCount = 0;
-        lastFastPH = pH;
+        // Store data points near the endpoint even during fast phase
+        if (pH < DATA_STORE_PH && nPoints < MAX_TITRATION_POINTS) {
+          dataPoints[nPoints++] = {(float)units, pH};
+        }
+        if (pH < GRAN_REGION_PH) granCount++;
+
+        if (pH > lastFastPH - 0.05) {
+          stallCount++;
+          if (stallCount >= 10) {
+            errorMessage = "Error: insufficient pH change";
+            errorflag = 1;
+          }
+        } else {
+          stallCount = 0;
+          lastFastPH = pH;
+        }
       }
     }
 
     // --- Precise phase: adaptive steps with Gran transformation ---
-    static TitrationPoint dataPoints[MAX_TITRATION_POINTS];
-    int nPoints = 0;
-    int granCount = 0;
 
     if (errorflag == 0) {
       char buf[32];
@@ -328,9 +423,6 @@ KHResult measureKH() {
       publishMessage(buf);
     }
 
-    // Store data points only near the endpoint (pH < 5.0) to avoid filling the buffer
-    // with useless high-pH coarse-step data
-    static const float DATA_STORE_PH = 5.0f;
     float lastPrecisePH = pH;
     int preciseStall = 0;
 
@@ -343,18 +435,27 @@ KHResult measureKH() {
 
       int stepVol;
       if (pH > 4.5f) {
-        // Medium zone (pH > 4.5): 16-unit steps, moderate accuracy
-        stepVol = TITRATION_STEP_SIZE * 8;  // 16 units
-        titrate(stepVol, TITRATION_RPM);
-        delay(TITRATION_MIX_DELAY_MS);
-        measurePH(15);
+        // Medium zone (pH > 4.5): large steps, rough tracking only
+        // No stabilization needed — we just need to detect when to enter Gran zone
+        stepVol = TITRATION_STEP_SIZE * MEDIUM_STEP_MULTIPLIER;  // 48 units
+        if (!titrate(stepVol, TITRATION_RPM)) {
+          errorMessage = "Error: titration pump timeout in precise phase";
+          errorflag = 1;
+          break;
+        }
+        delay(TITRATION_MIX_DELAY_MEDIUM_MS);
+        measurePHStabilized(8);
       } else {
-        // Gran zone (pH < 4.5): smaller steps, stabilization check, more readings
+        // Gran zone (pH < 4.5): smaller steps, one stabilization, accurate readings
         stepVol = TITRATION_STEP_SIZE * 4;  // 8 units
-        titrate(stepVol, TITRATION_RPM);
-        delay(TITRATION_MIX_DELAY_MS);
-        waitForPHStabilization();  // Wait for pH to settle after acid addition
-        measurePH(20);
+        if (!titrate(stepVol, TITRATION_RPM)) {
+          errorMessage = "Error: titration pump timeout in Gran zone";
+          errorflag = 1;
+          break;
+        }
+        delay(TITRATION_MIX_DELAY_GRAN_MS);
+        waitForPHStabilization();
+        measurePHStabilized(14);
       }
       units += stepVol;
 
@@ -510,6 +611,11 @@ KHResult measureKH() {
           result.granR2 = granR2;
           result.endpointPH = endpointPHVal;
           result.usedGran = usedGran;
+          result.dataPointCount = nPoints;
+          result.stabTimeouts = getStabilizationTimeoutCount();
+          result.elapsedSec = (millis() - measStartMs) / 1000;
+          result.confidence = computeConfidence(granR2, usedGran, nPoints,
+                                                 result.stabTimeouts, getProbeHealth());
         }
       }
     } else {
@@ -543,9 +649,24 @@ KHResult measureKH() {
   }
 
   // Double rinse to eliminate acid carryover
-  washSample(1.5f + hclPart, 1.0);
+  if (!washSample(1.5f + hclPart, 1.0)) {
+    publishError("Warning: sample pump timeout during post-wash (1st rinse)");
+  }
   delay(2000);
-  washSample(1.2, 1.0);
+  if (!washSample(1.2, 1.0)) {
+    publishError("Warning: sample pump timeout during post-wash (2nd rinse)");
+  }
+
+  // Post-wash pH verification: quick check to detect incomplete wash
+  startStirrer();
+  delay(1000);
+  measurePHFast(8);
+  stopStirrer();
+  if (!isnan(pH) && pH < POST_WASH_PH_THRESHOLD) {
+    char postBuf[80];
+    snprintf(postBuf, sizeof(postBuf), "Warning: Post-wash pH %.2f (possible incomplete wash)", pH);
+    publishError(postBuf);
+  }
 
   unsigned long elapsed = (millis() - measStartMs) / 1000;
   char doneBuf[48];
@@ -623,6 +744,7 @@ void setup() {
   snprintf(MQstartpH, sizeof(MQstartpH), "%s/startPH", DEVICE_NAME);
   snprintf(MQmespH, sizeof(MQmespH), "%s/mes_pH", DEVICE_NAME);
   snprintf(MQkhValue, sizeof(MQkhValue), "%s/kh_value", DEVICE_NAME);
+  snprintf(MQconfidence, sizeof(MQconfidence), "%s/confidence", DEVICE_NAME);
 
   // Non-blocking WiFi
   wifiManager.begin(WIFI_SSID, WIFI_PASSWORD);

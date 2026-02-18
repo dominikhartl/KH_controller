@@ -45,7 +45,8 @@ static int rampStepCount() {
 static bool lastSampleDirection = true;
 
 // Shared sample pump logic — direction is the only difference between remove and fill
-static void runSamplePump(int volume, bool forward) {
+// Returns false on timeout
+static bool runSamplePump(int volume, bool forward) {
   digitalWrite(EN_PIN1, LOW);
   delay(MOTOR_ENABLE_DELAY_MS);
   digitalWrite(DIR_PIN1, forward ? HIGH : LOW);
@@ -109,33 +110,37 @@ static void runSamplePump(int volume, bool forward) {
 
   delay(MOTOR_HOLD_MS);
   digitalWrite(EN_PIN1, HIGH);
+  return !timedOut;
 }
 
-void removeSample(int volume) {
-  runSamplePump(volume, false);
+bool removeSample(int volume) {
+  return runSamplePump(volume, false);
 }
 
-void takeSample(int volume) {
-  runSamplePump(volume, true);
+bool takeSample(int volume) {
+  return runSamplePump(volume, true);
 }
 
-void washSample(float remPart, float fillPart) {
+bool washSample(float remPart, float fillPart) {
   int removeVol = (int)(SAMPLE_PUMP_VOLUME * remPart);
   int fillVol = (int)(SAMPLE_PUMP_VOLUME * fillPart);
   washTotalVol = removeVol + fillVol;
   washBaseVol = 0;
 
   if (progressCb) progressCb(0);
-  removeSample(removeVol);
+  bool ok = removeSample(removeVol);
 
-  washBaseVol = removeVol;
-  takeSample(fillVol);
+  if (ok) {
+    washBaseVol = removeVol;
+    ok = takeSample(fillVol);
+  }
 
   washTotalVol = 0;
   if (progressCb) progressCb(100);
+  return ok;
 }
 
-void titrate(int volume, float speedRpm) {
+bool titrate(int volume, float speedRpm) {
   float speedUs = rpmToHalfPeriodUs(speedRpm);
 
   // Only add enable settle delay if motor wasn't already on
@@ -183,7 +188,7 @@ void titrate(int volume, float speedRpm) {
         if (yieldCb) yieldCb();
         if (millis() - startTime > TITRATION_TIMEOUT_MS) {
           Serial.println("ERROR: Titration timeout!");
-          return;
+          return false;
         }
       }
     }
@@ -213,4 +218,5 @@ void titrate(int volume, float speedRpm) {
 
   // No hold/disable here — caller manages EN_PIN2 to avoid
   // enable/disable overhead on every small titration step
+  return true;
 }

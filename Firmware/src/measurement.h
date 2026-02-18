@@ -22,8 +22,17 @@ void waitForPHStabilization();
 
 // Measurement functions
 void measurePH(int nreadings);
+void measurePHStabilized(int nreadings);  // Like measurePH but skips internal stabilization
 void measurePHFast(int nreadings);  // No stabilization, 8x oversample — for far from endpoint
 float measureVoltage(int nreadings);
+
+// Stabilization configuration
+void setStabilizationTimeoutMs(int ms);  // Override default timeout (call before measurement)
+
+// Stabilization statistics (reset per measurement cycle)
+void resetStabilizationStats();
+int getStabilizationTimeoutCount();       // Number of times stabilization timed out
+unsigned long getTotalStabilizationMs();  // Cumulative stabilization time
 
 // Probe health metrics
 unsigned long getLastStabilizationMs();  // Last stabilization time in ms

@@ -18,6 +18,8 @@ char topicCfgHclVol[60];
 char topicCfgCalDrops[60];
 char topicCfgFastPH[60];
 char topicCfgEpMethod[60];
+char topicCfgMinStartPH[60];
+char topicCfgStabTimeout[60];
 char topicCfgSched[8][60];
 char topicCfgSchedMode[60];
 char topicCfgIntervalHours[60];
@@ -33,6 +35,8 @@ static char topicCfgHclVolSet[60];
 static char topicCfgCalDropsSet[60];
 static char topicCfgFastPHSet[60];
 static char topicCfgEpMethodSet[60];
+static char topicCfgMinStartPHSet[60];
+static char topicCfgStabTimeoutSet[60];
 static char topicCfgSchedSet[8][60];
 static char topicCfgSchedModeSet[60];
 static char topicCfgIntervalHoursSet[60];
@@ -61,6 +65,10 @@ static void initTopics() {
   snprintf(topicCfgFastPHSet, sizeof(topicCfgFastPHSet), "%s/config/fast_ph/set", DEVICE_NAME);
   snprintf(topicCfgEpMethod, sizeof(topicCfgEpMethod), "%s/config/endpoint_method", DEVICE_NAME);
   snprintf(topicCfgEpMethodSet, sizeof(topicCfgEpMethodSet), "%s/config/endpoint_method/set", DEVICE_NAME);
+  snprintf(topicCfgMinStartPH, sizeof(topicCfgMinStartPH), "%s/config/min_start_ph", DEVICE_NAME);
+  snprintf(topicCfgMinStartPHSet, sizeof(topicCfgMinStartPHSet), "%s/config/min_start_ph/set", DEVICE_NAME);
+  snprintf(topicCfgStabTimeout, sizeof(topicCfgStabTimeout), "%s/config/stab_timeout", DEVICE_NAME);
+  snprintf(topicCfgStabTimeoutSet, sizeof(topicCfgStabTimeoutSet), "%s/config/stab_timeout/set", DEVICE_NAME);
   snprintf(topicDiagnostics, sizeof(topicDiagnostics), "%s/diagnostics", DEVICE_NAME);
 
   for (int i = 0; i < 8; i++) {
@@ -209,6 +217,10 @@ void publishAllDiscovery() {
   // Sensors
   publishSensorDiscovery("khv3_kh", "KH", khValueTopic, "dKH", nullptr, nullptr, nullptr);
   publishSensorDiscovery("khv3_ph", "pH", startPhTopic, "pH", nullptr, nullptr, nullptr);
+  { char confTopic[50];
+    snprintf(confTopic, sizeof(confTopic), "%s/confidence", DEVICE_NAME);
+    publishSensorDiscovery("khv3_confidence", "Measurement Confidence", confTopic, nullptr, nullptr, nullptr, "diagnostic");
+  }
   publishSensorDiscovery("khv3_mes_ph", "Measurement pH", mesPhTopic, "pH", nullptr, nullptr, "diagnostic");
   publishSensorDiscovery("khv3_rssi", "WiFi Signal", topicDiagnostics, "dBm", "signal_strength",
                           "{{ value_json.rssi }}", "diagnostic");
@@ -300,6 +312,10 @@ void publishAllDiscovery() {
                           topicCfgCalDrops, topicCfgCalDropsSet, 1000, 20000, 100, nullptr);
   publishNumberDiscovery("khv3_fast_ph", "Fast Titration pH",
                           topicCfgFastPH, topicCfgFastPHSet, 4.5, 7.0, 0.1, "pH");
+  publishNumberDiscovery("khv3_min_start_ph", "Min Start pH",
+                          topicCfgMinStartPH, topicCfgMinStartPHSet, 6.0, 9.0, 0.1, "pH");
+  publishNumberDiscovery("khv3_stab_timeout", "Stabilization Timeout",
+                          topicCfgStabTimeout, topicCfgStabTimeoutSet, 500, 5000, 100, "ms");
 
   {
     const char* epOpts[] = {"Gran", "Fixed"};
@@ -385,6 +401,8 @@ void publishAllDiscovery() {
   mqttManager.subscribe(topicCfgCalDropsSet);
   mqttManager.subscribe(topicCfgFastPHSet);
   mqttManager.subscribe(topicCfgEpMethodSet);
+  mqttManager.subscribe(topicCfgMinStartPHSet);
+  mqttManager.subscribe(topicCfgStabTimeoutSet);
   for (int i = 0; i < 8; i++) {
     mqttManager.subscribe(topicCfgSchedSet[i]);
   }
@@ -403,6 +421,8 @@ void publishAllConfigStates() {
   mqttManager.publish(topicCfgFastPH, String(configStore.getFastTitrationPH(), 1).c_str(), true);
   mqttManager.publish(topicCfgEpMethod,
                       (configStore.getEndpointMethod() == 1) ? "Fixed" : "Gran", true);
+  mqttManager.publish(topicCfgMinStartPH, String(configStore.getMinStartPH(), 1).c_str(), true);
+  mqttManager.publish(topicCfgStabTimeout, String(configStore.getStabilizationTimeout()).c_str(), true);
 
   for (int i = 0; i < 8; i++) {
     char timeBuf[6];
@@ -480,6 +500,13 @@ void handleConfigSet(const char* topic, const char* payload) {
     uint8_t method = (strcmp(payload, "Fixed") == 0) ? 1 : 0;
     configStore.setEndpointMethod(method);
     mqttManager.publish(topicCfgEpMethod, (method == 1) ? "Fixed" : "Gran", true);
+  } else if (strcmp(topic, topicCfgMinStartPHSet) == 0) {
+    configStore.setMinStartPH(val);
+    mqttManager.publish(topicCfgMinStartPH, String(val, 1).c_str(), true);
+  } else if (strcmp(topic, topicCfgStabTimeoutSet) == 0) {
+    configStore.setStabilizationTimeout((int)val);
+    setStabilizationTimeoutMs(configStore.getStabilizationTimeout());
+    mqttManager.publish(topicCfgStabTimeout, String(configStore.getStabilizationTimeout()).c_str(), true);
   } else if (strcmp(topic, topicCfgSchedModeSet) == 0) {
     uint8_t mode = (strcmp(payload, "interval") == 0) ? 1 : 0;
     configStore.setScheduleMode(mode);

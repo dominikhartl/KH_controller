@@ -49,8 +49,10 @@ static const float MOTOR_ACCEL_FACTOR = 0.9995;   // Acceleration/deceleration f
 // Titration tuning parameters
 static const int TITRATION_STEP_SIZE = 2;        // Base units per titration step
 static const int MOTOR_STEPS_PER_UNIT = 16;      // Motor steps per titration unit
-static const int TITRATION_MIX_DELAY_MS = 2000;  // Mixing delay near endpoint (electrode equilibration)
+static const int TITRATION_MIX_DELAY_MS = 2000;  // Legacy: full mixing delay (used by calibration)
 static const int TITRATION_MIX_DELAY_FAST_MS = 200;  // Mixing delay far from endpoint
+static const int TITRATION_MIX_DELAY_MEDIUM_MS = 1000; // Medium zone mixing (stabilization inside measurePH)
+static const int TITRATION_MIX_DELAY_GRAN_MS = 1000;   // Gran zone mixing (explicit stabilization follows)
 static const int MAX_TITRATION_UNITS = 10000;
 static const int FILL_VOLUME = 100;
 static const int STIRRER_SPEED = 230;            // PWM duty cycle (0-255), not RPM
@@ -63,6 +65,15 @@ static const float FIXED_ENDPOINT_STOP_PH = 4.0f; // Stop titrating here in fixe
 static const int SAMPLE_PUMP_VOLUME = 350;
 static const int CALIBRATION_TARGET_UNITS = 6000;
 static const float FAST_TITRATION_PH_DEFAULT = 5.0f; // pH threshold: fast→precise titration
+
+// Medium zone step multiplier (TITRATION_STEP_SIZE * this = units per medium step)
+// Medium zone points aren't used by Gran analysis, so large steps are fine
+static const int MEDIUM_STEP_MULTIPLIER = 24;  // 2 * 24 = 48 units per step
+
+// Adaptive fast-phase batch sizing — reduces batch as pH approaches threshold
+static const int FAST_BATCH_MAX = 200;
+static const int FAST_BATCH_MIN = 20;
+static const float FAST_RAMP_START_PH = 6.0f;  // Start reducing batch size below this pH
 
 // Motor timing
 static const int MOTOR_ENABLE_DELAY_MS = 10;     // Settle time after enabling driver
@@ -81,6 +92,11 @@ static const unsigned long SAMPLE_PUMP_TIMEOUT_MS = 600000;
 
 // HCl tracking
 static const float HCL_LOW_THRESHOLD_ML = 300.0;
+
+// Starting pH validation
+static const float MIN_START_PH_DEFAULT = 7.5f;    // Minimum acceptable starting pH (saltwater)
+static const float CARRYOVER_RETRY_PH = 7.0f;      // Below this: hard error; above but below min: retry
+static const float POST_WASH_PH_THRESHOLD = 6.0f;  // Warn if post-wash pH is below this
 
 // Gran transformation endpoint detection
 static const float GRAN_REGION_PH       = 4.5f;  // Points below this used for Gran regression

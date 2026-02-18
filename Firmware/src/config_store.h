@@ -24,6 +24,8 @@ public:
   int getCalUnits();             // units per calibration run (default 6000)
   float getFastTitrationPH();   // pH threshold: fast→precise (default 5.0)
   uint8_t getEndpointMethod();  // 0=Gran, 1=Fixed (default 0)
+  float getMinStartPH();        // Minimum acceptable starting pH (default 7.5)
+  int getStabilizationTimeout(); // Stabilization timeout in ms (default 2000, max 5000)
   void setTitrationVolume(float v);
   void setSampleVolume(float v);
   void setCorrectionFactor(float v);
@@ -32,6 +34,8 @@ public:
   void setCalUnits(int v);
   void setFastTitrationPH(float v);
   void setEndpointMethod(uint8_t m);
+  void setMinStartPH(float v);
+  void setStabilizationTimeout(int ms);
 
   // Last measurement results (persistent across reboots)
   float getLastKH();

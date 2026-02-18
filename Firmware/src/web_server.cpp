@@ -189,6 +189,11 @@ static void handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
       else if (strcmp(key, "cal_drops") == 0) configStore.setCalUnits((int)value);
       else if (strcmp(key, "fast_ph") == 0) configStore.setFastTitrationPH(value);
       else if (strcmp(key, "endpoint_method") == 0) configStore.setEndpointMethod((uint8_t)value);
+      else if (strcmp(key, "min_start_ph") == 0) configStore.setMinStartPH(value);
+      else if (strcmp(key, "stab_timeout") == 0) {
+        configStore.setStabilizationTimeout((int)value);
+        setStabilizationTimeoutMs(configStore.getStabilizationTimeout());
+      }
 
       broadcastState(); // Confirm the update
     } else if (strcmp(type, "schedule") == 0) {
@@ -338,14 +343,20 @@ void executeCommand(const char* cmd) {
     }
   } else if (strcmp(cmd, "f") == 0) {
     publishMessage("Filling");
-    titrate(FILL_VOLUME, PREFILL_RPM);
+    if (!titrate(FILL_VOLUME, PREFILL_RPM)) {
+      publishError("Error: titration pump timeout during fill");
+    } else {
+      publishMessage("Fill done");
+    }
     subtractHCl(FILL_VOLUME);
     digitalWrite(EN_PIN2, HIGH);
-    publishMessage("Fill done");
   } else if (strcmp(cmd, "s") == 0) {
     publishMessage("Washing sample");
-    washSample(1.2, 1.0);
-    publishMessage("Wash done");
+    if (!washSample(1.2, 1.0)) {
+      publishError("Error: sample pump timeout during wash");
+    } else {
+      publishMessage("Wash done");
+    }
   } else if (strcmp(cmd, "m") == 0) {
     startStirrer();
     publishMessage("Stirrer started");
@@ -354,8 +365,11 @@ void executeCommand(const char* cmd) {
     publishMessage("Stirrer stopped");
   } else if (strcmp(cmd, "r") == 0) {
     publishMessage("Removing sample");
-    removeSample(SAMPLE_PUMP_VOLUME);
-    publishMessage("Sample removed");
+    if (!removeSample(SAMPLE_PUMP_VOLUME)) {
+      publishError("Error: sample pump timeout during remove");
+    } else {
+      publishMessage("Sample removed");
+    }
   } else if (strcmp(cmd, "o") == 0) {
     publishMessage("Restarting...");
     delay(100);
@@ -438,6 +452,8 @@ void broadcastState() {
   cfg["cal_drops"] = configStore.getCalUnits();
   cfg["fast_ph"] = configStore.getFastTitrationPH();
   cfg["endpoint_method"] = configStore.getEndpointMethod();
+  cfg["min_start_ph"] = configStore.getMinStartPH();
+  cfg["stab_timeout"] = configStore.getStabilizationTimeout();
 
   // Schedule
   doc["schedMode"] = configStore.getScheduleMode();

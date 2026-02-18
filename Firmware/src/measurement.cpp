@@ -19,6 +19,18 @@ static float phOffset = 7.0;
 // Response time tracking
 static unsigned long lastStabilizationMs = 0;
 
+// Configurable stabilization timeout
+static int stabilizationTimeoutMs = STABILIZATION_TIMEOUT_MS;
+
+// Stabilization statistics (per measurement cycle)
+static int stabTimeoutCount = 0;
+static unsigned long stabTotalMs = 0;
+
+void setStabilizationTimeoutMs(int ms) { stabilizationTimeoutMs = ms; }
+void resetStabilizationStats() { stabTimeoutCount = 0; stabTotalMs = 0; }
+int getStabilizationTimeoutCount() { return stabTimeoutCount; }
+unsigned long getTotalStabilizationMs() { return stabTotalMs; }
+
 // Sort an array of floats in ascending order (bubble sort — sufficient for small N)
 static void sortFloats(float* arr, int count) {
   for (int i = 0; i < count - 1; i++) {
@@ -203,26 +215,28 @@ static void waitForStabilization() {
   float prev = (float)analogReadMilliVolts(PH_PIN);
   delay(50);
   unsigned long start = millis();
-  while (millis() - start < STABILIZATION_TIMEOUT_MS) {
+  while (millis() - start < (unsigned long)stabilizationTimeoutMs) {
     float curr = (float)analogReadMilliVolts(PH_PIN);
     if (fabs(curr - prev) < STABILIZATION_THRESHOLD_MV) {
-      lastStabilizationMs = millis() - start;
+      unsigned long elapsed = millis() - start;
+      lastStabilizationMs = elapsed;
+      stabTotalMs += elapsed;
       return;
     }
     prev = curr;
     delay(50);
   }
-  lastStabilizationMs = STABILIZATION_TIMEOUT_MS;  // Timed out
+  lastStabilizationMs = stabilizationTimeoutMs;  // Timed out
+  stabTotalMs += stabilizationTimeoutMs;
+  stabTimeoutCount++;
 }
 
 void waitForPHStabilization() {
   waitForStabilization();
 }
 
-// pH measurement with adaptive stabilization, oversampling, and outlier removal
-void measurePH(int nreadings) {
-  waitForStabilization();
-
+// Core pH reading logic shared by measurePH and measurePHStabilized
+static void measurePHCore(int nreadings) {
   static float pHReadings[100];
   const int maxReadings = (nreadings > 100) ? 100 : nreadings;
   int validReadings = 0;
@@ -247,6 +261,18 @@ void measurePH(int nreadings) {
 
   sortFloats(pHReadings, validReadings);
   pH = medianFilteredMean(pHReadings, validReadings, PH_OUTLIER_THRESHOLD);
+}
+
+// pH measurement with adaptive stabilization, oversampling, and outlier removal
+void measurePH(int nreadings) {
+  waitForStabilization();
+  measurePHCore(nreadings);
+}
+
+// pH measurement WITHOUT internal stabilization — use when caller has already
+// waited for mixing + called waitForPHStabilization() before this call
+void measurePHStabilized(int nreadings) {
+  measurePHCore(nreadings);
 }
 
 // Fast pH measurement — no stabilization, reduced oversampling

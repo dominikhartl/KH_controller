@@ -58,6 +58,19 @@ void ConfigStore::setCalUnits(int v) { prefs.putInt("cal_drops", v); }
 void ConfigStore::setFastTitrationPH(float v) { prefs.putFloat("fast_ph", v); }
 uint8_t ConfigStore::getEndpointMethod() { return prefs.getUChar("ep_method", 0); }
 void ConfigStore::setEndpointMethod(uint8_t m) { prefs.putUChar("ep_method", m); }
+float ConfigStore::getMinStartPH() { return prefs.getFloat("min_sph", MIN_START_PH_DEFAULT); }
+void ConfigStore::setMinStartPH(float v) { prefs.putFloat("min_sph", v); }
+int ConfigStore::getStabilizationTimeout() {
+  int ms = prefs.getInt("stab_ms", STABILIZATION_TIMEOUT_MS);
+  if (ms < 500) ms = 500;
+  if (ms > 5000) ms = 5000;
+  return ms;
+}
+void ConfigStore::setStabilizationTimeout(int ms) {
+  if (ms < 500) ms = 500;
+  if (ms > 5000) ms = 5000;
+  prefs.putInt("stab_ms", ms);
+}
 
 // Last measurement results
 float ConfigStore::getLastKH() { return prefs.getFloat("last_kh", 0); }
