@@ -27,6 +27,10 @@ static const float STABILIZATION_THRESHOLD_MV = 2.0;
 static const float PH_OUTLIER_THRESHOLD = 0.2f;      // Precise mode: ±0.2 pH from median
 static const float PH_FAST_OUTLIER_THRESHOLD = 0.3f;  // Fast mode: ±0.3 pH from median
 
+// KH measurement outlier validation
+static const float KH_OUTLIER_THRESHOLD_DKH = 1.0f;  // Re-measure if deviation from median exceeds this
+static const int KH_OUTLIER_HISTORY_COUNT = 5;        // Number of recent measurements for median
+
 // Motor configuration
 static const int STEPS_PER_REVOLUTION = 1600;
 
@@ -54,7 +58,8 @@ static const int STIRRER_WARMUP_MS = 3000;
 static const int MEASUREMENT_DELAY_MS = 50;
 
 // Measurement defaults
-static const float ENDPOINT_PH = 4.3f;           // Titration endpoint pH
+static const float ENDPOINT_PH = 4.4f;            // Fixed endpoint titration pH
+static const float FIXED_ENDPOINT_STOP_PH = 4.0f; // Stop titrating here in fixed endpoint mode
 static const int SAMPLE_PUMP_VOLUME = 350;
 static const int CALIBRATION_TARGET_UNITS = 6000;
 static const float FAST_TITRATION_PH_DEFAULT = 5.0f; // pH threshold: fast→precise titration
@@ -82,6 +87,7 @@ static const float GRAN_REGION_PH       = 4.5f;  // Points below this used for G
 static const float GRAN_STOP_PH         = 3.5f;   // Stop titrating at this pH (Dickson protocol)
 static const int   MIN_GRAN_POINTS      = 8;       // Minimum points for reliable regression
 static const int   MAX_TITRATION_POINTS = 200;      // Data point buffer size
+static const float GRAN_MIN_R2          = 0.99f;   // Minimum R² for Gran fit acceptance
 
 // Nernst equation: slope(T) = NERNST_FACTOR * T(K) mV/pH
 // R*ln(10)/(n*F) = 8.31446 * 2.30259 / (1 * 96485.3) = 0.19842 mV/(pH·K)

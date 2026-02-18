@@ -17,6 +17,7 @@ char topicCfgHclMol[60];
 char topicCfgHclVol[60];
 char topicCfgCalDrops[60];
 char topicCfgFastPH[60];
+char topicCfgEpMethod[60];
 char topicCfgSched[8][60];
 char topicCfgSchedMode[60];
 char topicCfgIntervalHours[60];
@@ -31,6 +32,7 @@ static char topicCfgHclMolSet[60];
 static char topicCfgHclVolSet[60];
 static char topicCfgCalDropsSet[60];
 static char topicCfgFastPHSet[60];
+static char topicCfgEpMethodSet[60];
 static char topicCfgSchedSet[8][60];
 static char topicCfgSchedModeSet[60];
 static char topicCfgIntervalHoursSet[60];
@@ -57,6 +59,8 @@ static void initTopics() {
   snprintf(topicCfgCalDropsSet, sizeof(topicCfgCalDropsSet), "%s/config/cal_drops/set", DEVICE_NAME);
   snprintf(topicCfgFastPH, sizeof(topicCfgFastPH), "%s/config/fast_ph", DEVICE_NAME);
   snprintf(topicCfgFastPHSet, sizeof(topicCfgFastPHSet), "%s/config/fast_ph/set", DEVICE_NAME);
+  snprintf(topicCfgEpMethod, sizeof(topicCfgEpMethod), "%s/config/endpoint_method", DEVICE_NAME);
+  snprintf(topicCfgEpMethodSet, sizeof(topicCfgEpMethodSet), "%s/config/endpoint_method/set", DEVICE_NAME);
   snprintf(topicDiagnostics, sizeof(topicDiagnostics), "%s/diagnostics", DEVICE_NAME);
 
   for (int i = 0; i < 8; i++) {
@@ -297,6 +301,13 @@ void publishAllDiscovery() {
   publishNumberDiscovery("khv3_fast_ph", "Fast Titration pH",
                           topicCfgFastPH, topicCfgFastPHSet, 4.5, 7.0, 0.1, "pH");
 
+  {
+    const char* epOpts[] = {"Gran", "Fixed"};
+    publishSelectDiscovery("khv3_ep_method", "Endpoint Method",
+                            topicCfgEpMethod, topicCfgEpMethodSet,
+                            epOpts, 2);
+  }
+
   // Schedule text inputs (HH:MM format)
   for (int i = 0; i < 8; i++) {
     char id[20], name[30];
@@ -373,6 +384,7 @@ void publishAllDiscovery() {
   mqttManager.subscribe(topicCfgHclVolSet);
   mqttManager.subscribe(topicCfgCalDropsSet);
   mqttManager.subscribe(topicCfgFastPHSet);
+  mqttManager.subscribe(topicCfgEpMethodSet);
   for (int i = 0; i < 8; i++) {
     mqttManager.subscribe(topicCfgSchedSet[i]);
   }
@@ -389,6 +401,8 @@ void publishAllConfigStates() {
   mqttManager.publish(topicCfgHclVol, String(configStore.getHClVolume(), 0).c_str(), true);
   mqttManager.publish(topicCfgCalDrops, String(configStore.getCalUnits()).c_str(), true);
   mqttManager.publish(topicCfgFastPH, String(configStore.getFastTitrationPH(), 1).c_str(), true);
+  mqttManager.publish(topicCfgEpMethod,
+                      (configStore.getEndpointMethod() == 1) ? "Fixed" : "Gran", true);
 
   for (int i = 0; i < 8; i++) {
     char timeBuf[6];
@@ -462,6 +476,10 @@ void handleConfigSet(const char* topic, const char* payload) {
   } else if (strcmp(topic, topicCfgFastPHSet) == 0) {
     configStore.setFastTitrationPH(val);
     mqttManager.publish(topicCfgFastPH, String(val, 1).c_str(), true);
+  } else if (strcmp(topic, topicCfgEpMethodSet) == 0) {
+    uint8_t method = (strcmp(payload, "Fixed") == 0) ? 1 : 0;
+    configStore.setEndpointMethod(method);
+    mqttManager.publish(topicCfgEpMethod, (method == 1) ? "Fixed" : "Gran", true);
   } else if (strcmp(topic, topicCfgSchedModeSet) == 0) {
     uint8_t mode = (strcmp(payload, "interval") == 0) ? 1 : 0;
     configStore.setScheduleMode(mode);

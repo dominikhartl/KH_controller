@@ -160,6 +160,7 @@
       setInput('cfg-hcl_volume', d.config.hcl_volume);
       setInput('cfg-cal_drops', d.config.cal_drops);
       setInput('cfg-fast_ph', d.config.fast_ph);
+      setInput('cfg-endpoint_method', d.config.endpoint_method);
     }
 
     // Schedule
@@ -506,6 +507,12 @@
       inp.addEventListener('change', function() {
         var key = inp.id.replace('cfg-', '');
         send({ type: 'config', key: key, value: parseFloat(inp.value) });
+      });
+    });
+    document.querySelectorAll('.config-grid select').forEach(function(sel) {
+      sel.addEventListener('change', function() {
+        var key = sel.id.replace('cfg-', '');
+        send({ type: 'config', key: key, value: parseInt(sel.value) });
       });
     });
   }

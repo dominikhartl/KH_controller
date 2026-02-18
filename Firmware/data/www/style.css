@@ -123,13 +123,13 @@ h2{font-size:.8em;font-weight:600;color:var(--text-secondary);text-transform:upp
 /* === Config === */
 .config-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
 .config-grid label{display:flex;flex-direction:column;font-size:.7em;font-weight:500;color:var(--text-secondary);gap:5px;text-transform:uppercase;letter-spacing:.03em}
-.config-grid input{
+.config-grid input,.config-grid select{
   background:var(--card-elevated);border:1px solid var(--separator);
   color:var(--text-primary);padding:10px;border-radius:var(--radius-sm);
   font-size:1em;transition:border-color .2s,box-shadow .2s;outline:none;
   font-variant-numeric:tabular-nums;
 }
-.config-grid input:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-dim)}
+.config-grid input:focus,.config-grid select:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-dim)}
 
 /* === Schedule === */
 .sched-grid{display:flex;flex-wrap:wrap;gap:8px}

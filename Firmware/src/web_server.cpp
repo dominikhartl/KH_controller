@@ -47,7 +47,6 @@ static bool granBufUsed = false;
 // Forward declarations for command/config handlers from main
 extern int units;
 extern float startPH;
-extern void measureKH();
 extern void calibrateTitrationPump();
 extern void subtractHCl(int unitsUsed);
 extern void publishMessage(const char* message);
@@ -189,6 +188,7 @@ static void handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
       else if (strcmp(key, "hcl_volume") == 0) configStore.setHClVolume(value);
       else if (strcmp(key, "cal_drops") == 0) configStore.setCalUnits((int)value);
       else if (strcmp(key, "fast_ph") == 0) configStore.setFastTitrationPH(value);
+      else if (strcmp(key, "endpoint_method") == 0) configStore.setEndpointMethod((uint8_t)value);
 
       broadcastState(); // Confirm the update
     } else if (strcmp(type, "schedule") == 0) {
@@ -437,6 +437,7 @@ void broadcastState() {
   cfg["hcl_volume"] = configStore.getHClVolume();
   cfg["cal_drops"] = configStore.getCalUnits();
   cfg["fast_ph"] = configStore.getFastTitrationPH();
+  cfg["endpoint_method"] = configStore.getEndpointMethod();
 
   // Schedule
   doc["schedMode"] = configStore.getScheduleMode();
@@ -626,6 +627,41 @@ void appendGranHistory(float r2, float eqML, float endpointPH, bool usedGran) {
     f.printf("%u,%.4f,%.3f,%.2f,%d\n", (uint32_t)now, r2, eqML, endpointPH, usedGran ? 1 : 0);
     f.close();
   }
+}
+
+int getRecentKHValues(float* outValues, int maxCount) {
+  const char* filename = "/history/kh.csv";
+  if (!LittleFS.exists(filename)) return 0;
+
+  File f = LittleFS.open(filename, "r");
+  if (!f) return 0;
+
+  // Read all values into a ring buffer to get the last N
+  int cap = (maxCount > 10) ? 10 : maxCount;
+  float ring[10];
+  int count = 0;
+  int head = 0;
+
+  while (f.available()) {
+    String line = f.readStringUntil('\n');
+    if (line.length() == 0) continue;
+    int comma = line.indexOf(',');
+    if (comma < 0) continue;
+    float val = line.substring(comma + 1).toFloat();
+    if (val <= 0) continue;
+
+    ring[head] = val;
+    head = (head + 1) % cap;
+    if (count < cap) count++;
+  }
+  f.close();
+
+  // Copy ring buffer oldest-first into output
+  int start = (count < cap) ? 0 : head;
+  for (int i = 0; i < count; i++) {
+    outValues[i] = ring[(start + i) % cap];
+  }
+  return count;
 }
 
 void setupWebServer() {

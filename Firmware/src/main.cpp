@@ -45,7 +45,102 @@ void queueCommand(char cmd) {
 
 void publishMessage(const char* message);
 void calibrateTitrationPump();
-void measureKH();
+
+struct KHResult {
+  float khValue;       // NAN on error
+  float startPH;
+  float hclUsed;
+  float granR2;
+  float endpointPH;
+  bool usedGran;
+};
+
+KHResult measureKH();
+void measureKHWithValidation();
+
+// Publish a finalized KH result to MQTT, config store, and history
+static void publishKHResult(const KHResult& r) {
+  { char mqBuf[16]; snprintf(mqBuf, sizeof(mqBuf), "%.2f", r.khValue);
+    mqttManager.publish(MQkhValue, mqBuf, true); }
+  configStore.setLastKH(r.khValue);
+  configStore.setLastStartPH(r.startPH);
+  appendHistory("kh", r.khValue);
+  appendHistory("ph", r.startPH);
+  appendGranHistory(r.granR2, r.hclUsed, r.endpointPH, r.usedGran);
+}
+
+// Compute median of a float array (sorts in-place)
+static float computeMedian(float* values, int count) {
+  for (int i = 1; i < count; i++) {
+    float key = values[i];
+    int j = i - 1;
+    while (j >= 0 && values[j] > key) {
+      values[j + 1] = values[j];
+      j--;
+    }
+    values[j + 1] = key;
+  }
+  if (count % 2 == 0)
+    return (values[count / 2 - 1] + values[count / 2]) / 2.0f;
+  return values[count / 2];
+}
+
+// Measure KH with outlier validation against recent history
+void measureKHWithValidation() {
+  // Read recent history BEFORE measuring (so current measurement is not included)
+  float recent[10];
+  int histCount = getRecentKHValues(recent, KH_OUTLIER_HISTORY_COUNT);
+
+  KHResult r1 = measureKH();
+  if (isnan(r1.khValue)) return;  // measurement failed
+
+  // Skip validation if insufficient history
+  if (histCount < KH_OUTLIER_HISTORY_COUNT) {
+    publishKHResult(r1);
+    return;
+  }
+
+  float median = computeMedian(recent, histCount);
+  float dev1 = fabsf(r1.khValue - median);
+
+  if (dev1 <= KH_OUTLIER_THRESHOLD_DKH) {
+    publishKHResult(r1);
+    return;
+  }
+
+  // Outlier detected — re-measure
+  char buf[96];
+  snprintf(buf, sizeof(buf), "Outlier: %.2f dKH (median %.2f, dev %.2f). Re-measuring...",
+           r1.khValue, median, dev1);
+  publishMessage(buf);
+
+  KHResult r2 = measureKH();
+  if (isnan(r2.khValue)) {
+    publishMessage("Re-measurement failed, keeping first value");
+    publishKHResult(r1);
+    return;
+  }
+
+  float dev2 = fabsf(r2.khValue - median);
+
+  if (dev2 <= KH_OUTLIER_THRESHOLD_DKH) {
+    snprintf(buf, sizeof(buf), "Re-measurement %.2f dKH accepted (within range)", r2.khValue);
+    publishMessage(buf);
+    publishKHResult(r2);
+    return;
+  }
+
+  // Both outliers — pick closest to median
+  if (dev1 <= dev2) {
+    snprintf(buf, sizeof(buf), "Both outliers. Using first (%.2f, closer to median %.2f)", r1.khValue, median);
+    publishMessage(buf);
+    publishKHResult(r1);
+  } else {
+    snprintf(buf, sizeof(buf), "Both outliers. Using second (%.2f, closer to median %.2f)", r2.khValue, median);
+    publishMessage(buf);
+    publishKHResult(r2);
+  }
+}
 
 void processPendingCommand() {
   char cmd = pendingCmd;
@@ -55,7 +150,7 @@ void processPendingCommand() {
   switch (cmd) {
     case 'k':
       publishMessage("Measuring KH!");
-      measureKH();
+      measureKHWithValidation();
       broadcastState();
       break;
     case 't':
@@ -120,12 +215,15 @@ void calibrateTitrationPump() {
 
 // --- MeasureKH ---
 
-void measureKH() {
+KHResult measureKH() {
+  KHResult result = {};
+  result.khValue = NAN;
+
   // Re-entrancy guard: prevent concurrent measurements
   static bool measuring = false;
   if (measuring) {
     publishError("Measurement already in progress");
-    return;
+    return result;
   }
   measuring = true;
 
@@ -140,7 +238,7 @@ void measureKH() {
   if (!isCalibrationValid()) {
     publishError("Error: pH calibration invalid. Re-calibrate with pH 4/7/10 buffers.");
     measuring = false;
-    return;
+    return result;
   }
 
   titrate(FILL_VOLUME, PREFILL_RPM);
@@ -236,7 +334,10 @@ void measureKH() {
     float lastPrecisePH = pH;
     int preciseStall = 0;
 
-    while (!isnan(pH) && pH > GRAN_STOP_PH && units < MAX_TITRATION_UNITS
+    uint8_t epMethod = configStore.getEndpointMethod();
+    float stopPH = (epMethod == 1) ? FIXED_ENDPOINT_STOP_PH : GRAN_STOP_PH;
+
+    while (!isnan(pH) && pH > stopPH && units < MAX_TITRATION_UNITS
            && errorflag == 0) {
       mqttManager.loop();
 
@@ -301,25 +402,37 @@ void measureKH() {
         errorMessage = "Error: invalid calibration (calUnits or samVol is zero)";
         errorflag = 1;
       } else {
-        // Determine equivalence point via Gran transformation
+        // Determine equivalence point
         float granR2 = 0;
         float exactUnits;
         bool usedGran = false;
 
-        if (granCount >= MIN_GRAN_POINTS) {
-          char granReason[64] = "";
-          exactUnits = granAnalysis(dataPoints, nPoints, samVol, titVol, calUnits, &granR2, granReason, sizeof(granReason));
-          if (!isnan(exactUnits)) {
-            usedGran = true;
+        if (epMethod == 0) {
+          // Gran mode: strict R² cutoff, no fallback to interpolation
+          if (granCount >= MIN_GRAN_POINTS) {
+            char granReason[64] = "";
+            exactUnits = granAnalysis(dataPoints, nPoints, samVol, titVol, calUnits, &granR2, granReason, sizeof(granReason));
+            if (!isnan(exactUnits)) {
+              usedGran = true;
+            } else {
+              char failBuf[128];
+              snprintf(failBuf, sizeof(failBuf), "Gran failed: %s", granReason);
+              errorMessage = "Error: Gran analysis failed";
+              publishMessage(failBuf);
+              errorflag = 1;
+            }
           } else {
-            exactUnits = interpolateAtPH(dataPoints, nPoints, ENDPOINT_PH);
-            char failBuf[128];
-            snprintf(failBuf, sizeof(failBuf), "Gran failed: %s, using interpolation", granReason);
-            publishMessage(failBuf);
+            errorMessage = "Error: insufficient Gran data points";
+            errorflag = 1;
           }
         } else {
+          // Fixed endpoint mode: interpolate at ENDPOINT_PH
           exactUnits = interpolateAtPH(dataPoints, nPoints, ENDPOINT_PH);
-          publishMessage("Insufficient Gran data, using interpolation");
+          if (isnan(exactUnits)) {
+            errorMessage = "Error: could not interpolate at endpoint pH";
+            errorflag = 1;
+          }
+          publishMessage("Fixed endpoint mode");
         }
 
         // Broadcast Gran diagnostics to web dashboard
@@ -360,7 +473,7 @@ void measureKH() {
             }
           }
 
-          // Publish volume and endpoint info
+          // Publish informational messages (endpoint info, method, HCl warning)
           char volBuf[80];
           if (usedGran) {
             snprintf(volBuf, sizeof(volBuf), "Endpoint: %.2f mL @ pH %.2f (Gran, R²=%.3f)", hclUsed, endpointPHVal, granR2);
@@ -373,7 +486,6 @@ void measureKH() {
           { char mqBuf[16]; snprintf(mqBuf, sizeof(mqBuf), "%.2f", startPH);
             mqttManager.publish(MQstartpH, mqBuf); }
 
-          // Publish method for HA dashboards
           char methodBuf[48];
           if (usedGran) {
             snprintf(methodBuf, sizeof(methodBuf), "Gran (R²=%.3f)", granR2);
@@ -382,7 +494,6 @@ void measureKH() {
           }
           mqttManager.publish(MQmsg, methodBuf);
 
-          // HCl low-level warning
           float remainingHCl = configStore.getHClVolume();
           if (remainingHCl <= 0) {
             publishError("Warning: HCl supply empty! Refill needed.");
@@ -392,17 +503,13 @@ void measureKH() {
             publishError(warnBuf);
           }
 
-          { char mqBuf[16]; snprintf(mqBuf, sizeof(mqBuf), "%.2f", khValue);
-            mqttManager.publish(MQkhValue, mqBuf, true); }
-
-          // Save last measurement for persistent dashboard display
-          configStore.setLastKH(khValue);
-          configStore.setLastStartPH(startPH);
-
-          // Store history for web dashboard charts
-          appendHistory("kh", khValue);
-          appendHistory("ph", startPH);
-          appendGranHistory(granR2, hclUsed, endpointPHVal, usedGran);
+          // Populate result struct — publishing deferred to measureKHWithValidation()
+          result.khValue = khValue;
+          result.startPH = startPH;
+          result.hclUsed = hclUsed;
+          result.granR2 = granR2;
+          result.endpointPH = endpointPHVal;
+          result.usedGran = usedGran;
         }
       }
     } else {
@@ -449,6 +556,7 @@ void measureKH() {
   }
   publishMessage(doneBuf);
   measuring = false;
+  return result;
 }
 
 // --- MQTT callback ---
@@ -566,7 +674,7 @@ void setup() {
   scheduler.begin();
   scheduler.onMeasurementDue([]() {
     mqttManager.publish(MQmsg, "Scheduled measurement starting");
-    measureKH();
+    measureKHWithValidation();
   });
 }
 

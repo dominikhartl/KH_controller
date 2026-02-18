@@ -56,6 +56,8 @@ void ConfigStore::setHClMolarity(float v) { prefs.putFloat("hcl_mol", v); }
 void ConfigStore::setHClVolume(float v) { prefs.putFloat("hcl_vol", v); }
 void ConfigStore::setCalUnits(int v) { prefs.putInt("cal_drops", v); }
 void ConfigStore::setFastTitrationPH(float v) { prefs.putFloat("fast_ph", v); }
+uint8_t ConfigStore::getEndpointMethod() { return prefs.getUChar("ep_method", 0); }
+void ConfigStore::setEndpointMethod(uint8_t m) { prefs.putUChar("ep_method", m); }
 
 // Last measurement results
 float ConfigStore::getLastKH() { return prefs.getFloat("last_kh", 0); }

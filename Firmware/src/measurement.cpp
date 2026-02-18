@@ -52,6 +52,24 @@ static float medianFilteredMean(float* sorted, int count, float outlierThreshold
   return (inlierCount > 0) ? sum / inlierCount : median;
 }
 
+// Oversampled ADC read with trimmed mean to reject WiFi-induced noise spikes.
+// Sorts raw samples and discards top/bottom 25% before averaging.
+static float readADCTrimmed(int nSamples, int interSampleDelayMs) {
+  static float adcBuf[ADC_OVERSAMPLING];
+  if (nSamples > ADC_OVERSAMPLING) nSamples = ADC_OVERSAMPLING;
+  for (int i = 0; i < nSamples; i++) {
+    adcBuf[i] = (float)analogReadMilliVolts(PH_PIN);
+    delay(interSampleDelayMs);
+  }
+  sortFloats(adcBuf, nSamples);
+  int trim = nSamples / 4;
+  float sum = 0;
+  for (int i = trim; i < nSamples - trim; i++) {
+    sum += adcBuf[i];
+  }
+  return sum / (nSamples - 2 * trim);
+}
+
 void initADC() {
   analogSetPinAttenuation(PH_PIN, ADC_11db);
   adc_power_acquire();  // Keep ADC powered to prevent hall sensor glitches on GPIO35
@@ -210,12 +228,7 @@ void measurePH(int nreadings) {
   int validReadings = 0;
 
   for (int t = 0; t < maxReadings; t++) {
-    float voltageSum = 0.0;
-    for (int s = 0; s < ADC_OVERSAMPLING; s++) {
-      voltageSum += (float)analogReadMilliVolts(PH_PIN);
-      delay(ADC_INTER_SAMPLE_DELAY_MS);
-    }
-    voltage = voltageSum / ADC_OVERSAMPLING;
+    voltage = readADCTrimmed(ADC_OVERSAMPLING, ADC_INTER_SAMPLE_DELAY_MS);
 
     float calculatedPH = phSlope * voltage + phOffset;
 
@@ -244,12 +257,7 @@ void measurePHFast(int nreadings) {
   int validReadings = 0;
 
   for (int t = 0; t < maxReadings; t++) {
-    float voltageSum = 0.0;
-    for (int s = 0; s < ADC_OVERSAMPLING_FAST; s++) {
-      voltageSum += (float)analogReadMilliVolts(PH_PIN);
-      delay(ADC_INTER_SAMPLE_DELAY_FAST_MS);
-    }
-    voltage = voltageSum / ADC_OVERSAMPLING_FAST;
+    voltage = readADCTrimmed(ADC_OVERSAMPLING_FAST, ADC_INTER_SAMPLE_DELAY_FAST_MS);
 
     float calculatedPH = phSlope * voltage + phOffset;
 
@@ -278,12 +286,7 @@ float measureVoltage(int nreadings) {
   const int maxReadings = (nreadings > 100) ? 100 : nreadings;
 
   for (int t = 0; t < maxReadings; t++) {
-    float voltageSum = 0.0;
-    for (int s = 0; s < ADC_OVERSAMPLING; s++) {
-      voltageSum += (float)analogReadMilliVolts(PH_PIN);
-      delay(ADC_INTER_SAMPLE_DELAY_MS);
-    }
-    voltageReadings[t] = voltageSum / ADC_OVERSAMPLING;
+    voltageReadings[t] = readADCTrimmed(ADC_OVERSAMPLING, ADC_INTER_SAMPLE_DELAY_MS);
     delay(MEASUREMENT_DELAY_MS);
   }
 
@@ -309,10 +312,11 @@ float measureVoltage(int nreadings) {
 
 // --- Gran transformation endpoint detection ---
 
-// Internal: linear regression on Gran function values
+// Internal: linear regression on Gran function values within a pH window
 // excluded[] marks points to skip; returns false if regression fails
 static bool granRegression(TitrationPoint* points, int nPoints,
                            float sampleVol, float k, bool* excluded,
+                           float pHLow, float pHHigh,
                            float* outSlope, float* outIntercept,
                            float* outR2, float* outSsRes, int* outCount) {
   float sumX = 0, sumY = 0, sumXX = 0, sumXY = 0, sumYY = 0;
@@ -320,7 +324,7 @@ static bool granRegression(TitrationPoint* points, int nPoints,
 
   for (int i = 0; i < nPoints; i++) {
     if (excluded[i]) continue;
-    if (points[i].pH < GRAN_REGION_PH && points[i].pH > GRAN_STOP_PH) {
+    if (points[i].pH < pHHigh && points[i].pH > pHLow) {
       float x = points[i].units;
       float totalVol = sampleVol + x * k;
       float y = totalVol * powf(10.0f, -points[i].pH);
@@ -344,7 +348,7 @@ static bool granRegression(TitrationPoint* points, int nPoints,
   float ssRes = 0;
   for (int i = 0; i < nPoints; i++) {
     if (excluded[i]) continue;
-    if (points[i].pH < GRAN_REGION_PH && points[i].pH > GRAN_STOP_PH) {
+    if (points[i].pH < pHHigh && points[i].pH > pHLow) {
       float x = points[i].units;
       float totalVol = sampleVol + x * k;
       float y = totalVol * powf(10.0f, -points[i].pH);
@@ -358,34 +362,26 @@ static bool granRegression(TitrationPoint* points, int nPoints,
   return true;
 }
 
-float granAnalysis(TitrationPoint* points, int nPoints,
-                   float sampleVol, float titVol, float calUnits,
-                   float* outR2, char* reasonBuf, size_t reasonLen) {
-  // Helper to set reason and return NAN
-  auto fail = [&](const char* reason) -> float {
-    if (reasonBuf && reasonLen > 0) snprintf(reasonBuf, reasonLen, "%s", reason);
-    return NAN;
-  };
-
-  if (nPoints < 3) return fail("Too few data points");
-  if (calUnits <= 0) return fail("Invalid calibration units");
-
-  float k = titVol / calUnits;  // mL per unit
-
-  // Exclusion flags for iterative outlier removal
-  static bool excluded[MAX_TITRATION_POINTS];
+// Try Gran analysis with a specific pH window, including outlier removal.
+// Returns equivalence point in units, or NAN on failure.
+static float tryGranWindow(TitrationPoint* points, int nPoints,
+                           float sampleVol, float k,
+                           float pHLow, float pHHigh,
+                           float* outR2) {
+  bool excluded[MAX_TITRATION_POINTS];
   for (int i = 0; i < nPoints; i++) excluded[i] = false;
 
   float slope, intercept, r2, ssRes;
   int count;
 
   if (!granRegression(points, nPoints, sampleVol, k, excluded,
+                      pHLow, pHHigh,
                       &slope, &intercept, &r2, &ssRes, &count))
-    return fail("Regression failed (no valid Gran points)");
+    return NAN;
 
   // Iterative outlier rejection: up to 2 rounds, remove worst 2σ outlier
   for (int round = 0; round < 2; round++) {
-    if (count <= MIN_GRAN_POINTS) break;  // Don't remove if at minimum
+    if (count <= MIN_GRAN_POINTS) break;
 
     float sigma = sqrtf(ssRes / (float)(count - 2));
     float worstRes = 0;
@@ -393,7 +389,7 @@ float granAnalysis(TitrationPoint* points, int nPoints,
 
     for (int i = 0; i < nPoints; i++) {
       if (excluded[i]) continue;
-      if (points[i].pH < GRAN_REGION_PH && points[i].pH > GRAN_STOP_PH) {
+      if (points[i].pH < pHHigh && points[i].pH > pHLow) {
         float x = points[i].units;
         float totalVol = sampleVol + x * k;
         float y = totalVol * powf(10.0f, -points[i].pH);
@@ -404,34 +400,66 @@ float granAnalysis(TitrationPoint* points, int nPoints,
         }
       }
     }
-    if (worstIdx < 0) break;  // No outliers
+    if (worstIdx < 0) break;
 
     excluded[worstIdx] = true;
     if (!granRegression(points, nPoints, sampleVol, k, excluded,
+                        pHLow, pHHigh,
                         &slope, &intercept, &r2, &ssRes, &count))
-      return fail("Regression failed after outlier removal");
+      return NAN;
   }
 
-  // Slope must be positive (F increases with acid volume)
-  if (slope <= 0) return fail("Negative slope (non-physical)");
+  if (slope <= 0) return NAN;
 
-  // Equivalence point: where F = 0 → x = -intercept/slope
   float eqUnits = -intercept / slope;
+  if (eqUnits < 0 || eqUnits > points[nPoints - 1].units) return NAN;
 
-  // Sanity checks
-  if (eqUnits < 0) return fail("Equivalence point negative");
-  if (eqUnits > points[nPoints - 1].units) return fail("Equivalence point beyond titrated range");
+  *outR2 = r2;
+  return eqUnits;
+}
+
+float granAnalysis(TitrationPoint* points, int nPoints,
+                   float sampleVol, float titVol, float calUnits,
+                   float* outR2, char* reasonBuf, size_t reasonLen) {
+  auto fail = [&](const char* reason) -> float {
+    if (reasonBuf && reasonLen > 0) snprintf(reasonBuf, reasonLen, "%s", reason);
+    return NAN;
+  };
+
+  if (nPoints < 3) return fail("Too few data points");
+  if (calUnits <= 0) return fail("Invalid calibration units");
+
+  float k = titVol / calUnits;
+
+  // Adaptive window selection: try multiple upper pH bounds, keep best R²
+  static const float upperBounds[] = {4.5f, 4.3f, 4.1f, 3.9f, 3.7f};
+  static const int nBounds = sizeof(upperBounds) / sizeof(upperBounds[0]);
+
+  float bestR2 = 0;
+  float bestEqUnits = NAN;
+
+  for (int b = 0; b < nBounds; b++) {
+    float r2 = 0;
+    float eq = tryGranWindow(points, nPoints, sampleVol, k,
+                             GRAN_STOP_PH, upperBounds[b], &r2);
+    if (!isnan(eq) && r2 > bestR2) {
+      bestR2 = r2;
+      bestEqUnits = eq;
+    }
+  }
+
+  if (isnan(bestEqUnits)) return fail("No valid Gran window found");
 
   if (outR2) {
-    *outR2 = r2;
-    if (r2 < 0.99f) {
+    *outR2 = bestR2;
+    if (bestR2 < GRAN_MIN_R2) {
       if (reasonBuf && reasonLen > 0)
-        snprintf(reasonBuf, reasonLen, "Poor fit (R²=%.3f)", r2);
+        snprintf(reasonBuf, reasonLen, "Poor fit (R²=%.3f)", bestR2);
       return NAN;
     }
   }
 
-  return eqUnits;
+  return bestEqUnits;
 }
 
 float interpolateAtPH(TitrationPoint* points, int nPoints, float targetPH) {

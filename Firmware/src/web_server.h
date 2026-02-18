@@ -15,6 +15,7 @@ void broadcastGranData(float r2, float eqML, bool usedGran,
                        float* pointsML, float* pointsF, int nPts);
 void appendHistory(const char* sensor, float value);
 void appendGranHistory(float r2, float eqML, float endpointPH, bool usedGran);
+int getRecentKHValues(float* outValues, int maxCount);
 
 extern AsyncWebServer server;
 extern AsyncWebSocket ws;
