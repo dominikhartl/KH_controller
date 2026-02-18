@@ -136,11 +136,12 @@ void ConfigStore::addSlopeEntry(uint32_t timestamp, float slope) {
   uint8_t count = prefs.getUChar("sl_cnt", 0);
   if (count > MAX_SLOPE_HISTORY) count = MAX_SLOPE_HISTORY;
   if (count > 0) {
-    prefs.getBytes("sl_data", entries, count * sizeof(SlopeEntry));
+    size_t read = prefs.getBytes("sl_data", entries, count * sizeof(SlopeEntry));
+    if (read != count * sizeof(SlopeEntry)) count = 0;  // corrupt NVS — reset
   }
 
   // Dedup: if last entry is within 1 hour, update it (same calibration session)
-  if (count > 0 && timestamp > entries[count - 1].timestamp
+  if (count > 0 && timestamp >= entries[count - 1].timestamp
       && (timestamp - entries[count - 1].timestamp) < 3600) {
     entries[count - 1].slope = slope;
     entries[count - 1].timestamp = timestamp;

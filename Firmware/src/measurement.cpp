@@ -197,6 +197,10 @@ static void waitForStabilization() {
   lastStabilizationMs = STABILIZATION_TIMEOUT_MS;  // Timed out
 }
 
+void waitForPHStabilization() {
+  waitForStabilization();
+}
+
 // pH measurement with adaptive stabilization, oversampling, and outlier removal
 void measurePH(int nreadings) {
   waitForStabilization();

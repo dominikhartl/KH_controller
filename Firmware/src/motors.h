@@ -13,6 +13,6 @@ void setMotorProgressCallback(MotorProgressCallback cb);
 void removeSample(int volume);
 void takeSample(int volume);
 void washSample(float remPart, float fillPart);
-void titrate(int volume, int stepDelay);
+void titrate(int volume, float speedRpm);
 
 #endif // MOTORS_H

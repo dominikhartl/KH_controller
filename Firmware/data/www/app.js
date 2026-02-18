@@ -16,6 +16,7 @@
       setDot('ws', true);
       ws.send(JSON.stringify({type:'getHistory', sensor:'kh'}));
       ws.send(JSON.stringify({type:'getHistory', sensor:'ph'}));
+      ws.send(JSON.stringify({type:'getHistory', sensor:'gran'}));
     };
     ws.onclose = function() {
       wsOk = false;
@@ -311,11 +312,26 @@
 
   function updateHistory(d) {
     if (!d.data || !d.sensor) return;
+    if (d.sensor === 'gran') { updateGranHistory(d.data); return; }
     var chart = (d.sensor === 'kh') ? khChart : phChart;
     if (!chart) return;
     chart.data.labels = d.data.map(function(p) { return fmtDate(p[0]); });
     chart.data.datasets[0].data = d.data.map(function(p) { return p[1]; });
     chart.update();
+  }
+
+  function updateGranHistory(data) {
+    if (!granHistChart || !data || data.length === 0) return;
+    // data: [[ts, r2, eqML, endpointPH, method], ...]
+    granHistChart.data.labels = data.map(function(p) { return fmtDate(p[0]); });
+    granHistChart.data.datasets[0].data = data.map(function(p) { return p[1]; }); // R2
+    granHistChart.data.datasets[1].data = data.map(function(p) { return p[3]; }); // endpointPH
+    // Color interpolation points red
+    var r2Colors = data.map(function(p) { return p[4] === 1 ? '#0a84ff' : '#ff453a'; });
+    var phColors = data.map(function(p) { return p[4] === 1 ? '#ff9f0a' : '#ff453a'; });
+    granHistChart.data.datasets[0].pointBackgroundColor = r2Colors;
+    granHistChart.data.datasets[1].pointBackgroundColor = phColors;
+    granHistChart.update();
   }
 
   // --- Gauge arc math ---
@@ -328,7 +344,8 @@
   }
 
   // --- Charts ---
-  var khChart, phChart, liveChart, granChart;
+  var khChart, phChart, liveChart, granChart, granHistChart;
+  var granView = 'last'; // 'last' or 'history'
   var chartOpts = {
     responsive: true,
     maintainAspectRatio: false,
@@ -378,6 +395,25 @@
         }
       }
     });
+    granHistChart = new Chart(document.getElementById('chart-gran-hist'), {
+      type: 'line',
+      data: {
+        labels: [],
+        datasets: [
+          { label: 'R\u00b2', data: [], borderColor: '#0a84ff', backgroundColor: 'rgba(10,132,255,0.15)', borderWidth: 2, pointRadius: 4, yAxisID: 'yR2', tension: 0.1 },
+          { label: 'End pH', data: [], borderColor: '#ff9f0a', backgroundColor: 'rgba(255,159,10,0.15)', borderWidth: 2, pointRadius: 4, yAxisID: 'yRight', tension: 0.1 }
+        ]
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false, animation: false,
+        plugins: { legend: { display: true, labels: { color: '#8e8e93', font: { size: 10 }, boxWidth: 12 } } },
+        scales: {
+          x: { ticks: { color: '#8e8e93', maxTicksLimit: 6, font: { size: 10 } }, grid: { color: '#38383a' } },
+          yR2: { type: 'linear', position: 'left', min: 0.9, max: 1.0, ticks: { color: '#0a84ff', font: { size: 9 } }, grid: { color: '#38383a' }, title: { display: true, text: 'R\u00b2', color: '#0a84ff', font: { size: 10 } } },
+          yRight: { type: 'linear', position: 'right', ticks: { color: '#ff9f0a', font: { size: 9 } }, grid: { drawOnChartArea: false }, title: { display: true, text: 'pH', color: '#ff9f0a', font: { size: 10 } } }
+        }
+      }
+    });
   }
 
   // --- Tabs ---
@@ -388,17 +424,59 @@
         tabs.forEach(function(tt) { tt.classList.remove('active'); });
         t.classList.add('active');
         var sel = t.getAttribute('data-tab');
-        ['kh','ph','live','gran'].forEach(function(id) {
-          document.getElementById('chart-' + id).style.display = (id === sel) ? 'block' : 'none';
+        // Hide all chart canvases
+        ['kh','ph','live','gran','gran-hist'].forEach(function(id) {
+          document.getElementById('chart-' + id).style.display = 'none';
         });
+        // Show selected
+        if (sel === 'gran') {
+          showGranView();
+        } else {
+          document.getElementById('chart-' + sel).style.display = 'block';
+        }
+        // Gran sub-tabs visibility
+        var granSub = document.getElementById('gran-subtabs');
+        if (granSub) granSub.style.display = (sel === 'gran') ? 'flex' : 'none';
+        // Gran info only in scatter view
         var granInfo = document.getElementById('gran-info');
-        if (granInfo) granInfo.style.display = (sel === 'gran' && granInfo.textContent) ? '' : 'none';
+        if (granInfo) granInfo.style.display = (sel === 'gran' && granView === 'last' && granInfo.textContent) ? '' : 'none';
+        // Resize active chart
         if (sel === 'live' && liveChart) liveChart.resize();
         else if (sel === 'kh' && khChart) khChart.resize();
         else if (sel === 'ph' && phChart) phChart.resize();
-        else if (sel === 'gran' && granChart) granChart.resize();
       });
     });
+
+    // Gran sub-tab toggle
+    var btnLast = document.getElementById('gran-tab-last');
+    var btnHist = document.getElementById('gran-tab-hist');
+    if (btnLast) btnLast.addEventListener('click', function() { switchGranView('last'); });
+    if (btnHist) btnHist.addEventListener('click', function() { switchGranView('history'); });
+  }
+
+  function switchGranView(view) {
+    granView = view;
+    var btnLast = document.getElementById('gran-tab-last');
+    var btnHist = document.getElementById('gran-tab-hist');
+    if (btnLast) btnLast.classList.toggle('active', view === 'last');
+    if (btnHist) btnHist.classList.toggle('active', view === 'history');
+    showGranView();
+    var granInfo = document.getElementById('gran-info');
+    if (granInfo) granInfo.style.display = (view === 'last' && granInfo.textContent) ? '' : 'none';
+  }
+
+  function showGranView() {
+    var scatter = document.getElementById('chart-gran');
+    var hist = document.getElementById('chart-gran-hist');
+    if (granView === 'last') {
+      scatter.style.display = 'block';
+      hist.style.display = 'none';
+      if (granChart) granChart.resize();
+    } else {
+      scatter.style.display = 'none';
+      hist.style.display = 'block';
+      if (granHistChart) granHistChart.resize();
+    }
   }
 
   // --- Collapsible sections ---

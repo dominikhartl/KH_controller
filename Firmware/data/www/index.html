@@ -56,11 +56,16 @@
       <button class="tab" data-tab="live">Live pH</button>
       <button class="tab" data-tab="gran">Gran</button>
     </div>
+    <div id="gran-subtabs" class="gran-subtabs" style="display:none">
+      <button id="gran-tab-last" class="gran-subtab active">Last</button>
+      <button id="gran-tab-hist" class="gran-subtab">History</button>
+    </div>
     <div class="chart-container">
       <canvas id="chart-kh"></canvas>
       <canvas id="chart-ph" style="display:none"></canvas>
       <canvas id="chart-live" style="display:none"></canvas>
       <canvas id="chart-gran" style="display:none"></canvas>
+      <canvas id="chart-gran-hist" style="display:none"></canvas>
     </div>
     <div id="gran-info" class="gran-info" style="display:none"></div>
   </section>

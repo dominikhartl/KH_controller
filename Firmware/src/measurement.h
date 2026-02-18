@@ -17,6 +17,9 @@ void updateCalibrationFit();
 // Check if calibration voltages are valid (not NaN, sufficient separation)
 bool isCalibrationValid();
 
+// Wait for ADC readings to converge (call after acid addition + mixing delay)
+void waitForPHStabilization();
+
 // Measurement functions
 void measurePH(int nreadings);
 void measurePHFast(int nreadings);  // No stabilization, 8x oversample — for far from endpoint

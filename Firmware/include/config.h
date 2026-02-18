@@ -30,18 +30,26 @@ static const float PH_FAST_OUTLIER_THRESHOLD = 0.3f;  // Fast mode: ±0.3 pH fro
 // Motor configuration
 static const int STEPS_PER_REVOLUTION = 1600;
 
+// Convert RPM to stepper half-period in microseconds
+// 1 rev = STEPS_PER_REVOLUTION steps, each step = 2 half-periods
+// half_period_us = 60e6 / (2 * RPM * STEPS_PER_REVOLUTION) = 18750 / RPM
+inline float rpmToHalfPeriodUs(float rpm) { return 18750.0f / rpm; }
+
+// Motor speeds (RPM) — all stepper speeds defined here, converted to us internally
+static const float MOTOR_TARGET_RPM   = 94.0f;   // Sample pump cruising speed (~200 us)
+static const float MOTOR_START_RPM    = 9.4f;     // Acceleration ramp start speed (~2000 us)
+static const float TITRATION_RPM      = 47.0f;    // Titration pump speed (~400 us)
+static const float PREFILL_RPM        = 63.0f;    // Prefill/fill pump speed (~300 us)
+static const float MOTOR_ACCEL_FACTOR = 0.9995;   // Acceleration/deceleration factor (per step)
+
 // Titration tuning parameters
 static const int TITRATION_STEP_SIZE = 2;        // Base units per titration step
 static const int MOTOR_STEPS_PER_UNIT = 16;      // Motor steps per titration unit
-static const int TITRATION_SPEED = 400;
-static const int TITRATION_MIX_DELAY_MS = 1500;  // Mixing delay near endpoint (electrode equilibration)
+static const int TITRATION_MIX_DELAY_MS = 2000;  // Mixing delay near endpoint (electrode equilibration)
 static const int TITRATION_MIX_DELAY_FAST_MS = 200;  // Mixing delay far from endpoint
 static const int MAX_TITRATION_UNITS = 10000;
 static const int FILL_VOLUME = 100;
-static const int PREFILL_SPEED = 300;
-static const float MOTOR_TARGET_SPEED = 250;     // Target speed for acceleration ramps (us half-period)
-static const float MOTOR_ACCEL_FACTOR = 0.9995;  // Acceleration/deceleration factor
-static const int STIRRER_SPEED = 230;
+static const int STIRRER_SPEED = 230;            // PWM duty cycle (0-255), not RPM
 static const int STIRRER_WARMUP_MS = 3000;
 static const int MEASUREMENT_DELAY_MS = 50;
 
@@ -54,7 +62,6 @@ static const float FAST_TITRATION_PH_DEFAULT = 5.0f; // pH threshold: fast→pre
 // Motor timing
 static const int MOTOR_ENABLE_DELAY_MS = 10;     // Settle time after enabling driver
 static const int MOTOR_HOLD_MS = 150;            // Hold position before disabling (tubing settle)
-static const float MOTOR_START_SPEED = 2000.0;   // Starting speed for acceleration (us)
 static const int TITRATE_ACCEL_THRESHOLD = 50;    // Titrate uses acceleration above this volume
 static const uint16_t MOTOR_YIELD_INTERVAL = 10; // Yield every N revolutions during long ops
 
@@ -71,7 +78,7 @@ static const unsigned long SAMPLE_PUMP_TIMEOUT_MS = 600000;
 static const float HCL_LOW_THRESHOLD_ML = 300.0;
 
 // Gran transformation endpoint detection
-static const float GRAN_REGION_PH       = 4.35f;  // Points below this used for Gran regression
+static const float GRAN_REGION_PH       = 4.5f;  // Points below this used for Gran regression
 static const float GRAN_STOP_PH         = 3.5f;   // Stop titrating at this pH (Dickson protocol)
 static const int   MIN_GRAN_POINTS      = 8;       // Minimum points for reliable regression
 static const int   MAX_TITRATION_POINTS = 200;      // Data point buffer size

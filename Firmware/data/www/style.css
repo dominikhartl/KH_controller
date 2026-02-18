@@ -98,6 +98,9 @@ h2{font-size:.8em;font-weight:600;color:var(--text-secondary);text-transform:upp
 .chart-container{position:relative;height:200px}
 .chart-container canvas{position:absolute;top:0;left:0;width:100%!important;height:100%!important}
 .gran-info{font-size:.8em;color:var(--text-secondary);text-align:center;padding:8px 0 0;font-variant-numeric:tabular-nums}
+.gran-subtabs{display:flex;gap:4px;padding:3px;background:var(--card-elevated);border-radius:var(--radius-sm);margin-bottom:8px}
+.gran-subtab{flex:1;background:transparent;border:none;color:var(--text-secondary);padding:5px 10px;border-radius:5px;cursor:pointer;font-size:.75em;font-weight:500;transition:all .2s ease;-webkit-tap-highlight-color:transparent}
+.gran-subtab.active{background:var(--card);color:var(--text-primary);box-shadow:0 1px 4px rgba(0,0,0,.3)}
 
 /* === Buttons === */
 .btn-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}

@@ -22,7 +22,6 @@ float startPH = 0;
 bool discoveryPublished = false;
 unsigned long lastDiagnosticsTime = 0;
 unsigned long lastBroadcastTime = 0;
-volatile bool motorBusy = false;  // Suppresses broadcastState() during motor ops
 
 // Deferred command queue: WebSocket/MQTT sets the command, loop() executes it
 // This prevents long operations from blocking the AsyncTCP task
@@ -69,6 +68,7 @@ void processPendingCommand() {
 // --- Publish helpers ---
 
 void publishError(const char* errorMessage) {
+  if (!errorMessage || errorMessage[0] == '\0') return;
   mqttManager.publish(MQerr, errorMessage);
   broadcastError(errorMessage);
 }
@@ -97,19 +97,17 @@ void subtractHCl(int unitsUsed) {
 
 void calibrateTitrationPump() {
   publishMessage("Calibrating pump");
-  motorBusy = true;
+
   units = 0;
   const int BATCH = 40;
   char buf[48];
 
   while (units < CALIBRATION_TARGET_UNITS) {
     int batch = min(BATCH, CALIBRATION_TARGET_UNITS - units);
-    titrate(batch, TITRATION_SPEED);
+    titrate(batch, TITRATION_RPM);
     units += batch;
     delay(TITRATION_MIX_DELAY_FAST_MS);
     ArduinoOTA.handle();
-    // Progress message doubles as WebSocket keepalive — without ws.textAll()
-    // the AsyncTCP receive buffer fills up and stalls WiFi/motor interrupts
     snprintf(buf, sizeof(buf), "Cal: %d / %d", units, CALIBRATION_TARGET_UNITS);
     publishMessage(buf);
   }
@@ -117,7 +115,6 @@ void calibrateTitrationPump() {
   subtractHCl(CALIBRATION_TARGET_UNITS);
   units = 0;
   digitalWrite(EN_PIN2, HIGH);
-  motorBusy = false;
   publishMessage("Pump calibration done");
 }
 
@@ -146,7 +143,7 @@ void measureKH() {
     return;
   }
 
-  titrate(FILL_VOLUME, PREFILL_SPEED);
+  titrate(FILL_VOLUME, PREFILL_RPM);
   digitalWrite(EN_PIN2, HIGH);
   publishMessage("Taking sample");
   washSample(1.2, 1.0);
@@ -193,18 +190,16 @@ void measureKH() {
     float fastPH = configStore.getFastTitrationPH();
 
     // --- Fast phase: pump 200-unit batches until pH falls below fastPH ---
-    motorBusy = true;  // Suppress broadcastState() during motor ops
     const int FAST_BATCH = 200;
     float lastFastPH = startPH;
     int stallCount = 0;
     publishMessage("Fast titration");
 
     while (pH > fastPH && units < MAX_TITRATION_UNITS && errorflag == 0) {
-      titrate(FAST_BATCH, TITRATION_SPEED);
+      titrate(FAST_BATCH, TITRATION_RPM);
       units += FAST_BATCH;
       delay(TITRATION_MIX_DELAY_FAST_MS);
       measurePHFast(5);
-      // broadcastTitrationPH triggers ws.textAll() — keeps AsyncTCP alive
       broadcastTitrationPH(pH, units);
       mqttManager.loop();
       ArduinoOTA.handle();
@@ -243,23 +238,22 @@ void measureKH() {
 
     while (!isnan(pH) && pH > GRAN_STOP_PH && units < MAX_TITRATION_UNITS
            && errorflag == 0) {
-      // Flush WebSocket/MQTT buffers before tight motor stepping
-      ws.cleanupClients();
       mqttManager.loop();
 
       int stepVol;
       if (pH > 4.5f) {
         // Medium zone (pH > 4.5): 16-unit steps, moderate accuracy
         stepVol = TITRATION_STEP_SIZE * 8;  // 16 units
-        titrate(stepVol, TITRATION_SPEED);
+        titrate(stepVol, TITRATION_RPM);
         delay(TITRATION_MIX_DELAY_MS);
-        measurePH(5);
+        measurePH(15);
       } else {
-        // Precise zone (pH < 4.5): Gran data + interpolation at 4.3
+        // Gran zone (pH < 4.5): smaller steps, stabilization check, more readings
         stepVol = TITRATION_STEP_SIZE * 4;  // 8 units
-        titrate(stepVol, TITRATION_SPEED);
+        titrate(stepVol, TITRATION_RPM);
         delay(TITRATION_MIX_DELAY_MS);
-        measurePH(10);
+        waitForPHStabilization();  // Wait for pH to settle after acid addition
+        measurePH(20);
       }
       units += stepVol;
 
@@ -271,8 +265,8 @@ void measureKH() {
 
       mqttManager.loop();
       ArduinoOTA.handle();
-      ws.cleanupClients();
-      mqttManager.publish(MQmespH, String(pH).c_str());
+      { char phBuf[16]; snprintf(phBuf, sizeof(phBuf), "%.2f", pH);
+        mqttManager.publish(MQmespH, phBuf); }
       broadcastTitrationPH(pH, units);
 
       if (isnan(pH)) {
@@ -294,7 +288,6 @@ void measureKH() {
       }
     }
 
-    motorBusy = false;
     mqttManager.loop();
     if (errorflag == 0) {
       // Get calibration parameters
@@ -307,7 +300,6 @@ void measureKH() {
       if (calUnits <= 0 || samVol <= 0) {
         errorMessage = "Error: invalid calibration (calUnits or samVol is zero)";
         errorflag = 1;
-        publishError(errorMessage);
       } else {
         // Determine equivalence point via Gran transformation
         float granR2 = 0;
@@ -351,7 +343,6 @@ void measureKH() {
         if (isnan(exactUnits)) {
           errorMessage = "Error: could not determine equivalence point";
           errorflag = 1;
-          publishError(errorMessage);
         } else {
           float hclUsed = (exactUnits / calUnits) * titVol;
           float khValue = (hclUsed / samVol) * 2800.0f * hclMol * corrF;
@@ -377,8 +368,10 @@ void measureKH() {
             snprintf(volBuf, sizeof(volBuf), "Endpoint: %.2f mL @ pH %.1f (interpolation)", hclUsed, ENDPOINT_PH);
           }
           publishMessage(volBuf);
-          mqttManager.publish(MQKH, String(hclUsed, 2).c_str());
-          mqttManager.publish(MQstartpH, String(startPH).c_str());
+          { char mqBuf[16]; snprintf(mqBuf, sizeof(mqBuf), "%.2f", hclUsed);
+            mqttManager.publish(MQKH, mqBuf); }
+          { char mqBuf[16]; snprintf(mqBuf, sizeof(mqBuf), "%.2f", startPH);
+            mqttManager.publish(MQstartpH, mqBuf); }
 
           // Publish method for HA dashboards
           char methodBuf[48];
@@ -399,7 +392,8 @@ void measureKH() {
             publishError(warnBuf);
           }
 
-          mqttManager.publish(MQkhValue, String(khValue, 2).c_str(), true);
+          { char mqBuf[16]; snprintf(mqBuf, sizeof(mqBuf), "%.2f", khValue);
+            mqttManager.publish(MQkhValue, mqBuf, true); }
 
           // Save last measurement for persistent dashboard display
           configStore.setLastKH(khValue);
@@ -408,6 +402,7 @@ void measureKH() {
           // Store history for web dashboard charts
           appendHistory("kh", khValue);
           appendHistory("ph", startPH);
+          appendGranHistory(granR2, hclUsed, endpointPHVal, usedGran);
         }
       }
     } else {
@@ -415,12 +410,13 @@ void measureKH() {
     }
   }
   // Anti-suckback: small reverse to prevent drip from titration nozzle
+  unsigned int suckbackUs = (unsigned int)rpmToHalfPeriodUs(MOTOR_START_RPM);
   digitalWrite(DIR_PIN2, HIGH);  // Reverse
   for (int i = 0; i < ANTI_SUCKBACK_STEPS; i++) {
     digitalWrite(STEP_PIN2, HIGH);
-    delayMicroseconds((unsigned int)MOTOR_START_SPEED);
+    delayMicroseconds(suckbackUs);
     digitalWrite(STEP_PIN2, LOW);
-    delayMicroseconds((unsigned int)MOTOR_START_SPEED);
+    delayMicroseconds(suckbackUs);
   }
   digitalWrite(DIR_PIN2, LOW);   // Restore forward
   digitalWrite(EN_PIN2, HIGH);
@@ -504,7 +500,6 @@ void setup() {
   setMotorYieldCallback([]() {
     mqttManager.loop();
     ArduinoOTA.handle();
-    ws.cleanupClients();
   });
 
   // Report wash progress to web dashboard (WebSocket only, no MQTT during motor ops)
@@ -593,8 +588,10 @@ void loop() {
     // Re-publish last measurement values so HA has them immediately
     float lastKH = configStore.getLastKH();
     float lastSPH = configStore.getLastStartPH();
-    if (lastKH > 0) mqttManager.publish(MQkhValue, String(lastKH, 2).c_str(), true);
-    if (lastSPH > 0) mqttManager.publish(MQstartpH, String(lastSPH, 2).c_str(), true);
+    if (lastKH > 0) { char mqBuf[16]; snprintf(mqBuf, sizeof(mqBuf), "%.2f", lastKH);
+      mqttManager.publish(MQkhValue, mqBuf, true); }
+    if (lastSPH > 0) { char mqBuf[16]; snprintf(mqBuf, sizeof(mqBuf), "%.2f", lastSPH);
+      mqttManager.publish(MQstartpH, mqBuf, true); }
 
     discoveryPublished = true;
   }

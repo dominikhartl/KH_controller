@@ -105,8 +105,12 @@ bool MQTTManager::publish(const char* topic, const char* payload, bool retained)
 }
 
 void MQTTManager::subscribe(const char* topic) {
-  // Track for re-subscription after reconnect
-  if (subscriptionCount < MAX_SUBSCRIPTIONS) {
+  // Track for re-subscription after reconnect (dedup by pointer)
+  bool found = false;
+  for (uint8_t i = 0; i < subscriptionCount; i++) {
+    if (subscriptions[i] == topic) { found = true; break; }
+  }
+  if (!found && subscriptionCount < MAX_SUBSCRIPTIONS) {
     subscriptions[subscriptionCount++] = topic;
   }
   if (client.connected()) {

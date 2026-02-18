@@ -3,6 +3,10 @@
 #include <pins.h>
 #include <config.h>
 
+// Pre-computed half-period values (us) from RPM config — used in tight step loops
+static const float startUs  = rpmToHalfPeriodUs(MOTOR_START_RPM);
+static const float targetUs = rpmToHalfPeriodUs(MOTOR_TARGET_RPM);
+
 static MotorYieldCallback yieldCb = nullptr;
 static MotorProgressCallback progressCb = nullptr;
 
@@ -29,8 +33,8 @@ static inline void stepPulse(uint8_t pin, float halfPeriodUs) {
 // Count how many steps the acceleration/deceleration ramp takes
 static int rampStepCount() {
   int count = 0;
-  float acc = MOTOR_START_SPEED;
-  while (acc > MOTOR_TARGET_SPEED) {
+  float acc = startUs;
+  while (acc > targetUs) {
     acc *= MOTOR_ACCEL_FACTOR;
     count++;
   }
@@ -49,7 +53,7 @@ static void runSamplePump(int volume, bool forward) {
   // Backlash compensation on direction reversal
   if (forward != lastSampleDirection) {
     for (int i = 0; i < BACKLASH_COMPENSATION_STEPS; i++) {
-      stepPulse(STEP_PIN1, MOTOR_START_SPEED);
+      stepPulse(STEP_PIN1, startUs);
     }
   }
   lastSampleDirection = forward;
@@ -66,8 +70,8 @@ static void runSamplePump(int volume, bool forward) {
   bool timedOut = false;
 
   // Acceleration phase
-  float acc = MOTOR_START_SPEED;
-  while (acc > MOTOR_TARGET_SPEED && stepsDone < decelStart) {
+  float acc = startUs;
+  while (acc > targetUs && stepsDone < decelStart) {
     stepPulse(STEP_PIN1, acc);
     acc *= MOTOR_ACCEL_FACTOR;
     stepsDone++;
@@ -75,7 +79,7 @@ static void runSamplePump(int volume, bool forward) {
 
   // Constant speed phase
   while (stepsDone < decelStart) {
-    stepPulse(STEP_PIN1, MOTOR_TARGET_SPEED);
+    stepPulse(STEP_PIN1, targetUs);
     stepsDone++;
     if (stepsDone % (STEPS_PER_REVOLUTION * MOTOR_YIELD_INTERVAL) == 0) {
       if (yieldCb) yieldCb();
@@ -94,11 +98,11 @@ static void runSamplePump(int volume, bool forward) {
 
   // Deceleration phase (skip on timeout — stop immediately)
   if (!timedOut) {
-    acc = MOTOR_TARGET_SPEED;
+    acc = targetUs;
     while (stepsDone < totalSteps) {
       stepPulse(STEP_PIN1, acc);
       acc /= MOTOR_ACCEL_FACTOR;
-      if (acc > MOTOR_START_SPEED) acc = MOTOR_START_SPEED;
+      if (acc > startUs) acc = startUs;
       stepsDone++;
     }
   }
@@ -131,7 +135,9 @@ void washSample(float remPart, float fillPart) {
   if (progressCb) progressCb(100);
 }
 
-void titrate(int volume, int stepDelay) {
+void titrate(int volume, float speedRpm) {
+  float speedUs = rpmToHalfPeriodUs(speedRpm);
+
   // Only add enable settle delay if motor wasn't already on
   if (digitalRead(EN_PIN2) != LOW) {
     digitalWrite(EN_PIN2, LOW);
@@ -144,10 +150,10 @@ void titrate(int volume, int stepDelay) {
 
   if (volume > TITRATE_ACCEL_THRESHOLD) {
     // Large volume: use acceleration/deceleration
-    // Ramp from MOTOR_START_SPEED down to stepDelay
+    // Ramp from startUs (slow) down to speedUs (fast)
     int rampLen = 0;
-    float tmp = MOTOR_START_SPEED;
-    while (tmp > (float)stepDelay) {
+    float tmp = startUs;
+    while (tmp > speedUs) {
       tmp *= MOTOR_ACCEL_FACTOR;
       rampLen++;
     }
@@ -158,8 +164,8 @@ void titrate(int volume, int stepDelay) {
     int stepsDone = 0;
 
     // Acceleration
-    float acc = MOTOR_START_SPEED;
-    while (acc > (float)stepDelay && stepsDone < decelStart) {
+    float acc = startUs;
+    while (acc > speedUs && stepsDone < decelStart) {
       stepPulse(STEP_PIN2, acc);
       acc *= MOTOR_ACCEL_FACTOR;
       stepsDone++;
@@ -170,9 +176,9 @@ void titrate(int volume, int stepDelay) {
 
     // Constant speed
     while (stepsDone < decelStart) {
-      stepPulse(STEP_PIN2, (float)stepDelay);
+      stepPulse(STEP_PIN2, speedUs);
       stepsDone++;
-      speedReached = (float)stepDelay;
+      speedReached = speedUs;
       if (stepsDone % (MOTOR_STEPS_PER_UNIT * MOTOR_YIELD_INTERVAL * 50) == 0) {
         if (yieldCb) yieldCb();
         if (millis() - startTime > TITRATION_TIMEOUT_MS) {
@@ -187,13 +193,13 @@ void titrate(int volume, int stepDelay) {
     while (stepsDone < totalSteps) {
       stepPulse(STEP_PIN2, acc);
       acc /= MOTOR_ACCEL_FACTOR;
-      if (acc > MOTOR_START_SPEED) acc = MOTOR_START_SPEED;
+      if (acc > startUs) acc = startUs;
       stepsDone++;
     }
   } else {
     // Small volume: absolute-time stepping immune to interrupt jitter.
     // If an interrupt delays one step, the next fires sooner to compensate.
-    unsigned int halfPeriod = (unsigned int)stepDelay;
+    unsigned int halfPeriod = (unsigned int)speedUs;
     unsigned long t = micros();
     for (int i = 0; i < totalSteps; i++) {
       t += halfPeriod;

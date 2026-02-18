@@ -35,6 +35,15 @@ static LogEntry logBuffer[LOG_BUF_MAX];
 static uint8_t logCount = 0;   // total entries stored (up to LOG_BUF_MAX)
 static uint8_t logHead = 0;    // next write position
 
+// In-memory cache for last Gran measurement (replayed to new clients on connect)
+static const uint8_t GRAN_BUF_MAX = 50;
+struct GranBufPoint { float ml; float f; };
+static GranBufPoint granBuffer[GRAN_BUF_MAX];
+static uint8_t granBufCount = 0;
+static float granBufR2 = 0;
+static float granBufEqML = 0;
+static bool granBufUsed = false;
+
 // Forward declarations for command/config handlers from main
 extern int units;
 extern float startPH;
@@ -48,6 +57,7 @@ extern void publishError(const char* errorMessage);
 static void handleWebSocketMessage(void* arg, uint8_t* data, size_t len);
 static void sendMesData(AsyncWebSocketClient* client);
 static void sendLogData(AsyncWebSocketClient* client);
+static void sendGranData(AsyncWebSocketClient* client);
 
 static void addLogEntry(char type, const char* text) {
   LogEntry& e = logBuffer[logHead];
@@ -75,7 +85,7 @@ static void sendLogData(AsyncWebSocketClient* client) {
     entry["ts"] = logBuffer[idx].ts;
   }
 
-  char buf[4096];
+  static char buf[4096];
   size_t written = serializeJson(doc, buf, sizeof(buf));
   if (written > 0) {
     client->text(buf);
@@ -104,12 +114,33 @@ static void sendMesData(AsyncWebSocketClient* client) {
       point.add(mesBuffer[i].ph);
     }
 
-    char buf[8192];
+    static char buf[8192];
     size_t written = serializeJson(doc, buf, sizeof(buf));
     if (written > 0) {
       client->text(buf);
     }
   }
+}
+
+static void sendGranData(AsyncWebSocketClient* client) {
+  if (granBufCount == 0) return;
+
+  DynamicJsonDocument doc(2048);
+  doc["type"] = "granData";
+  doc["r2"] = granBufR2;
+  doc["eqML"] = granBufEqML;
+  doc["used"] = granBufUsed;
+
+  JsonArray pts = doc.createNestedArray("points");
+  for (uint8_t i = 0; i < granBufCount; i++) {
+    JsonArray pt = pts.createNestedArray();
+    pt.add(granBuffer[i].ml);
+    pt.add(granBuffer[i].f);
+  }
+
+  static char buf[2048];
+  size_t written = serializeJson(doc, buf, sizeof(buf));
+  if (written > 0) client->text(buf);
 }
 
 void onWebSocketEvent(AsyncWebSocket* server, AsyncWebSocketClient* client,
@@ -119,6 +150,7 @@ void onWebSocketEvent(AsyncWebSocket* server, AsyncWebSocketClient* client,
       broadcastState();
       sendMesData(client);
       sendLogData(client);
+      sendGranData(client);
       break;
     case WS_EVT_DISCONNECT:
       break;
@@ -134,10 +166,8 @@ void onWebSocketEvent(AsyncWebSocket* server, AsyncWebSocketClient* client,
 static void handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
   AwsFrameInfo* info = (AwsFrameInfo*)arg;
   if (info->final && info->index == 0 && info->len == len && info->opcode == WS_TEXT) {
-    data[len] = 0; // Null terminate
-
     StaticJsonDocument<256> doc;
-    DeserializationError err = deserializeJson(doc, (char*)data);
+    DeserializationError err = deserializeJson(doc, (char*)data, len);
     if (err) return;
 
     const char* type = doc["type"];
@@ -148,8 +178,9 @@ static void handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
       if (cmd) executeCommand(cmd);
     } else if (strcmp(type, "config") == 0) {
       const char* key = doc["key"];
-      float value = doc["value"];
       if (!key) return;
+      if (!doc.containsKey("value")) return;
+      float value = doc["value"];
 
       if (strcmp(key, "titration_vol") == 0) configStore.setTitrationVolume(value);
       else if (strcmp(key, "sample_vol") == 0) configStore.setSampleVolume(value);
@@ -197,32 +228,67 @@ static void handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
       File f = LittleFS.open(filename, "r");
       if (!f) return;
 
-      // Build history response - only last 7 days
-      StaticJsonDocument<512> resp;
-      resp["type"] = "history";
-      resp["sensor"] = sensor;
-      JsonArray dataArr = resp.createNestedArray("data");
-
       uint32_t cutoff = (uint32_t)time(nullptr) - (7 * 86400);
+      bool isGran = (strcmp(sensor, "gran") == 0);
 
-      while (f.available() && dataArr.size() < 200) {
-        String line = f.readStringUntil('\n');
-        if (line.length() == 0) continue;
-        int comma = line.indexOf(',');
-        if (comma < 0) continue;
-        uint32_t ts = line.substring(0, comma).toInt();
-        if (ts < cutoff) continue;  // Skip entries older than 7 days
-        float val = line.substring(comma + 1).toFloat();
-        JsonArray point = dataArr.createNestedArray();
-        point.add(ts);
-        point.add(val);
-      }
-      f.close();
+      if (isGran) {
+        // Gran CSV: timestamp,r2,eqML,endpointPH,method
+        DynamicJsonDocument resp(4096);
+        resp["type"] = "history";
+        resp["sensor"] = "gran";
+        JsonArray dataArr = resp.createNestedArray("data");
 
-      char buf[4096];
-      size_t written = serializeJson(resp, buf, sizeof(buf));
-      if (written > 0) {
-        ws.textAll(buf);
+        while (f.available() && dataArr.size() < 150) {
+          String line = f.readStringUntil('\n');
+          if (line.length() == 0) continue;
+          int c1 = line.indexOf(',');
+          if (c1 < 0) continue;
+          uint32_t ts = line.substring(0, c1).toInt();
+          if (ts < cutoff) continue;
+          int c2 = line.indexOf(',', c1 + 1);
+          int c3 = line.indexOf(',', c2 + 1);
+          int c4 = line.indexOf(',', c3 + 1);
+          if (c2 < 0 || c3 < 0 || c4 < 0) continue;
+          float r2  = line.substring(c1 + 1, c2).toFloat();
+          float eq  = line.substring(c2 + 1, c3).toFloat();
+          float eph = line.substring(c3 + 1, c4).toFloat();
+          int   mth = line.substring(c4 + 1).toInt();
+          JsonArray pt = dataArr.createNestedArray();
+          pt.add(ts);
+          pt.add(r2);
+          pt.add(eq);
+          pt.add(eph);
+          pt.add(mth);
+        }
+        f.close();
+
+        static char buf[4096];
+        size_t written = serializeJson(resp, buf, sizeof(buf));
+        if (written > 0) ws.textAll(buf);
+      } else {
+        // KH/pH CSV: timestamp,value
+        StaticJsonDocument<512> resp;
+        resp["type"] = "history";
+        resp["sensor"] = sensor;
+        JsonArray dataArr = resp.createNestedArray("data");
+
+        while (f.available() && dataArr.size() < 150) {
+          String line = f.readStringUntil('\n');
+          if (line.length() == 0) continue;
+          int comma = line.indexOf(',');
+          if (comma < 0) continue;
+          uint32_t ts = line.substring(0, comma).toInt();
+          if (ts < cutoff) continue;
+          float val = line.substring(comma + 1).toFloat();
+          JsonArray point = dataArr.createNestedArray();
+          point.add(ts);
+          point.add(val);
+        }
+        f.close();
+
+        static char buf[6144];
+        size_t written = serializeJson(resp, buf, sizeof(buf));
+        if (written > 0) ws.textAll(buf);
       }
     }
   }
@@ -272,7 +338,7 @@ void executeCommand(const char* cmd) {
     }
   } else if (strcmp(cmd, "f") == 0) {
     publishMessage("Filling");
-    titrate(FILL_VOLUME, PREFILL_SPEED);
+    titrate(FILL_VOLUME, PREFILL_RPM);
     subtractHCl(FILL_VOLUME);
     digitalWrite(EN_PIN2, HIGH);
     publishMessage("Fill done");
@@ -310,14 +376,13 @@ void executeCommand(const char* cmd) {
 }
 
 void broadcastTitrationStart() {
-  mesCount = 0; // Clear buffer for new measurement
+  mesCount = 0;
+  granBufCount = 0;
   ws.textAll("{\"type\":\"mesStart\"}");
 }
 
-extern volatile bool motorBusy;
-
 void broadcastState() {
-  if (ws.count() == 0 || motorBusy) return;
+  if (ws.count() == 0) return;
 
   StaticJsonDocument<1536> doc;
   doc["type"] = "state";
@@ -453,6 +518,15 @@ void broadcastProgress(int percent) {
 
 void broadcastGranData(float r2, float eqML, bool usedGran,
                        float* pointsML, float* pointsF, int nPts) {
+  // Cache for replay to new WebSocket clients
+  granBufR2 = r2;
+  granBufEqML = eqML;
+  granBufUsed = usedGran;
+  granBufCount = (uint8_t)min(nPts, (int)GRAN_BUF_MAX);
+  for (uint8_t i = 0; i < granBufCount; i++) {
+    granBuffer[i] = { pointsML[i], pointsF[i] };
+  }
+
   if (ws.count() == 0 || nPts == 0) return;
 
   DynamicJsonDocument doc(2048);
@@ -507,10 +581,49 @@ void appendHistory(const char* sensor, float value) {
     }
   }
 
+  time_t now = time(nullptr);
+  if (now < 1000000000) return;  // NTP not yet synced — skip bogus timestamp
+
   File f = LittleFS.open(filename, "a");
   if (f) {
-    time_t now = time(nullptr);
     f.printf("%u,%.2f\n", (uint32_t)now, value);
+    f.close();
+  }
+}
+
+void appendGranHistory(float r2, float eqML, float endpointPH, bool usedGran) {
+  const char* filename = "/history/gran.csv";
+
+  if (!LittleFS.exists("/history")) {
+    LittleFS.mkdir("/history");
+  }
+
+  // Remove entries older than 7 days
+  if (LittleFS.exists(filename)) {
+    uint32_t cutoff = (uint32_t)time(nullptr) - (7 * 86400);
+    File f = LittleFS.open(filename, "r");
+    if (f) {
+      String kept;
+      while (f.available()) {
+        String line = f.readStringUntil('\n');
+        if (line.length() == 0) continue;
+        int comma = line.indexOf(',');
+        if (comma < 0) continue;
+        uint32_t ts = line.substring(0, comma).toInt();
+        if (ts >= cutoff) kept += line + "\n";
+      }
+      f.close();
+      File fw = LittleFS.open(filename, "w");
+      if (fw) { fw.print(kept); fw.close(); }
+    }
+  }
+
+  time_t now = time(nullptr);
+  if (now < 1000000000) return;  // NTP not synced
+
+  File f = LittleFS.open(filename, "a");
+  if (f) {
+    f.printf("%u,%.4f,%.3f,%.2f,%d\n", (uint32_t)now, r2, eqML, endpointPH, usedGran ? 1 : 0);
     f.close();
   }
 }

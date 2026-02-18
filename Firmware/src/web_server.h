@@ -14,6 +14,7 @@ void broadcastProgress(int percent);
 void broadcastGranData(float r2, float eqML, bool usedGran,
                        float* pointsML, float* pointsF, int nPts);
 void appendHistory(const char* sensor, float value);
+void appendGranHistory(float r2, float eqML, float endpointPH, bool usedGran);
 
 extern AsyncWebServer server;
 extern AsyncWebSocket ws;
