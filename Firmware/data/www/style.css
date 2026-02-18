@@ -97,6 +97,7 @@ h2{font-size:.8em;font-weight:600;color:var(--text-secondary);text-transform:upp
 .tab.active{background:var(--card);color:var(--text-primary);box-shadow:0 1px 4px rgba(0,0,0,.3)}
 .chart-container{position:relative;height:200px}
 .chart-container canvas{position:absolute;top:0;left:0;width:100%!important;height:100%!important}
+.gran-info{font-size:.8em;color:var(--text-secondary);text-align:center;padding:8px 0 0;font-variant-numeric:tabular-nums}
 
 /* === Buttons === */
 .btn-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}

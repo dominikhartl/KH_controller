@@ -11,6 +11,8 @@ void broadcastTitrationStart();
 void broadcastMessage(const char* msg);
 void broadcastError(const char* msg);
 void broadcastProgress(int percent);
+void broadcastGranData(float r2, float eqML, bool usedGran,
+                       float* pointsML, float* pointsF, int nPts);
 void appendHistory(const char* sensor, float value);
 
 extern AsyncWebServer server;

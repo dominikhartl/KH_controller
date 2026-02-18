@@ -22,6 +22,11 @@ float startPH = 0;
 bool discoveryPublished = false;
 unsigned long lastDiagnosticsTime = 0;
 unsigned long lastBroadcastTime = 0;
+volatile bool motorBusy = false;  // Suppresses broadcastState() during motor ops
+
+// Deferred command queue: WebSocket/MQTT sets the command, loop() executes it
+// This prevents long operations from blocking the AsyncTCP task
+static volatile char pendingCmd = 0;
 
 // MQTT topic buffers
 char topicCmd[50];
@@ -31,6 +36,35 @@ char MQKH[50];
 char MQstartpH[50];
 char MQmespH[50];
 char MQkhValue[50];
+
+// --- Deferred command execution ---
+// Long-running commands (measureKH, calibrate) must run on loopTask, not AsyncTCP.
+// WebSocket/MQTT handlers set pendingCmd; loop() picks it up.
+void queueCommand(char cmd) {
+  pendingCmd = cmd;
+}
+
+void publishMessage(const char* message);
+void calibrateTitrationPump();
+void measureKH();
+
+void processPendingCommand() {
+  char cmd = pendingCmd;
+  if (cmd == 0) return;
+  pendingCmd = 0;
+
+  switch (cmd) {
+    case 'k':
+      publishMessage("Measuring KH!");
+      measureKH();
+      broadcastState();
+      break;
+    case 't':
+      calibrateTitrationPump();
+      broadcastState();
+      break;
+  }
+}
 
 // --- Publish helpers ---
 
@@ -63,25 +97,27 @@ void subtractHCl(int unitsUsed) {
 
 void calibrateTitrationPump() {
   publishMessage("Calibrating pump");
+  motorBusy = true;
   units = 0;
-  // Use small batches (below TITRATE_ACCEL_THRESHOLD) to avoid acceleration path
-  const int BATCH = 200;
+  const int BATCH = 40;
+  char buf[48];
+
   while (units < CALIBRATION_TARGET_UNITS) {
     int batch = min(BATCH, CALIBRATION_TARGET_UNITS - units);
     titrate(batch, TITRATION_SPEED);
     units += batch;
     delay(TITRATION_MIX_DELAY_FAST_MS);
-    mqttManager.loop();
     ArduinoOTA.handle();
-    if (units % 1000 == 0) {
-      char buf[48];
-      snprintf(buf, sizeof(buf), "Units: %d / %d", units, CALIBRATION_TARGET_UNITS);
-      publishMessage(buf);
-    }
+    // Progress message doubles as WebSocket keepalive — without ws.textAll()
+    // the AsyncTCP receive buffer fills up and stalls WiFi/motor interrupts
+    snprintf(buf, sizeof(buf), "Cal: %d / %d", units, CALIBRATION_TARGET_UNITS);
+    publishMessage(buf);
   }
+
   subtractHCl(CALIBRATION_TARGET_UNITS);
   units = 0;
   digitalWrite(EN_PIN2, HIGH);
+  motorBusy = false;
   publishMessage("Pump calibration done");
 }
 
@@ -99,6 +135,7 @@ void measureKH() {
   broadcastTitrationStart();  // Signal dashboard to clear live pH chart
   int errorflag = 0;
   units = 0;
+  unsigned long measStartMs = millis();
   const char* errorMessage = "";
   publishError("");  // Clear previous error
 
@@ -156,6 +193,7 @@ void measureKH() {
     float fastPH = configStore.getFastTitrationPH();
 
     // --- Fast phase: pump 200-unit batches until pH falls below fastPH ---
+    motorBusy = true;  // Suppress broadcastState() during motor ops
     const int FAST_BATCH = 200;
     float lastFastPH = startPH;
     int stallCount = 0;
@@ -166,6 +204,7 @@ void measureKH() {
       units += FAST_BATCH;
       delay(TITRATION_MIX_DELAY_FAST_MS);
       measurePHFast(5);
+      // broadcastTitrationPH triggers ws.textAll() — keeps AsyncTCP alive
       broadcastTitrationPH(pH, units);
       mqttManager.loop();
       ArduinoOTA.handle();
@@ -199,27 +238,27 @@ void measureKH() {
     // Store data points only near the endpoint (pH < 5.0) to avoid filling the buffer
     // with useless high-pH coarse-step data
     static const float DATA_STORE_PH = 5.0f;
+    float lastPrecisePH = pH;
+    int preciseStall = 0;
 
     while (!isnan(pH) && pH > GRAN_STOP_PH && units < MAX_TITRATION_UNITS
-           && granCount < MAX_GRAN_POINTS && errorflag == 0) {
+           && errorflag == 0) {
+      // Flush WebSocket/MQTT buffers before tight motor stepping
+      ws.cleanupClients();
+      mqttManager.loop();
+
       int stepVol;
-      if (pH > DATA_STORE_PH) {
-        // Approach: large steps, just get near the endpoint
-        stepVol = TITRATION_STEP_SIZE * 10; // 20 units
+      if (pH > 4.5f) {
+        // Medium zone (pH > 4.5): 16-unit steps, moderate accuracy
+        stepVol = TITRATION_STEP_SIZE * 8;  // 16 units
         titrate(stepVol, TITRATION_SPEED);
-        delay(TITRATION_MIX_DELAY_FAST_MS);
-        measurePHFast(3);
-      } else if (pH > GRAN_REGION_PH) {
-        // Near endpoint: medium steps, fast measurement, store for interpolation
+        delay(TITRATION_MIX_DELAY_MS);
+        measurePH(5);
+      } else {
+        // Precise zone (pH < 4.5): Gran data + interpolation at 4.3
         stepVol = TITRATION_STEP_SIZE * 4;  // 8 units
         titrate(stepVol, TITRATION_SPEED);
-        delay(TITRATION_MIX_DELAY_FAST_MS);
-        measurePHFast(5);
-      } else {
-        // Gran region: fine steps, precise measurement (stabilization handles equilibration)
-        stepVol = TITRATION_STEP_SIZE;      // 2 units
-        titrate(stepVol, TITRATION_SPEED);
-        delay(TITRATION_MIX_DELAY_FAST_MS);
+        delay(TITRATION_MIX_DELAY_MS);
         measurePH(10);
       }
       units += stepVol;
@@ -239,6 +278,15 @@ void measureKH() {
       if (isnan(pH)) {
         errorMessage = "Error: pH probe not working!";
         errorflag = 1;
+      } else if (pH > lastPrecisePH - 0.01f) {
+        preciseStall++;
+        if (preciseStall >= 50) {
+          errorMessage = "Error: pH stalled in precise phase";
+          errorflag = 1;
+        }
+      } else {
+        preciseStall = 0;
+        lastPrecisePH = pH;
       }
       if (units >= MAX_TITRATION_UNITS - stepVol) {
         errorMessage = "Error: reached acid max!";
@@ -246,6 +294,7 @@ void measureKH() {
       }
     }
 
+    motorBusy = false;
     mqttManager.loop();
     if (errorflag == 0) {
       // Get calibration parameters
@@ -266,16 +315,37 @@ void measureKH() {
         bool usedGran = false;
 
         if (granCount >= MIN_GRAN_POINTS) {
-          exactUnits = granAnalysis(dataPoints, nPoints, samVol, titVol, calUnits, &granR2);
+          char granReason[64] = "";
+          exactUnits = granAnalysis(dataPoints, nPoints, samVol, titVol, calUnits, &granR2, granReason, sizeof(granReason));
           if (!isnan(exactUnits)) {
             usedGran = true;
           } else {
             exactUnits = interpolateAtPH(dataPoints, nPoints, ENDPOINT_PH);
-            publishMessage("Gran analysis failed, using interpolation");
+            char failBuf[128];
+            snprintf(failBuf, sizeof(failBuf), "Gran failed: %s, using interpolation", granReason);
+            publishMessage(failBuf);
           }
         } else {
           exactUnits = interpolateAtPH(dataPoints, nPoints, ENDPOINT_PH);
           publishMessage("Insufficient Gran data, using interpolation");
+        }
+
+        // Broadcast Gran diagnostics to web dashboard
+        {
+          float k = titVol / calUnits;
+          static const int MAX_GRAN_DIAG = 50;
+          float granPtML[MAX_GRAN_DIAG];
+          float granPtF[MAX_GRAN_DIAG];
+          int nGranPts = 0;
+          for (int i = 0; i < nPoints && nGranPts < MAX_GRAN_DIAG; i++) {
+            if (dataPoints[i].pH < GRAN_REGION_PH && dataPoints[i].pH > GRAN_STOP_PH) {
+              granPtML[nGranPts] = dataPoints[i].units * k;
+              granPtF[nGranPts] = (samVol + dataPoints[i].units * k) * powf(10.0f, -dataPoints[i].pH);
+              nGranPts++;
+            }
+          }
+          float eqML = isnan(exactUnits) ? 0 : exactUnits * k;
+          broadcastGranData(granR2, eqML, usedGran, granPtML, granPtF, nGranPts);
         }
 
         if (isnan(exactUnits)) {
@@ -287,16 +357,37 @@ void measureKH() {
           float khValue = (hclUsed / samVol) * 2800.0f * hclMol * corrF;
           subtractHCl(units + FILL_VOLUME);
 
-          // Publish volume and endpoint info
-          char volBuf[64];
+          // Interpolate pH at equivalence point
+          float endpointPHVal = ENDPOINT_PH;
           if (usedGran) {
-            snprintf(volBuf, sizeof(volBuf), "Endpoint: %.2f mL (Gran, R²=%.3f)", hclUsed, granR2);
+            for (int i = 1; i < nPoints; i++) {
+              if (dataPoints[i-1].units <= exactUnits && dataPoints[i].units >= exactUnits) {
+                float frac = (exactUnits - dataPoints[i-1].units) / (dataPoints[i].units - dataPoints[i-1].units);
+                endpointPHVal = dataPoints[i-1].pH + frac * (dataPoints[i].pH - dataPoints[i-1].pH);
+                break;
+              }
+            }
+          }
+
+          // Publish volume and endpoint info
+          char volBuf[80];
+          if (usedGran) {
+            snprintf(volBuf, sizeof(volBuf), "Endpoint: %.2f mL @ pH %.2f (Gran, R²=%.3f)", hclUsed, endpointPHVal, granR2);
           } else {
-            snprintf(volBuf, sizeof(volBuf), "Endpoint: %.2f mL (interpolation at pH %.1f)", hclUsed, ENDPOINT_PH);
+            snprintf(volBuf, sizeof(volBuf), "Endpoint: %.2f mL @ pH %.1f (interpolation)", hclUsed, ENDPOINT_PH);
           }
           publishMessage(volBuf);
           mqttManager.publish(MQKH, String(hclUsed, 2).c_str());
           mqttManager.publish(MQstartpH, String(startPH).c_str());
+
+          // Publish method for HA dashboards
+          char methodBuf[48];
+          if (usedGran) {
+            snprintf(methodBuf, sizeof(methodBuf), "Gran (R²=%.3f)", granR2);
+          } else {
+            snprintf(methodBuf, sizeof(methodBuf), "Interpolation");
+          }
+          mqttManager.publish(MQmsg, methodBuf);
 
           // HCl low-level warning
           float remainingHCl = configStore.getHClVolume();
@@ -336,16 +427,31 @@ void measureKH() {
 
   stopStirrer();
 
+  // Compute extra removal to compensate for HCl volume added during titration
+  // hclPart = HCl volume / sample volume (in mL/mL), adds to removal fraction
+  float hclPart = 0;
+  {
+    float calU = (float)configStore.getCalUnits();
+    float titV = configStore.getTitrationVolume();
+    float samV = configStore.getSampleVolume();
+    if (calU > 0 && samV > 0) {
+      hclPart = ((float)(units + FILL_VOLUME) / calU) * titV / samV;
+    }
+  }
+
   // Double rinse to eliminate acid carryover
-  washSample(1.5, 1.0);
+  washSample(1.5f + hclPart, 1.0);
   delay(2000);
   washSample(1.2, 1.0);
 
+  unsigned long elapsed = (millis() - measStartMs) / 1000;
+  char doneBuf[48];
   if (errorflag == 0) {
-    publishMessage("Done!");
+    snprintf(doneBuf, sizeof(doneBuf), "Done! (%lum %lus)", elapsed / 60, elapsed % 60);
   } else {
-    publishMessage("Measurement finished with errors");
+    snprintf(doneBuf, sizeof(doneBuf), "Finished with errors (%lum %lus)", elapsed / 60, elapsed % 60);
   }
+  publishMessage(doneBuf);
   measuring = false;
 }
 
@@ -472,6 +578,7 @@ void setup() {
 // --- Main loop ---
 
 void loop() {
+  processPendingCommand();
   wifiManager.loop();
   mqttManager.loop();
   ArduinoOTA.handle();

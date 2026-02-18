@@ -191,9 +191,17 @@ void titrate(int volume, int stepDelay) {
       stepsDone++;
     }
   } else {
-    // Small volume (typical titration steps): run directly, no ramp needed
+    // Small volume: absolute-time stepping immune to interrupt jitter.
+    // If an interrupt delays one step, the next fires sooner to compensate.
+    unsigned int halfPeriod = (unsigned int)stepDelay;
+    unsigned long t = micros();
     for (int i = 0; i < totalSteps; i++) {
-      stepPulse(STEP_PIN2, (float)stepDelay);
+      t += halfPeriod;
+      digitalWrite(STEP_PIN2, HIGH);
+      while ((long)(micros() - t) < 0) {}  // busy-wait to target time
+      t += halfPeriod;
+      digitalWrite(STEP_PIN2, LOW);
+      while ((long)(micros() - t) < 0) {}
     }
   }
 

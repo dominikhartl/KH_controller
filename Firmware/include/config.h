@@ -39,7 +39,7 @@ static const int TITRATION_MIX_DELAY_FAST_MS = 200;  // Mixing delay far from en
 static const int MAX_TITRATION_UNITS = 10000;
 static const int FILL_VOLUME = 100;
 static const int PREFILL_SPEED = 300;
-static const float MOTOR_TARGET_SPEED = 200;     // Target speed for acceleration ramps
+static const float MOTOR_TARGET_SPEED = 250;     // Target speed for acceleration ramps (us half-period)
 static const float MOTOR_ACCEL_FACTOR = 0.9995;  // Acceleration/deceleration factor
 static const int STIRRER_SPEED = 230;
 static const int STIRRER_WARMUP_MS = 3000;
@@ -49,7 +49,7 @@ static const int MEASUREMENT_DELAY_MS = 50;
 static const float ENDPOINT_PH = 4.3f;           // Titration endpoint pH
 static const int SAMPLE_PUMP_VOLUME = 350;
 static const int CALIBRATION_TARGET_UNITS = 6000;
-static const float FAST_TITRATION_PH_DEFAULT = 5.8f; // pH threshold: fast→precise titration
+static const float FAST_TITRATION_PH_DEFAULT = 5.0f; // pH threshold: fast→precise titration
 
 // Motor timing
 static const int MOTOR_ENABLE_DELAY_MS = 10;     // Settle time after enabling driver
@@ -74,7 +74,6 @@ static const float HCL_LOW_THRESHOLD_ML = 300.0;
 static const float GRAN_REGION_PH       = 4.35f;  // Points below this used for Gran regression
 static const float GRAN_STOP_PH         = 3.5f;   // Stop titrating at this pH (Dickson protocol)
 static const int   MIN_GRAN_POINTS      = 8;       // Minimum points for reliable regression
-static const int   MAX_GRAN_POINTS      = 15;      // Stop collecting after this many
 static const int   MAX_TITRATION_POINTS = 200;      // Data point buffer size
 
 // Nernst equation: slope(T) = NERNST_FACTOR * T(K) mV/pH
@@ -83,9 +82,9 @@ static const float NERNST_FACTOR = 0.19842f;
 static const float MEASUREMENT_TEMP_C = 21.0f;
 
 // Signal conditioning amplifier gain (hardware constant)
-// Derived from acid-side default calibration: (1812-1292) / (3 * 59.16) = 2.93
-// Adjust this if your amplifier circuit has a different gain
-static const float PH_AMP_GAIN = 2.93f;
+// DFRobot SEN0161-V2 board gain = 3.0 (confirmed from DFRobot_PH library:
+// default pH7=1500mV, pH4=2032mV → 532mV / 3pH / 59.16 Nernst@25°C = 3.0)
+static const float PH_AMP_GAIN = 3.0f;
 
 // Probe health thresholds
 static const float PROBE_EFFICIENCY_GOOD = 95.0f;  // % — above: Good

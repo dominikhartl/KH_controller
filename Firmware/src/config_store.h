@@ -22,7 +22,7 @@ public:
   float getHClMolarity();       // mol/L (default 0.02)
   float getHClVolume();         // mL remaining (default 5000)
   int getCalUnits();             // units per calibration run (default 6000)
-  float getFastTitrationPH();   // pH threshold: fast→precise (default 5.8)
+  float getFastTitrationPH();   // pH threshold: fast→precise (default 5.0)
   void setTitrationVolume(float v);
   void setSampleVolume(float v);
   void setCorrectionFactor(float v);

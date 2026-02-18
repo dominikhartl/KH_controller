@@ -20,7 +20,7 @@ AsyncWebSocket ws("/ws");
 // In-memory buffer for live titration pH data (survives page reload)
 // When full, downsamples by averaging pairs -> halves count, then continues
 static const uint16_t MES_BUF_MAX = 2000;
-struct MesPoint { int units; float ph; };
+struct MesPoint { float ml; float ph; };
 static MesPoint mesBuffer[MES_BUF_MAX];
 static uint16_t mesCount = 0;
 
@@ -100,7 +100,7 @@ static void sendMesData(AsyncWebSocketClient* client) {
     JsonArray dataArr = doc.createNestedArray("data");
     for (uint16_t i = start; i < end; i++) {
       JsonArray point = dataArr.createNestedArray();
-      point.add(mesBuffer[i].units);
+      point.add(mesBuffer[i].ml);
       point.add(mesBuffer[i].ph);
     }
 
@@ -253,10 +253,14 @@ static void calibratePH(int bufferPH) {
   }
 }
 
+extern void queueCommand(char cmd);
+
 void executeCommand(const char* cmd) {
-  if (strcmp(cmd, "k") == 0) {
-    publishMessage("Measuring KH!");
-    measureKH();
+  if (strcmp(cmd, "k") == 0 || strcmp(cmd, "t") == 0) {
+    // Defer long-running ops to loopTask — running them on the AsyncTCP
+    // task blocks WebSocket/WiFi processing and causes watchdog resets
+    queueCommand(cmd[0]);
+    return;
   } else if (strcmp(cmd, "p") == 0) {
     measurePH(100);
     if (isnan(pH)) {
@@ -276,8 +280,6 @@ void executeCommand(const char* cmd) {
     publishMessage("Washing sample");
     washSample(1.2, 1.0);
     publishMessage("Wash done");
-  } else if (strcmp(cmd, "t") == 0) {
-    calibrateTitrationPump();
   } else if (strcmp(cmd, "m") == 0) {
     startStirrer();
     publishMessage("Stirrer started");
@@ -312,8 +314,10 @@ void broadcastTitrationStart() {
   ws.textAll("{\"type\":\"mesStart\"}");
 }
 
+extern volatile bool motorBusy;
+
 void broadcastState() {
-  if (ws.count() == 0) return;
+  if (ws.count() == 0 || motorBusy) return;
 
   StaticJsonDocument<1536> doc;
   doc["type"] = "state";
@@ -386,17 +390,22 @@ void broadcastState() {
 }
 
 void broadcastTitrationPH(float phVal, int unitsVal) {
+  // Convert units to mL on the firmware side (avoids JS sync issues)
+  float calU = (float)configStore.getCalUnits();
+  float titV = configStore.getTitrationVolume();
+  float ml = (calU > 0) ? ((float)unitsVal / calU * titV) : 0;
+
   // Downsample when buffer is full: average pairs to halve the count
   if (mesCount >= MES_BUF_MAX) {
     uint16_t newCount = mesCount / 2;
     for (uint16_t i = 0; i < newCount; i++) {
-      mesBuffer[i].units = mesBuffer[i * 2 + 1].units; // keep later unit count
+      mesBuffer[i].ml = mesBuffer[i * 2 + 1].ml; // keep later volume
       mesBuffer[i].ph = (mesBuffer[i * 2].ph + mesBuffer[i * 2 + 1].ph) / 2.0f;
     }
     mesCount = newCount;
   }
 
-  mesBuffer[mesCount].units = unitsVal;
+  mesBuffer[mesCount].ml = ml;
   mesBuffer[mesCount].ph = phVal;
   mesCount++;
 
@@ -405,7 +414,7 @@ void broadcastTitrationPH(float phVal, int unitsVal) {
   StaticJsonDocument<64> doc;
   doc["type"] = "mesPh";
   doc["ph"] = phVal;
-  doc["units"] = unitsVal;
+  doc["ml"] = ml;
 
   char buf[64];
   serializeJson(doc, buf, sizeof(buf));
@@ -424,6 +433,7 @@ void broadcastMessage(const char* msg) {
 }
 
 void broadcastError(const char* msg) {
+  if (!msg || msg[0] == '\0') return;  // Skip empty errors
   addLogEntry('e', msg);
   if (ws.count() == 0) return;
   StaticJsonDocument<128> doc;
@@ -439,6 +449,28 @@ void broadcastProgress(int percent) {
   char buf[32];
   snprintf(buf, sizeof(buf), "{\"type\":\"progress\",\"pct\":%d}", percent);
   ws.textAll(buf);
+}
+
+void broadcastGranData(float r2, float eqML, bool usedGran,
+                       float* pointsML, float* pointsF, int nPts) {
+  if (ws.count() == 0 || nPts == 0) return;
+
+  DynamicJsonDocument doc(2048);
+  doc["type"] = "granData";
+  doc["r2"] = r2;
+  doc["eqML"] = eqML;
+  doc["used"] = usedGran;
+
+  JsonArray pts = doc.createNestedArray("points");
+  for (int i = 0; i < nPts; i++) {
+    JsonArray pt = pts.createNestedArray();
+    pt.add(pointsML[i]);
+    pt.add(pointsF[i]);
+  }
+
+  char buf[2048];
+  size_t written = serializeJson(doc, buf, sizeof(buf));
+  if (written > 0) ws.textAll(buf);
 }
 
 void appendHistory(const char* sensor, float value) {

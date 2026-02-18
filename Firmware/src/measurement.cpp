@@ -356,8 +356,15 @@ static bool granRegression(TitrationPoint* points, int nPoints,
 
 float granAnalysis(TitrationPoint* points, int nPoints,
                    float sampleVol, float titVol, float calUnits,
-                   float* outR2) {
-  if (nPoints < 3 || calUnits <= 0) return NAN;
+                   float* outR2, char* reasonBuf, size_t reasonLen) {
+  // Helper to set reason and return NAN
+  auto fail = [&](const char* reason) -> float {
+    if (reasonBuf && reasonLen > 0) snprintf(reasonBuf, reasonLen, "%s", reason);
+    return NAN;
+  };
+
+  if (nPoints < 3) return fail("Too few data points");
+  if (calUnits <= 0) return fail("Invalid calibration units");
 
   float k = titVol / calUnits;  // mL per unit
 
@@ -370,7 +377,7 @@ float granAnalysis(TitrationPoint* points, int nPoints,
 
   if (!granRegression(points, nPoints, sampleVol, k, excluded,
                       &slope, &intercept, &r2, &ssRes, &count))
-    return NAN;
+    return fail("Regression failed (no valid Gran points)");
 
   // Iterative outlier rejection: up to 2 rounds, remove worst 2σ outlier
   for (int round = 0; round < 2; round++) {
@@ -398,22 +405,26 @@ float granAnalysis(TitrationPoint* points, int nPoints,
     excluded[worstIdx] = true;
     if (!granRegression(points, nPoints, sampleVol, k, excluded,
                         &slope, &intercept, &r2, &ssRes, &count))
-      return NAN;
+      return fail("Regression failed after outlier removal");
   }
 
   // Slope must be positive (F increases with acid volume)
-  if (slope <= 0) return NAN;
+  if (slope <= 0) return fail("Negative slope (non-physical)");
 
   // Equivalence point: where F = 0 → x = -intercept/slope
   float eqUnits = -intercept / slope;
 
   // Sanity checks
-  if (eqUnits < 0) return NAN;
-  if (eqUnits > points[nPoints - 1].units) return NAN;
+  if (eqUnits < 0) return fail("Equivalence point negative");
+  if (eqUnits > points[nPoints - 1].units) return fail("Equivalence point beyond titrated range");
 
   if (outR2) {
     *outR2 = r2;
-    if (r2 < 0.99f) return NAN;  // Reject poor fits
+    if (r2 < 0.99f) {
+      if (reasonBuf && reasonLen > 0)
+        snprintf(reasonBuf, reasonLen, "Poor fit (R²=%.3f)", r2);
+      return NAN;
+    }
   }
 
   return eqUnits;

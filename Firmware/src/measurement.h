@@ -41,9 +41,10 @@ struct TitrationPoint {
 
 // Determine equivalence point via Gran function linearization
 // Returns equivalence units, or NAN on failure. outR2 receives R² of fit.
+// If reasonBuf is non-null, writes failure reason on NAN return.
 float granAnalysis(TitrationPoint* points, int nPoints,
                    float sampleVol, float titVol, float calUnits,
-                   float* outR2);
+                   float* outR2, char* reasonBuf = nullptr, size_t reasonLen = 0);
 
 // Fallback: linear interpolation to find where pH crosses targetPH
 float interpolateAtPH(TitrationPoint* points, int nPoints, float targetPH);

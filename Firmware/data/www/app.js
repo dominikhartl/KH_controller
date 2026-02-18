@@ -3,10 +3,7 @@
 
   var MAX_SCHEDULES = 8;
 
-  // Calibration values for unit→mL conversion on live chart
-  var calUnits = 6000, titrationVol = 13.4;
-
-  function unitsToML(u) { return (calUnits > 0) ? (u / calUnits * titrationVol) : u; }
+  // (Volume conversion now done firmware-side)
 
   // --- WebSocket ---
   var ws, wsOk = false, reconnTimer;
@@ -91,6 +88,7 @@
     else if (d.type === 'msg') addLogEntry('msg', d.text);
     else if (d.type === 'error') addLogEntry('error', d.text);
     else if (d.type === 'logData') loadLogData(d.entries);
+    else if (d.type === 'granData') updateGranChart(d);
     else if (d.type === 'progress') updateProgress(d.pct);
   }
 
@@ -100,6 +98,13 @@
       liveChart.data.datasets[0].data = [];
       liveChart.update();
     }
+    if (granChart) {
+      granChart.data.datasets[0].data = [];
+      granChart.data.datasets[1].data = [];
+      granChart.update();
+    }
+    var info = document.getElementById('gran-info');
+    if (info) { info.style.display = 'none'; info.textContent = ''; }
   }
 
   function loadMesData(d) {
@@ -109,7 +114,7 @@
       liveChart.data.datasets[0].data = [];
     }
     for (var i = 0; i < d.data.length; i++) {
-      liveChart.data.labels.push(unitsToML(d.data[i][0]).toFixed(2));
+      liveChart.data.labels.push(d.data[i][0].toFixed(2));
       liveChart.data.datasets[0].data.push(d.data[i][1]);
     }
     if (d.chunk === d.total - 1) liveChart.update();
@@ -147,8 +152,6 @@
 
     // Config values
     if (d.config) {
-      if (d.config.cal_drops > 0) calUnits = d.config.cal_drops;
-      if (d.config.titration_vol > 0) titrationVol = d.config.titration_vol;
       setInput('cfg-titration_vol', d.config.titration_vol);
       setInput('cfg-sample_vol', d.config.sample_vol);
       setInput('cfg-correction_factor', d.config.correction_factor);
@@ -260,9 +263,49 @@
 
   function updateLivePH(d) {
     if (liveChart) {
-      liveChart.data.labels.push(unitsToML(d.units).toFixed(2));
+      liveChart.data.labels.push(d.ml.toFixed(2));
       liveChart.data.datasets[0].data.push(d.ph);
       liveChart.update('none');
+    }
+  }
+
+  function updateGranChart(d) {
+    if (!granChart || !d.points || d.points.length === 0) return;
+
+    // Scatter points
+    var pts = d.points.map(function(p) { return { x: p[0], y: p[1] }; });
+    granChart.data.datasets[0].data = pts;
+
+    // Linear regression for fit line
+    var n = pts.length;
+    var sx = 0, sy = 0, sxx = 0, sxy = 0;
+    for (var i = 0; i < n; i++) {
+      sx += pts[i].x; sy += pts[i].y;
+      sxx += pts[i].x * pts[i].x; sxy += pts[i].x * pts[i].y;
+    }
+    var denom = n * sxx - sx * sx;
+    if (Math.abs(denom) > 1e-12) {
+      var slope = (n * sxy - sx * sy) / denom;
+      var intercept = (sy - slope * sx) / n;
+      var x0 = pts[0].x;
+      var x1 = d.eqML > 0 ? d.eqML : -intercept / slope;
+      granChart.data.datasets[1].data = [
+        { x: x0, y: slope * x0 + intercept },
+        { x: x1, y: 0 }
+      ];
+    }
+
+    granChart.update();
+
+    // Update info text
+    var info = document.getElementById('gran-info');
+    if (info) {
+      var method = d.used ? 'Gran' : 'Interpolation';
+      var r2Text = d.r2 > 0 ? d.r2.toFixed(4) : '--';
+      var txt = 'R\u00b2 = ' + r2Text + '  \u2502  Method: ' + method;
+      if (d.eqML > 0) txt += '  \u2502  Eq: ' + d.eqML.toFixed(2) + ' mL';
+      info.textContent = txt;
+      info.style.display = '';
     }
   }
 
@@ -285,7 +328,7 @@
   }
 
   // --- Charts ---
-  var khChart, phChart, liveChart;
+  var khChart, phChart, liveChart, granChart;
   var chartOpts = {
     responsive: true,
     maintainAspectRatio: false,
@@ -318,6 +361,23 @@
         }
       })
     });
+    granChart = new Chart(document.getElementById('chart-gran'), {
+      type: 'scatter',
+      data: {
+        datasets: [
+          { label: 'Gran F', data: [], backgroundColor: '#0a84ff', borderColor: '#0a84ff', pointRadius: 5 },
+          { label: 'Fit', data: [], borderColor: '#ff9f0a', borderWidth: 2, pointRadius: 0, showLine: true }
+        ]
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false, animation: false,
+        plugins: { legend: { display: true, labels: { color: '#8e8e93', font: { size: 10 }, boxWidth: 12 } } },
+        scales: {
+          x: { title: { display: true, text: 'Volume (mL)', color: '#8e8e93' }, ticks: { color: '#8e8e93', font: { size: 10 } }, grid: { color: '#38383a' } },
+          y: { title: { display: true, text: 'Gran F', color: '#8e8e93' }, ticks: { color: '#8e8e93', font: { size: 10 } }, grid: { color: '#38383a' } }
+        }
+      }
+    });
   }
 
   // --- Tabs ---
@@ -328,12 +388,15 @@
         tabs.forEach(function(tt) { tt.classList.remove('active'); });
         t.classList.add('active');
         var sel = t.getAttribute('data-tab');
-        ['kh','ph','live'].forEach(function(id) {
+        ['kh','ph','live','gran'].forEach(function(id) {
           document.getElementById('chart-' + id).style.display = (id === sel) ? 'block' : 'none';
         });
+        var granInfo = document.getElementById('gran-info');
+        if (granInfo) granInfo.style.display = (sel === 'gran' && granInfo.textContent) ? '' : 'none';
         if (sel === 'live' && liveChart) liveChart.resize();
         else if (sel === 'kh' && khChart) khChart.resize();
         else if (sel === 'ph' && phChart) phChart.resize();
+        else if (sel === 'gran' && granChart) granChart.resize();
       });
     });
   }
