@@ -127,10 +127,15 @@
     setGaugeArc('gauge-kh-arc', khVal, 0, 15);
     setText('val-kh', (d.kh > 0) ? d.kh.toFixed(1) : '--');
 
-    // pH gauge
+    // pH gauge (start pH from last KH measurement)
     var phVal = (d.lastStartPh > 0) ? d.lastStartPh : 0;
     setGaugeArc('gauge-ph-arc', phVal, 6, 9);
     setText('val-ph', (d.lastStartPh > 0) ? d.lastStartPh.toFixed(2) : '--');
+
+    // Measured pH gauge (latest pH reading from any source)
+    var mesPhVal = (d.ph > 0) ? d.ph : 0;
+    setGaugeArc('gauge-mesph-arc', mesPhVal, 6, 9);
+    setText('val-mesph', mesPhVal > 0 ? mesPhVal.toFixed(2) : '--');
 
     // HCl tank
     var hclMax = 5000;
@@ -278,23 +283,56 @@
     var pts = d.points.map(function(p) { return { x: p[0], y: p[1] }; });
     granChart.data.datasets[0].data = pts;
 
-    // Linear regression for fit line
-    var n = pts.length;
-    var sx = 0, sy = 0, sxx = 0, sxy = 0;
-    for (var i = 0; i < n; i++) {
-      sx += pts[i].x; sy += pts[i].y;
-      sxx += pts[i].x * pts[i].x; sxy += pts[i].x * pts[i].y;
-    }
-    var denom = n * sxx - sx * sx;
-    if (Math.abs(denom) > 1e-12) {
-      var slope = (n * sxy - sx * sy) / denom;
-      var intercept = (sy - slope * sx) / n;
-      var x0 = pts[0].x;
-      var x1 = d.eqML > 0 ? d.eqML : -intercept / slope;
-      granChart.data.datasets[1].data = [
-        { x: x0, y: slope * x0 + intercept },
-        { x: x1, y: 0 }
-      ];
+    // Fit line through firmware's equivalence point (eqML, 0)
+    // Constrained regression: y = slope * (x - eqML)
+    // slope = Σ(yi * (xi - eqML)) / Σ((xi - eqML)²)
+    var eqML = d.eqML;
+    if (eqML > 0) {
+      var num = 0, den = 0;
+      for (var i = 0; i < pts.length; i++) {
+        var dx = pts[i].x - eqML;
+        num += pts[i].y * dx;
+        den += dx * dx;
+      }
+      if (Math.abs(den) > 1e-12) {
+        var slope = num / den;
+        // Find full x range of scatter points
+        var xMin = pts[0].x, xMax = pts[0].x;
+        for (var i = 1; i < pts.length; i++) {
+          if (pts[i].x < xMin) xMin = pts[i].x;
+          if (pts[i].x > xMax) xMax = pts[i].x;
+        }
+        // Extend line from earliest data point to equivalence point
+        var xStart = xMin;
+        var xEnd = Math.max(xMax, eqML);
+        granChart.data.datasets[1].data = [
+          { x: xStart, y: slope * (xStart - eqML) },
+          { x: xEnd, y: slope * (xEnd - eqML) }
+        ];
+      }
+    } else {
+      // Fallback: unconstrained regression when no eqML
+      var n = pts.length, sx = 0, sy = 0, sxx = 0, sxy = 0;
+      for (var i = 0; i < n; i++) {
+        sx += pts[i].x; sy += pts[i].y;
+        sxx += pts[i].x * pts[i].x; sxy += pts[i].x * pts[i].y;
+      }
+      var denom = n * sxx - sx * sx;
+      if (Math.abs(denom) > 1e-12) {
+        var slope = (n * sxy - sx * sy) / denom;
+        var intercept = (sy - slope * sx) / n;
+        var xMin = pts[0].x, xMax = pts[0].x;
+        for (var j = 1; j < n; j++) {
+          if (pts[j].x < xMin) xMin = pts[j].x;
+          if (pts[j].x > xMax) xMax = pts[j].x;
+        }
+        var xIntercept = -intercept / slope;
+        var xEnd = Math.max(xMax, xIntercept);
+        granChart.data.datasets[1].data = [
+          { x: xMin, y: slope * xMin + intercept },
+          { x: xEnd, y: slope * xEnd + intercept }
+        ];
+      }
     }
 
     granChart.update();

@@ -45,6 +45,7 @@ void queueCommand(char cmd) {
 }
 
 void publishMessage(const char* message);
+void publishError(const char* errorMessage);
 void calibrateTitrationPump();
 
 struct KHResult {
@@ -162,6 +163,31 @@ void processPendingCommand() {
       break;
     case 't':
       calibrateTitrationPump();
+      broadcastState();
+      break;
+    case '4':
+      calibratePH(4);
+      broadcastState();
+      break;
+    case '7':
+      calibratePH(7);
+      broadcastState();
+      break;
+    case 'A':  // pH 10 (can't store "10" in single char)
+      calibratePH(10);
+      broadcastState();
+      break;
+    case 'p':
+      measurePH(100);
+      if (isnan(pH)) {
+        publishError("Error: pH probe not working");
+      } else {
+        char phBuf[16];
+        snprintf(phBuf, sizeof(phBuf), "%.2f", pH);
+        mqttManager.publish(MQmespH, phBuf, true);
+        snprintf(phBuf, sizeof(phBuf), "pH: %.2f", pH);
+        publishMessage(phBuf);
+      }
       broadcastState();
       break;
   }
@@ -295,11 +321,22 @@ KHResult measureKH() {
   }
   digitalWrite(EN_PIN2, HIGH);
   publishMessage("Taking sample");
+  // Double wash: first rinse cleans the chamber, second takes the actual sample
+  setMultiWashContext(2);
   if (!washSample(1.2, 1.0)) {
-    publishError("Error: sample pump timeout during wash");
+    clearMultiWashContext();
+    publishError("Error: sample pump timeout during wash (1st rinse)");
     measuring = false;
     return result;
   }
+  delay(1000);
+  if (!washSample(1.2, 1.0)) {
+    clearMultiWashContext();
+    publishError("Error: sample pump timeout during wash (2nd rinse)");
+    measuring = false;
+    return result;
+  }
+  clearMultiWashContext();
   delay(100);
   startStirrer();
   delay(STIRRER_WARMUP_MS);  // Wait for solution to homogenize
@@ -322,9 +359,11 @@ KHResult measureKH() {
     snprintf(retryBuf, sizeof(retryBuf), "Warning: Starting pH %.2f < %.1f, extra rinse...", pH, minStartPH);
     publishMessage(retryBuf);
     stopStirrer();
+    setMultiWashContext(2);
     washSample(1.5, 1.0);
     delay(2000);
     washSample(1.2, 1.0);
+    clearMultiWashContext();
     delay(100);
     startStirrer();
     delay(STIRRER_WARMUP_MS);
@@ -648,13 +687,9 @@ KHResult measureKH() {
     }
   }
 
-  // Double rinse to eliminate acid carryover
+  // Single post-wash rinse (pre-measurement double wash handles carryover)
   if (!washSample(1.5f + hclPart, 1.0)) {
-    publishError("Warning: sample pump timeout during post-wash (1st rinse)");
-  }
-  delay(2000);
-  if (!washSample(1.2, 1.0)) {
-    publishError("Warning: sample pump timeout during post-wash (2nd rinse)");
+    publishError("Warning: sample pump timeout during post-wash");
   }
 
   // Post-wash pH verification: quick check to detect incomplete wash

@@ -249,6 +249,13 @@ h2{font-size:.8em;font-weight:600;color:var(--text-secondary);text-transform:upp
 }
 .status-bar strong{color:var(--text-secondary);font-weight:600}
 .status-bar div{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.export-btn{
+  grid-column:1/-1;text-align:center;
+  color:var(--accent);text-decoration:none;font-weight:500;font-size:.85em;
+  padding:6px 0;border-top:1px solid var(--separator);margin-top:4px;
+  -webkit-tap-highlight-color:transparent;
+}
+.export-btn:active{opacity:.6}
 
 /* === Responsive === */
 @media(max-width:480px){

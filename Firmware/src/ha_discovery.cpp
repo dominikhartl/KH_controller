@@ -221,7 +221,7 @@ void publishAllDiscovery() {
     snprintf(confTopic, sizeof(confTopic), "%s/confidence", DEVICE_NAME);
     publishSensorDiscovery("khv3_confidence", "Measurement Confidence", confTopic, nullptr, nullptr, nullptr, "diagnostic");
   }
-  publishSensorDiscovery("khv3_mes_ph", "Measurement pH", mesPhTopic, "pH", nullptr, nullptr, "diagnostic");
+  publishSensorDiscovery("khv3_mes_ph", "Measured pH", mesPhTopic, "pH", nullptr, nullptr, nullptr);
   publishSensorDiscovery("khv3_rssi", "WiFi Signal", topicDiagnostics, "dBm", "signal_strength",
                           "{{ value_json.rssi }}", "diagnostic");
   publishSensorDiscovery("khv3_uptime", "Uptime", topicDiagnostics, "s", "duration",

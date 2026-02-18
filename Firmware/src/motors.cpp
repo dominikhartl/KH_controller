@@ -14,12 +14,26 @@ static MotorProgressCallback progressCb = nullptr;
 static int washTotalVol = 0;
 static int washBaseVol = 0;  // volume completed before current phase
 
+// Multi-wash context: spans progress across sequential washSample() calls
+static int multiWashTotal = 0;   // total number of washes in sequence (0 = disabled)
+static int multiWashIndex = 0;   // current wash index (0-based)
+
 void setMotorYieldCallback(MotorYieldCallback cb) {
   yieldCb = cb;
 }
 
 void setMotorProgressCallback(MotorProgressCallback cb) {
   progressCb = cb;
+}
+
+void setMultiWashContext(int numWashes) {
+  multiWashTotal = numWashes;
+  multiWashIndex = 0;
+}
+
+void clearMultiWashContext() {
+  multiWashTotal = 0;
+  multiWashIndex = 0;
 }
 
 // Single step helper
@@ -87,7 +101,13 @@ static bool runSamplePump(int volume, bool forward) {
       if (washTotalVol > 0 && progressCb) {
         int revsDone = stepsDone / STEPS_PER_REVOLUTION;
         int done = washBaseVol + revsDone;
-        progressCb((done * 100) / washTotalVol);
+        int singlePct = (done * 100) / washTotalVol;
+        if (multiWashTotal > 0) {
+          // Scale into overall multi-wash progress
+          progressCb((multiWashIndex * 100 + singlePct) / multiWashTotal);
+        } else {
+          progressCb(singlePct);
+        }
       }
     }
     if (millis() - startTime > SAMPLE_PUMP_TIMEOUT_MS) {
@@ -127,7 +147,14 @@ bool washSample(float remPart, float fillPart) {
   washTotalVol = removeVol + fillVol;
   washBaseVol = 0;
 
-  if (progressCb) progressCb(0);
+  if (progressCb) {
+    if (multiWashTotal > 0) {
+      progressCb((multiWashIndex * 100) / multiWashTotal);
+    } else {
+      progressCb(0);
+    }
+  }
+
   bool ok = removeSample(removeVol);
 
   if (ok) {
@@ -136,7 +163,13 @@ bool washSample(float remPart, float fillPart) {
   }
 
   washTotalVol = 0;
-  if (progressCb) progressCb(100);
+
+  if (multiWashTotal > 0) {
+    multiWashIndex++;
+    if (progressCb) progressCb((multiWashIndex * 100) / multiWashTotal);
+  } else {
+    if (progressCb) progressCb(100);
+  }
   return ok;
 }
 

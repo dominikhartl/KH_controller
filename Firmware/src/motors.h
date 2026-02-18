@@ -10,6 +10,11 @@ void setMotorYieldCallback(MotorYieldCallback cb);
 typedef void (*MotorProgressCallback)(int percent);
 void setMotorProgressCallback(MotorProgressCallback cb);
 
+// Multi-wash progress: tracks overall progress across sequential washSample() calls
+// Call before a sequence of washes, then clearMultiWashContext() after
+void setMultiWashContext(int numWashes);
+void clearMultiWashContext();
+
 // All motor functions return true on success, false on timeout
 bool removeSample(int volume);
 bool takeSample(int volume);

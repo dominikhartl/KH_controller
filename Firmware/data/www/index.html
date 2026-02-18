@@ -40,6 +40,16 @@
     </div>
     <div class="gauge-card">
       <div class="gauge-visual">
+        <svg viewBox="0 0 120 80" class="gauge-svg">
+          <path d="M15 70 A50 50 0 0 1 105 70" fill="none" stroke="#333" stroke-width="8" stroke-linecap="round"/>
+          <path id="gauge-mesph-arc" d="M15 70 A50 50 0 0 1 105 70" fill="none" stroke="#ff9f0a" stroke-width="8" stroke-linecap="round" stroke-dasharray="0 999"/>
+        </svg>
+      </div>
+      <div class="gauge-value" id="val-mesph">--</div>
+      <div class="gauge-label">Measured pH</div>
+    </div>
+    <div class="gauge-card">
+      <div class="gauge-visual">
         <div class="hcl-tank">
           <div class="hcl-fill" id="hcl-fill"></div>
         </div>
@@ -206,6 +216,7 @@
   <section class="status-bar">
     <div><strong>RSSI:</strong> <span id="rssi">--</span> dBm</div>
     <div><strong>Uptime:</strong> <span id="uptime">--</span></div>
+    <a class="export-btn" href="/api/export.csv" download="kh_history.csv">Export CSV</a>
   </section>
 
   <script src="chart.min.js?v=2"></script>

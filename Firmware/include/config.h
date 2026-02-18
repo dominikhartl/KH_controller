@@ -26,6 +26,7 @@ static const float STABILIZATION_THRESHOLD_MV = 2.0;
 // pH measurement outlier thresholds
 static const float PH_OUTLIER_THRESHOLD = 0.2f;      // Precise mode: ±0.2 pH from median
 static const float PH_FAST_OUTLIER_THRESHOLD = 0.3f;  // Fast mode: ±0.3 pH from median
+static const float VOLTAGE_OUTLIER_THRESHOLD = 30.0f; // ±30 mV from median (~0.2 pH equivalent)
 
 // KH measurement outlier validation
 static const float KH_OUTLIER_THRESHOLD_DKH = 1.0f;  // Re-measure if deviation from median exceeds this
@@ -104,6 +105,11 @@ static const float GRAN_STOP_PH         = 3.5f;   // Stop titrating at this pH (
 static const int   MIN_GRAN_POINTS      = 8;       // Minimum points for reliable regression
 static const int   MAX_TITRATION_POINTS = 200;      // Data point buffer size
 static const float GRAN_MIN_R2          = 0.99f;   // Minimum R² for Gran fit acceptance
+
+// Calibration buffer pH values at measurement temperature
+static const float BUFFER_PH_4  = 4.00f;
+static const float BUFFER_PH_7  = 7.02f;
+static const float BUFFER_PH_10 = 10.07f;
 
 // Nernst equation: slope(T) = NERNST_FACTOR * T(K) mV/pH
 // R*ln(10)/(n*F) = 8.31446 * 2.30259 / (1 * 96485.3) = 0.19842 mV/(pH·K)

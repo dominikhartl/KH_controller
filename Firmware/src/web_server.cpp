@@ -14,6 +14,8 @@
 #include <time.h>
 #include <math.h>
 
+extern char MQmespH[];
+
 AsyncWebServer server(80);
 AsyncWebSocket ws("/ws");
 
@@ -299,21 +301,23 @@ static void handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
   }
 }
 
-static void calibratePH(int bufferPH) {
+void calibratePH(int bufferPH) {
   startStirrer();
   delay(STIRRER_WARMUP_MS);
   float v = measureVoltage(100);
   stopStirrer();
+  float actualPH;
   switch (bufferPH) {
-    case 4:  voltage_4PH = v;  configStore.setVoltage4PH(v);  break;
-    case 7:  voltage_7PH = v;  configStore.setVoltage7PH(v);  break;
-    case 10: voltage_10PH = v; configStore.setVoltage10PH(v); break;
+    case 4:  voltage_4PH = v;  configStore.setVoltage4PH(v);  actualPH = BUFFER_PH_4;  break;
+    case 7:  voltage_7PH = v;  configStore.setVoltage7PH(v);  actualPH = BUFFER_PH_7;  break;
+    case 10: voltage_10PH = v; configStore.setVoltage10PH(v); actualPH = BUFFER_PH_10; break;
+    default: return;
   }
   updateCalibrationFit();
   configStore.setCalTimestamp((uint32_t)time(nullptr));
   if (isCalibrationValid()) configStore.addSlopeEntry((uint32_t)time(nullptr), getAcidSlope());
-  char msg[24];
-  snprintf(msg, sizeof(msg), "Calibrated pH %d", bufferPH);
+  char msg[32];
+  snprintf(msg, sizeof(msg), "Calibrated pH %.2f", actualPH);
   publishMessage(msg);
   char reason[96];
   const char* health = getProbeHealthDetail(reason, sizeof(reason));
@@ -333,14 +337,9 @@ void executeCommand(const char* cmd) {
     queueCommand(cmd[0]);
     return;
   } else if (strcmp(cmd, "p") == 0) {
-    measurePH(100);
-    if (isnan(pH)) {
-      publishError("Error: pH probe not working");
-    } else {
-      char phBuf[16];
-      snprintf(phBuf, sizeof(phBuf), "pH: %.2f", pH);
-      publishMessage(phBuf);
-    }
+    // Defer to loopTask — measurePH blocks ~7s (stabilization + 100 readings)
+    queueCommand('p');
+    return;
   } else if (strcmp(cmd, "f") == 0) {
     publishMessage("Filling");
     if (!titrate(FILL_VOLUME, PREFILL_RPM)) {
@@ -379,12 +378,10 @@ void executeCommand(const char* cmd) {
     char vBuf[32];
     snprintf(vBuf, sizeof(vBuf), "Voltage: %.1f mV", v);
     publishMessage(vBuf);
-  } else if (strcmp(cmd, "4") == 0) {
-    calibratePH(4);
-  } else if (strcmp(cmd, "7") == 0) {
-    calibratePH(7);
-  } else if (strcmp(cmd, "10") == 0) {
-    calibratePH(10);
+  } else if (strcmp(cmd, "4") == 0 || strcmp(cmd, "7") == 0 || strcmp(cmd, "10") == 0) {
+    // Defer to loopTask — calibratePH blocks ~10s (stirrer warmup + voltage measurement)
+    queueCommand(cmd[0] == '1' ? 'A' : cmd[0]);  // '4','7','A' (A=pH10)
+    return;
   }
   broadcastState();
 }
@@ -689,6 +686,107 @@ void setupWebServer() {
   // WebSocket handler
   ws.onEvent(onWebSocketEvent);
   server.addHandler(&ws);
+
+  // CSV export: merge kh, ph, gran history into one download
+  server.on("/api/export.csv", HTTP_GET, [](AsyncWebServerRequest* request) {
+    // Collect entries keyed by timestamp
+    struct Row { float kh; float ph; float r2; float eqML; float epPH; int method; bool hasGran; };
+    static const int MAX_ROWS = 200;
+    static uint32_t timestamps[200];
+    static Row rows[200];
+    int nRows = 0;
+
+    auto findOrAdd = [&](uint32_t ts) -> int {
+      for (int i = 0; i < nRows; i++) { if (timestamps[i] == ts) return i; }
+      if (nRows >= MAX_ROWS) return -1;
+      timestamps[nRows] = ts;
+      rows[nRows] = {NAN, NAN, NAN, NAN, NAN, -1, false};
+      return nRows++;
+    };
+
+    // Read kh.csv
+    if (LittleFS.exists("/history/kh.csv")) {
+      File f = LittleFS.open("/history/kh.csv", "r");
+      while (f && f.available()) {
+        String line = f.readStringUntil('\n');
+        int c = line.indexOf(',');
+        if (c < 0) continue;
+        int idx = findOrAdd(line.substring(0, c).toInt());
+        if (idx >= 0) rows[idx].kh = line.substring(c + 1).toFloat();
+      }
+      if (f) f.close();
+    }
+
+    // Read ph.csv
+    if (LittleFS.exists("/history/ph.csv")) {
+      File f = LittleFS.open("/history/ph.csv", "r");
+      while (f && f.available()) {
+        String line = f.readStringUntil('\n');
+        int c = line.indexOf(',');
+        if (c < 0) continue;
+        int idx = findOrAdd(line.substring(0, c).toInt());
+        if (idx >= 0) rows[idx].ph = line.substring(c + 1).toFloat();
+      }
+      if (f) f.close();
+    }
+
+    // Read gran.csv
+    if (LittleFS.exists("/history/gran.csv")) {
+      File f = LittleFS.open("/history/gran.csv", "r");
+      while (f && f.available()) {
+        String line = f.readStringUntil('\n');
+        int c1 = line.indexOf(',');
+        if (c1 < 0) continue;
+        int c2 = line.indexOf(',', c1 + 1);
+        int c3 = line.indexOf(',', c2 + 1);
+        int c4 = line.indexOf(',', c3 + 1);
+        if (c2 < 0 || c3 < 0 || c4 < 0) continue;
+        int idx = findOrAdd(line.substring(0, c1).toInt());
+        if (idx >= 0) {
+          rows[idx].r2 = line.substring(c1 + 1, c2).toFloat();
+          rows[idx].eqML = line.substring(c2 + 1, c3).toFloat();
+          rows[idx].epPH = line.substring(c3 + 1, c4).toFloat();
+          rows[idx].method = line.substring(c4 + 1).toInt();
+          rows[idx].hasGran = true;
+        }
+      }
+      if (f) f.close();
+    }
+
+    // Sort by timestamp
+    for (int i = 1; i < nRows; i++) {
+      for (int j = i; j > 0 && timestamps[j] < timestamps[j - 1]; j--) {
+        uint32_t tt = timestamps[j]; timestamps[j] = timestamps[j - 1]; timestamps[j - 1] = tt;
+        Row tr = rows[j]; rows[j] = rows[j - 1]; rows[j - 1] = tr;
+      }
+    }
+
+    // Stream response
+    String csv;
+    csv.reserve(nRows * 80 + 80);
+    csv += "timestamp,datetime,kh,ph,r2,eq_ml,endpoint_ph,method\n";
+    for (int i = 0; i < nRows; i++) {
+      time_t t = (time_t)timestamps[i];
+      struct tm tm;
+      localtime_r(&t, &tm);
+      char dt[20];
+      strftime(dt, sizeof(dt), "%Y-%m-%d %H:%M", &tm);
+      csv += String(timestamps[i]) + "," + dt;
+      csv += isnan(rows[i].kh) ? ",": ("," + String(rows[i].kh, 2));
+      csv += isnan(rows[i].ph) ? "," : ("," + String(rows[i].ph, 2));
+      if (rows[i].hasGran) {
+        csv += "," + String(rows[i].r2, 4) + "," + String(rows[i].eqML, 3)
+             + "," + String(rows[i].epPH, 2) + "," + String(rows[i].method);
+      } else {
+        csv += ",,,,";
+      }
+      csv += "\n";
+    }
+
+    AsyncWebServerResponse* resp = request->beginResponse(200, "text/csv", csv);
+    resp->addHeader("Content-Disposition", "attachment; filename=\"kh_history.csv\"");
+    request->send(resp);
+  });
 
   // Fallback API for state
   server.on("/api/state", HTTP_GET, [](AsyncWebServerRequest* request) {

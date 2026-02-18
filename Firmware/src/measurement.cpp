@@ -90,16 +90,16 @@ void initADC() {
 
 void updateCalibrationFit() {
   float v[3] = {voltage_4PH, voltage_7PH, voltage_10PH};
-  float p[3] = {4.0f, 7.0f, 10.0f};
+  float p[3] = {BUFFER_PH_4, BUFFER_PH_7, BUFFER_PH_10};
   float sumV = v[0] + v[1] + v[2];
-  float sumP = 21.0f;
+  float sumP = p[0] + p[1] + p[2];
   float sumVV = v[0]*v[0] + v[1]*v[1] + v[2]*v[2];
   float sumVP = v[0]*p[0] + v[1]*p[1] + v[2]*p[2];
   float denom = 3.0f * sumVV - sumV * sumV;
   if (fabs(denom) < 1e-6f) {
     // Fallback: approximate Nernst slope at 25C (~-59mV/pH ≈ -1/17 pH/mV)
     phSlope = -1.0f / 173.0f;
-    phOffset = 7.0f + voltage_7PH / 173.0f;
+    phOffset = BUFFER_PH_7 + voltage_7PH / 173.0f;
     return;
   }
   phSlope = (3.0f * sumVP - sumV * sumP) / denom;
@@ -122,19 +122,19 @@ unsigned long getLastStabilizationMs() {
 
 float getProbeSlope() {
   if (!isCalibrationValid()) return NAN;
-  float slopeAcid = (voltage_7PH - voltage_4PH) / 3.0f;
-  float slopeBase = (voltage_10PH - voltage_7PH) / 3.0f;
+  float slopeAcid = (voltage_7PH - voltage_4PH) / (BUFFER_PH_7 - BUFFER_PH_4);
+  float slopeBase = (voltage_10PH - voltage_7PH) / (BUFFER_PH_10 - BUFFER_PH_7);
   return (slopeAcid + slopeBase) / 2.0f;
 }
 
 float getAcidSlope() {
   if (!isCalibrationValid()) return NAN;
-  return (voltage_7PH - voltage_4PH) / 3.0f;  // Conditioned mV/pH for pH 4→7
+  return (voltage_7PH - voltage_4PH) / (BUFFER_PH_7 - BUFFER_PH_4);
 }
 
 float getAlkalineSlope() {
   if (!isCalibrationValid()) return NAN;
-  return (voltage_10PH - voltage_7PH) / 3.0f;  // Conditioned mV/pH for pH 7→10
+  return (voltage_10PH - voltage_7PH) / (BUFFER_PH_10 - BUFFER_PH_7);
 }
 
 // Nernst efficiency: raw probe slope vs theoretical at measurement temperature
@@ -157,8 +157,8 @@ float getAlkalineEfficiency() {
 
 float getProbeAsymmetry() {
   if (!isCalibrationValid()) return NAN;
-  float slopeAcid = fabsf((voltage_7PH - voltage_4PH) / 3.0f);
-  float slopeBase = fabsf((voltage_10PH - voltage_7PH) / 3.0f);
+  float slopeAcid = fabsf((voltage_7PH - voltage_4PH) / (BUFFER_PH_7 - BUFFER_PH_4));
+  float slopeBase = fabsf((voltage_10PH - voltage_7PH) / (BUFFER_PH_10 - BUFFER_PH_7));
   float avg = (slopeAcid + slopeBase) / 2.0f;
   if (avg < 1.0f) return NAN;
   return fabsf(slopeAcid - slopeBase) / avg * 100.0f;
@@ -317,21 +317,7 @@ float measureVoltage(int nreadings) {
   }
 
   sortFloats(voltageReadings, maxReadings);
-
-  // Calculate mean of middle 80% (discard extreme values)
-  int startIdx = maxReadings / 10;
-  int endIdx = maxReadings - maxReadings / 10;
-  if (endIdx <= startIdx) {
-    endIdx = maxReadings;
-    startIdx = 0;
-  }
-
-  float sum = 0.0;
-  for (int i = startIdx; i < endIdx; i++) {
-    sum += voltageReadings[i];
-  }
-
-  float avgVoltage = sum / (endIdx - startIdx);
+  float avgVoltage = medianFilteredMean(voltageReadings, maxReadings, VOLTAGE_OUTLIER_THRESHOLD);
   voltage = avgVoltage;
   return avgVoltage;
 }
