@@ -130,6 +130,9 @@ static const unsigned long PROBE_RESPONSE_GOOD_MS  = 500;   // Below: healthy re
 static const unsigned long PROBE_RESPONSE_FAIR_MS  = 1500;  // Below: fair, above: slow
 static const int CALIBRATION_AGE_WARNING_DAYS = 30;
 
+// Minimum valid Unix timestamp (Nov 2023) — used to detect NTP not yet synced
+static const uint32_t MIN_VALID_EPOCH = 1700000000;
+
 // MQTT_MAX_PACKET_SIZE and MQTT_KEEPALIVE are set via build_flags in platformio.ini
 
 #endif // CONFIG_H

@@ -476,12 +476,18 @@ void broadcastTitrationPH(float phVal, int unitsVal) {
 
   // Downsample when buffer is full: average pairs to halve the count
   if (mesCount >= MES_BUF_MAX) {
-    uint16_t newCount = mesCount / 2;
-    for (uint16_t i = 0; i < newCount; i++) {
+    uint16_t pairs = mesCount / 2;
+    for (uint16_t i = 0; i < pairs; i++) {
       mesBuffer[i].ml = mesBuffer[i * 2 + 1].ml; // keep later volume
       mesBuffer[i].ph = (mesBuffer[i * 2].ph + mesBuffer[i * 2 + 1].ph) / 2.0f;
     }
-    mesCount = newCount;
+    // Preserve last point if odd count
+    if (mesCount % 2 != 0) {
+      mesBuffer[pairs] = mesBuffer[mesCount - 1];
+      mesCount = pairs + 1;
+    } else {
+      mesCount = pairs;
+    }
   }
 
   mesBuffer[mesCount].ml = ml;
@@ -576,8 +582,10 @@ void appendHistory(const char* sensor, float value) {
     File f = LittleFS.open(filename, "r");
     if (f) {
       String kept;
-      while (f.available()) {
+      int lines = 0;
+      while (f.available() && lines < 200) {
         String line = f.readStringUntil('\n');
+        lines++;
         if (line.length() == 0) continue;
         int comma = line.indexOf(',');
         if (comma < 0) continue;
@@ -596,7 +604,7 @@ void appendHistory(const char* sensor, float value) {
   }
 
   time_t now = time(nullptr);
-  if (now < 1000000000) return;  // NTP not yet synced — skip bogus timestamp
+  if (now < MIN_VALID_EPOCH) return;  // NTP not yet synced — skip bogus timestamp
 
   File f = LittleFS.open(filename, "a");
   if (f) {
@@ -618,8 +626,10 @@ void appendGranHistory(float r2, float eqML, float endpointPH, bool usedGran) {
     File f = LittleFS.open(filename, "r");
     if (f) {
       String kept;
-      while (f.available()) {
+      int lines = 0;
+      while (f.available() && lines < 200) {
         String line = f.readStringUntil('\n');
+        lines++;
         if (line.length() == 0) continue;
         int comma = line.indexOf(',');
         if (comma < 0) continue;
@@ -633,7 +643,7 @@ void appendGranHistory(float r2, float eqML, float endpointPH, bool usedGran) {
   }
 
   time_t now = time(nullptr);
-  if (now < 1000000000) return;  // NTP not synced
+  if (now < MIN_VALID_EPOCH) return;  // NTP not synced
 
   File f = LittleFS.open(filename, "a");
   if (f) {

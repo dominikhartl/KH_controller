@@ -12,6 +12,7 @@
     var host = location.hostname || 'khcontrollerv3.local';
     ws = new WebSocket('ws://' + host + '/ws');
     ws.onopen = function() {
+      if (reconnTimer) { clearTimeout(reconnTimer); reconnTimer = null; }
       wsOk = true;
       setDot('ws', true);
       ws.send(JSON.stringify({type:'getHistory', sensor:'kh'}));
@@ -22,6 +23,10 @@
       wsOk = false;
       setDot('ws', false);
       reconnTimer = setTimeout(connect, 3000);
+    };
+    ws.onerror = function() {
+      wsOk = false;
+      setDot('ws', false);
     };
     ws.onmessage = function(e) {
       try { handleMsg(JSON.parse(e.data)); } catch(ex) { console.error('WS parse error:', ex, e.data); }
@@ -87,7 +92,7 @@
     else if (d.type === 'mesData') loadMesData(d);
     else if (d.type === 'history') updateHistory(d);
     else if (d.type === 'msg') addLogEntry('msg', d.text);
-    else if (d.type === 'error') addLogEntry('error', d.text);
+    else if (d.type === 'error') { addLogEntry('error', d.text); updateProgress(100); }
     else if (d.type === 'logData') loadLogData(d.entries);
     else if (d.type === 'granData') updateGranChart(d);
     else if (d.type === 'progress') updateProgress(d.pct);
@@ -269,6 +274,10 @@
   }
 
   function updateLivePH(d) {
+    var mesPhVal = (d.ph > 0) ? d.ph : 0;
+    setGaugeArc('gauge-mesph-arc', mesPhVal, 6, 9);
+    setText('val-mesph', mesPhVal > 0 ? d.ph.toFixed(2) : '--');
+
     if (liveChart) {
       liveChart.data.labels.push(d.ml.toFixed(2));
       liveChart.data.datasets[0].data.push(d.ph);
@@ -277,62 +286,40 @@
   }
 
   function updateGranChart(d) {
-    if (!granChart || !d.points || d.points.length === 0) return;
+    if (!granChart) return;
+    if (!d.points || d.points.length === 0) {
+      granChart.data.datasets[0].data = [];
+      granChart.data.datasets[1].data = [];
+      granChart.update();
+      return;
+    }
 
     // Scatter points
     var pts = d.points.map(function(p) { return { x: p[0], y: p[1] }; });
     granChart.data.datasets[0].data = pts;
 
-    // Fit line through firmware's equivalence point (eqML, 0)
-    // Constrained regression: y = slope * (x - eqML)
-    // slope = Σ(yi * (xi - eqML)) / Σ((xi - eqML)²)
-    var eqML = d.eqML;
-    if (eqML > 0) {
-      var num = 0, den = 0;
-      for (var i = 0; i < pts.length; i++) {
-        var dx = pts[i].x - eqML;
-        num += pts[i].y * dx;
-        den += dx * dx;
+    // Unconstrained regression through scatter points, extended to x-intercept
+    var n = pts.length, sx = 0, sy = 0, sxx = 0, sxy = 0;
+    for (var i = 0; i < n; i++) {
+      sx += pts[i].x; sy += pts[i].y;
+      sxx += pts[i].x * pts[i].x; sxy += pts[i].x * pts[i].y;
+    }
+    var denom = n * sxx - sx * sx;
+    if (Math.abs(denom) > 1e-12) {
+      var slope = (n * sxy - sx * sy) / denom;
+      var intercept = (sy - slope * sx) / n;
+      var xMin = pts[0].x, xMax = pts[0].x;
+      for (var j = 1; j < n; j++) {
+        if (pts[j].x < xMin) xMin = pts[j].x;
+        if (pts[j].x > xMax) xMax = pts[j].x;
       }
-      if (Math.abs(den) > 1e-12) {
-        var slope = num / den;
-        // Find full x range of scatter points
-        var xMin = pts[0].x, xMax = pts[0].x;
-        for (var i = 1; i < pts.length; i++) {
-          if (pts[i].x < xMin) xMin = pts[i].x;
-          if (pts[i].x > xMax) xMax = pts[i].x;
-        }
-        // Extend line from earliest data point to equivalence point
-        var xStart = xMin;
-        var xEnd = Math.max(xMax, eqML);
-        granChart.data.datasets[1].data = [
-          { x: xStart, y: slope * (xStart - eqML) },
-          { x: xEnd, y: slope * (xEnd - eqML) }
-        ];
-      }
-    } else {
-      // Fallback: unconstrained regression when no eqML
-      var n = pts.length, sx = 0, sy = 0, sxx = 0, sxy = 0;
-      for (var i = 0; i < n; i++) {
-        sx += pts[i].x; sy += pts[i].y;
-        sxx += pts[i].x * pts[i].x; sxy += pts[i].x * pts[i].y;
-      }
-      var denom = n * sxx - sx * sx;
-      if (Math.abs(denom) > 1e-12) {
-        var slope = (n * sxy - sx * sy) / denom;
-        var intercept = (sy - slope * sx) / n;
-        var xMin = pts[0].x, xMax = pts[0].x;
-        for (var j = 1; j < n; j++) {
-          if (pts[j].x < xMin) xMin = pts[j].x;
-          if (pts[j].x > xMax) xMax = pts[j].x;
-        }
-        var xIntercept = -intercept / slope;
-        var xEnd = Math.max(xMax, xIntercept);
-        granChart.data.datasets[1].data = [
-          { x: xMin, y: slope * xMin + intercept },
-          { x: xEnd, y: slope * xEnd + intercept }
-        ];
-      }
+      // Extend to equivalence point or x-intercept
+      var xIntercept = (slope !== 0) ? -intercept / slope : xMax;
+      var xEnd = Math.max(xMax, d.eqML > 0 ? d.eqML : xIntercept);
+      granChart.data.datasets[1].data = [
+        { x: xMin, y: slope * xMin + intercept },
+        { x: xEnd, y: slope * xEnd + intercept }
+      ];
     }
 
     granChart.update();
@@ -465,13 +452,15 @@
         var sel = t.getAttribute('data-tab');
         // Hide all chart canvases
         ['kh','ph','live','gran','gran-hist'].forEach(function(id) {
-          document.getElementById('chart-' + id).style.display = 'none';
+          var el = document.getElementById('chart-' + id);
+          if (el) el.style.display = 'none';
         });
         // Show selected
         if (sel === 'gran') {
           showGranView();
         } else {
-          document.getElementById('chart-' + sel).style.display = 'block';
+          var chartEl = document.getElementById('chart-' + sel);
+          if (chartEl) chartEl.style.display = 'block';
         }
         // Gran sub-tabs visibility
         var granSub = document.getElementById('gran-subtabs');

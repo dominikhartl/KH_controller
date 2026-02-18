@@ -136,7 +136,9 @@ int ConfigStore::getSlopeHistory(SlopeEntry* entries, int maxEntries) {
   int toRead = (count < maxEntries) ? count : maxEntries;
   if (toRead > 0) {
     SlopeEntry all[MAX_SLOPE_HISTORY];
-    prefs.getBytes("sl_data", all, count * sizeof(SlopeEntry));
+    size_t expected = count * sizeof(SlopeEntry);
+    size_t read = prefs.getBytes("sl_data", all, expected);
+    if (read != expected) return 0;  // NVS corrupt — return empty
     // Return the last toRead entries (newest)
     int offset = count - toRead;
     memcpy(entries, all + offset, toRead * sizeof(SlopeEntry));

@@ -1,4 +1,5 @@
 #include "scheduler.h"
+#include <config.h>
 #include <time.h>
 
 Scheduler scheduler;
@@ -48,7 +49,7 @@ void Scheduler::loop() {
   // Check if NTP has synced
   if (!timeSynced) {
     time_t now = time(nullptr);
-    if (now > 1700000000) { // After ~Nov 2023
+    if (now > MIN_VALID_EPOCH) {
       timeSynced = true;
       Serial.println("NTP time synced");
 

@@ -383,6 +383,8 @@ KHResult measureKH() {
 
   if (errorflag == 0) {
     startPH = pH;
+    configStore.setLastStartPH(startPH);
+    broadcastState();
     mqttManager.loop();
 
     // Check probe health and calibration age
@@ -395,7 +397,7 @@ KHResult measureKH() {
     }
     uint32_t calTs = configStore.getCalTimestamp();
     time_t now = time(nullptr);
-    if (calTs > 0 && now > 1000000000) {
+    if (calTs > 0 && now > MIN_VALID_EPOCH) {
       int calAgeDays = (int)((now - calTs) / 86400);
       if (calAgeDays > CALIBRATION_AGE_WARNING_DAYS) {
         char aBuf[64];
@@ -655,6 +657,10 @@ KHResult measureKH() {
           result.elapsedSec = (millis() - measStartMs) / 1000;
           result.confidence = computeConfidence(granR2, usedGran, nPoints,
                                                  result.stabTimeouts, getProbeHealth());
+
+          // Update UI immediately (before post-wash)
+          configStore.setLastKH(khValue);
+          broadcastState();
         }
       }
     } else {
