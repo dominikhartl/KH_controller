@@ -107,6 +107,7 @@ h2{font-size:.8em;font-weight:600;color:var(--text-secondary);text-transform:upp
 .gran-subtab.active{background:var(--card);color:var(--text-primary);box-shadow:0 1px 4px rgba(0,0,0,.3)}
 
 /* === Buttons === */
+.btn-row-primary{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px}
 .btn-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
 .cmd-btn{
   background:var(--card-elevated);border:none;
@@ -123,6 +124,7 @@ h2{font-size:.8em;font-weight:600;color:var(--text-secondary);text-transform:upp
 .cmd-btn.cal:active{background:rgba(48,209,88,.25)}
 .cmd-btn.warn{background:var(--red-dim);color:var(--red)}
 .cmd-btn.warn:active{background:rgba(255,69,58,.25)}
+.btn-full{grid-column:1/-1}
 
 /* === Config === */
 .config-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
