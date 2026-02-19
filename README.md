@@ -18,7 +18,7 @@ The device takes a water sample from the aquarium and titrates it with dilute hy
 ### Why Is It Accurate?
 
 - **Gran analysis**: Finds equivalence point via linear regression — more robust than simple pH threshold crossing
-- **Low acid concentration** (0.02 mol/L HCl): Errors from air bubbles or small dosing variations have minimal impact
+- **Low acid concentration** (0.024 mol/L HCl): Errors from air bubbles or small dosing variations have minimal impact
 - **Pressure titration**: Peristaltic pumps can dispense sub-drop volumes for fine control
 - **Adaptive measurement**: More readings and longer mixing time near the endpoint
 - **Cross-validation**: Compares Gran and fixed-pH results to detect unreliable measurements

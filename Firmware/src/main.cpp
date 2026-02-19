@@ -526,8 +526,8 @@ KHResult measureKH() {
       mqttManager.loop();
 
       int stepVol;
-      if (pH > 4.5f) {
-        // Medium zone (pH > 4.5): large steps, rough tracking only
+      if (pH > GRAN_REGION_PH) {
+        // Medium zone (pH above Gran region): large steps, rough tracking only
         // No stabilization needed — we just need to detect when to enter Gran zone
         stepVol = TITRATION_STEP_SIZE * MEDIUM_STEP_MULTIPLIER;  // 48 units
         if (!titrate(stepVol, TITRATION_RPM)) {
@@ -538,7 +538,7 @@ KHResult measureKH() {
         delay(TITRATION_MIX_DELAY_MEDIUM_MS);
         measurePHStabilized(8);
       } else {
-        // Gran zone (pH < 4.5): smaller steps, one stabilization, accurate readings
+        // Gran zone (pH below GRAN_REGION_PH): smaller steps, stabilization, accurate readings
         stepVol = TITRATION_STEP_SIZE * GRAN_STEP_MULTIPLIER;  // 4 units (more points = more robust regression)
         if (!titrate(stepVol, TITRATION_RPM)) {
           errorMessage = "Error: titration pump timeout in Gran zone";
