@@ -221,6 +221,20 @@ void publishAllDiscovery() {
     snprintf(confTopic, sizeof(confTopic), "%s/confidence", DEVICE_NAME);
     publishSensorDiscovery("khv3_confidence", "Measurement Confidence", confTopic, nullptr, nullptr, nullptr, "diagnostic");
   }
+  { char slopeTopic[50];
+    snprintf(slopeTopic, sizeof(slopeTopic), "%s/kh_slope", DEVICE_NAME);
+    publishSensorDiscovery("khv3_kh_slope", "KH Trend", slopeTopic, "dKH/day", nullptr, nullptr, nullptr);
+  }
+  // Quality metrics
+  { char t[50]; snprintf(t, sizeof(t), "%s/gran_r2", DEVICE_NAME);
+    publishSensorDiscovery("khv3_gran_r2", "Gran R\u00b2", t, nullptr, nullptr, nullptr, "diagnostic"); }
+  { char t[50]; snprintf(t, sizeof(t), "%s/cross_val_diff", DEVICE_NAME);
+    publishSensorDiscovery("khv3_cross_val", "Cross Validation Diff", t, "dKH", nullptr, nullptr, "diagnostic"); }
+  { char t[50]; snprintf(t, sizeof(t), "%s/data_points", DEVICE_NAME);
+    publishSensorDiscovery("khv3_data_pts", "Data Points", t, nullptr, nullptr, nullptr, "diagnostic"); }
+  { char t[50]; snprintf(t, sizeof(t), "%s/meas_time", DEVICE_NAME);
+    publishSensorDiscovery("khv3_meas_time", "Measurement Time", t, "s", "duration", nullptr, "diagnostic"); }
+
   publishSensorDiscovery("khv3_mes_ph", "Measured pH", mesPhTopic, "pH", nullptr, nullptr, nullptr);
   publishSensorDiscovery("khv3_rssi", "WiFi Signal", topicDiagnostics, "dBm", "signal_strength",
                           "{{ value_json.rssi }}", "diagnostic");

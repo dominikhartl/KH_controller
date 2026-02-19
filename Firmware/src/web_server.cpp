@@ -16,6 +16,8 @@
 
 extern char MQmespH[];
 
+float lastConfidence = NAN;
+
 AsyncWebServer server(80);
 AsyncWebSocket ws("/ws");
 
@@ -410,6 +412,11 @@ void broadcastState() {
   doc["ntpOk"] = scheduler.isTimeSynced();
   doc["nextMeas"] = scheduler.getNextMeasurementTime();
 
+  // KH trend slope (dKH/day) and measurement confidence
+  float khSlope = computeKHSlope();
+  if (!isnan(khSlope)) doc["khSlope"] = serialized(String(khSlope, 3));
+  if (!isnan(lastConfidence)) doc["confidence"] = lastConfidence;
+
   // Probe health
   JsonObject probe = doc.createNestedObject("probe");
   probe["acidEff"] = getAcidEfficiency();
@@ -567,7 +574,7 @@ void broadcastGranData(float r2, float eqML, bool usedGran,
   if (written > 0) ws.textAll(buf);
 }
 
-void appendHistory(const char* sensor, float value) {
+void appendHistory(const char* sensor, float value, uint32_t ts) {
   char filename[32];
   snprintf(filename, sizeof(filename), "/history/%s.csv", sensor);
 
@@ -578,7 +585,7 @@ void appendHistory(const char* sensor, float value) {
 
   // Remove entries older than 7 days
   if (LittleFS.exists(filename)) {
-    uint32_t cutoff = (uint32_t)time(nullptr) - (7 * 86400);
+    uint32_t cutoff = ts - (7 * 86400);
     File f = LittleFS.open(filename, "r");
     if (f) {
       String kept;
@@ -589,8 +596,8 @@ void appendHistory(const char* sensor, float value) {
         if (line.length() == 0) continue;
         int comma = line.indexOf(',');
         if (comma < 0) continue;
-        uint32_t ts = line.substring(0, comma).toInt();
-        if (ts >= cutoff) {
+        uint32_t lineTs = line.substring(0, comma).toInt();
+        if (lineTs >= cutoff) {
           kept += line + "\n";
         }
       }
@@ -603,17 +610,16 @@ void appendHistory(const char* sensor, float value) {
     }
   }
 
-  time_t now = time(nullptr);
-  if (now < MIN_VALID_EPOCH) return;  // NTP not yet synced — skip bogus timestamp
+  if (ts < MIN_VALID_EPOCH) return;  // NTP not yet synced — skip bogus timestamp
 
   File f = LittleFS.open(filename, "a");
   if (f) {
-    f.printf("%u,%.2f\n", (uint32_t)now, value);
+    f.printf("%u,%.2f\n", ts, value);
     f.close();
   }
 }
 
-void appendGranHistory(float r2, float eqML, float endpointPH, bool usedGran) {
+void appendGranHistory(float r2, float eqML, float endpointPH, bool usedGran, float confidence, uint32_t ts) {
   const char* filename = "/history/gran.csv";
 
   if (!LittleFS.exists("/history")) {
@@ -622,7 +628,7 @@ void appendGranHistory(float r2, float eqML, float endpointPH, bool usedGran) {
 
   // Remove entries older than 7 days
   if (LittleFS.exists(filename)) {
-    uint32_t cutoff = (uint32_t)time(nullptr) - (7 * 86400);
+    uint32_t cutoff = ts - (7 * 86400);
     File f = LittleFS.open(filename, "r");
     if (f) {
       String kept;
@@ -633,8 +639,8 @@ void appendGranHistory(float r2, float eqML, float endpointPH, bool usedGran) {
         if (line.length() == 0) continue;
         int comma = line.indexOf(',');
         if (comma < 0) continue;
-        uint32_t ts = line.substring(0, comma).toInt();
-        if (ts >= cutoff) kept += line + "\n";
+        uint32_t lineTs = line.substring(0, comma).toInt();
+        if (lineTs >= cutoff) kept += line + "\n";
       }
       f.close();
       File fw = LittleFS.open(filename, "w");
@@ -642,12 +648,11 @@ void appendGranHistory(float r2, float eqML, float endpointPH, bool usedGran) {
     }
   }
 
-  time_t now = time(nullptr);
-  if (now < MIN_VALID_EPOCH) return;  // NTP not synced
+  if (ts < MIN_VALID_EPOCH) return;  // NTP not synced
 
   File f = LittleFS.open(filename, "a");
   if (f) {
-    f.printf("%u,%.4f,%.3f,%.2f,%d\n", (uint32_t)now, r2, eqML, endpointPH, usedGran ? 1 : 0);
+    f.printf("%u,%.4f,%.3f,%.2f,%d,%.2f\n", ts, r2, eqML, endpointPH, usedGran ? 1 : 0, confidence);
     f.close();
   }
 }
@@ -687,6 +692,57 @@ int getRecentKHValues(float* outValues, int maxCount) {
   return count;
 }
 
+// Compute KH trend slope (dKH/day) from last 72 hours of history using linear regression.
+// Returns NAN if insufficient data (< 3 points).
+float computeKHSlope() {
+  const char* filename = "/history/kh.csv";
+  if (!LittleFS.exists(filename)) return NAN;
+
+  uint32_t now = (uint32_t)time(nullptr);
+  if (now < MIN_VALID_EPOCH) return NAN;
+  uint32_t cutoff = now - (72 * 3600);  // 72 hours
+
+  // Read recent KH values with timestamps
+  static const int MAX_PTS = 200;
+  uint32_t ts[MAX_PTS];
+  float kh[MAX_PTS];
+  int n = 0;
+
+  File f = LittleFS.open(filename, "r");
+  if (!f) return NAN;
+  while (f.available() && n < MAX_PTS) {
+    String line = f.readStringUntil('\n');
+    if (line.length() == 0) continue;
+    int comma = line.indexOf(',');
+    if (comma < 0) continue;
+    uint32_t t = line.substring(0, comma).toInt();
+    float v = line.substring(comma + 1).toFloat();
+    if (t >= cutoff && v > 0) {
+      ts[n] = t;
+      kh[n] = v;
+      n++;
+    }
+  }
+  f.close();
+
+  if (n < 3) return NAN;
+
+  // Linear regression: kh = slope * t + intercept
+  // Normalize timestamps to hours from first point to avoid overflow
+  double sx = 0, sy = 0, sxx = 0, sxy = 0;
+  double t0 = (double)ts[0];
+  for (int i = 0; i < n; i++) {
+    double x = ((double)ts[i] - t0) / 3600.0;  // hours
+    double y = (double)kh[i];
+    sx += x; sy += y; sxx += x * x; sxy += x * y;
+  }
+  double denom = (double)n * sxx - sx * sx;
+  if (fabs(denom) < 1e-12) return NAN;
+
+  double slopePerHour = ((double)n * sxy - sx * sy) / denom;
+  return (float)(slopePerHour * 24.0);  // Convert to dKH/day
+}
+
 void setupWebServer() {
   LittleFS.begin(true); // Format if mount fails
 
@@ -700,7 +756,7 @@ void setupWebServer() {
   // CSV export: merge kh, ph, gran history into one download
   server.on("/api/export.csv", HTTP_GET, [](AsyncWebServerRequest* request) {
     // Collect entries keyed by timestamp
-    struct Row { float kh; float ph; float r2; float eqML; float epPH; int method; bool hasGran; };
+    struct Row { float kh; float ph; float r2; float eqML; float epPH; int method; float confidence; bool hasGran; };
     static const int MAX_ROWS = 200;
     static uint32_t timestamps[200];
     static Row rows[200];
@@ -710,7 +766,7 @@ void setupWebServer() {
       for (int i = 0; i < nRows; i++) { if (timestamps[i] == ts) return i; }
       if (nRows >= MAX_ROWS) return -1;
       timestamps[nRows] = ts;
-      rows[nRows] = {NAN, NAN, NAN, NAN, NAN, -1, false};
+      rows[nRows] = {NAN, NAN, NAN, NAN, NAN, -1, NAN, false};
       return nRows++;
     };
 
@@ -756,7 +812,14 @@ void setupWebServer() {
           rows[idx].r2 = line.substring(c1 + 1, c2).toFloat();
           rows[idx].eqML = line.substring(c2 + 1, c3).toFloat();
           rows[idx].epPH = line.substring(c3 + 1, c4).toFloat();
-          rows[idx].method = line.substring(c4 + 1).toInt();
+          // Parse method and optional confidence (6th field)
+          int c5 = line.indexOf(',', c4 + 1);
+          if (c5 > 0) {
+            rows[idx].method = line.substring(c4 + 1, c5).toInt();
+            rows[idx].confidence = line.substring(c5 + 1).toFloat();
+          } else {
+            rows[idx].method = line.substring(c4 + 1).toInt();
+          }
           rows[idx].hasGran = true;
         }
       }
@@ -774,7 +837,7 @@ void setupWebServer() {
     // Stream response
     String csv;
     csv.reserve(nRows * 80 + 80);
-    csv += "timestamp,datetime,kh,ph,r2,eq_ml,endpoint_ph,method\n";
+    csv += "timestamp,datetime,kh,ph,r2,eq_ml,endpoint_ph,method,confidence\n";
     for (int i = 0; i < nRows; i++) {
       time_t t = (time_t)timestamps[i];
       struct tm tm;
@@ -787,8 +850,9 @@ void setupWebServer() {
       if (rows[i].hasGran) {
         csv += "," + String(rows[i].r2, 4) + "," + String(rows[i].eqML, 3)
              + "," + String(rows[i].epPH, 2) + "," + String(rows[i].method);
+        csv += isnan(rows[i].confidence) ? "," : ("," + String(rows[i].confidence, 2));
       } else {
-        csv += ",,,,";
+        csv += ",,,,,";
       }
       csv += "\n";
     }

@@ -132,6 +132,15 @@
     setGaugeArc('gauge-kh-arc', khVal, 0, 15);
     setText('val-kh', (d.kh > 0) ? d.kh.toFixed(1) : '--');
 
+    // KH slope and confidence
+    if (d.khSlope != null) {
+      var s = parseFloat(d.khSlope);
+      setText('val-kh-slope', isNaN(s) ? '--' : (s >= 0 ? '+' : '') + s.toFixed(2));
+    }
+    if (d.confidence != null) {
+      setText('val-confidence', (d.confidence * 100).toFixed(0) + '%');
+    }
+
     // pH gauge (start pH from last KH measurement)
     var phVal = (d.lastStartPh > 0) ? d.lastStartPh : 0;
     setGaugeArc('gauge-ph-arc', phVal, 6, 9);
@@ -207,6 +216,12 @@
       var h = p.health || '--';
       var cls = (h === 'Good') ? 'good' : (h === 'Fair') ? 'fair' : (h === 'Replace') ? 'replace' : '';
       healthEl.innerHTML = '<span class="health-dot ' + cls + '"></span>' + h;
+    }
+    // Header probe indicator
+    var probeInd = document.getElementById('ind-probe');
+    if (probeInd) {
+      var h = p.health || '';
+      probeInd.className = 'si' + ((h === 'Good') ? ' on' : (h === 'Fair') ? ' warn' : (h === 'Replace') ? ' err' : '');
     }
 
     // Acid slope Nernst efficiency
@@ -343,6 +358,29 @@
     if (!chart) return;
     chart.data.labels = d.data.map(function(p) { return fmtDate(p[0]); });
     chart.data.datasets[0].data = d.data.map(function(p) { return p[1]; });
+
+    // Compute and display regression trend line for KH chart
+    if (d.sensor === 'kh' && d.data.length >= 3) {
+      var n = d.data.length;
+      var t0 = d.data[0][0];
+      var sx = 0, sy = 0, sxx = 0, sxy = 0;
+      for (var i = 0; i < n; i++) {
+        var x = (d.data[i][0] - t0) / 3600;  // hours from first point
+        var y = d.data[i][1];
+        sx += x; sy += y; sxx += x * x; sxy += x * y;
+      }
+      var denom = n * sxx - sx * sx;
+      if (Math.abs(denom) > 1e-12) {
+        var slope = (n * sxy - sx * sy) / denom;
+        var intercept = (sy - slope * sx) / n;
+        chart.data.datasets[1].data = d.data.map(function(p) {
+          var x = (p[0] - t0) / 3600;
+          return slope * x + intercept;
+        });
+      } else {
+        chart.data.datasets[1].data = [];
+      }
+    }
     chart.update();
   }
 
@@ -386,7 +424,10 @@
   function initCharts() {
     khChart = new Chart(document.getElementById('chart-kh'), {
       type: 'line',
-      data: { labels: [], datasets: [{ data: [], borderColor: '#0a84ff', borderWidth: 2, pointRadius: 3, tension: 0.1 }] },
+      data: { labels: [], datasets: [
+        { label: 'KH', data: [], borderColor: '#0a84ff', borderWidth: 2, pointRadius: 3, tension: 0.1 },
+        { label: 'Trend', data: [], borderColor: 'rgba(255,159,10,0.6)', borderWidth: 2, borderDash: [6,3], pointRadius: 0, tension: 0 }
+      ] },
       options: chartOpts
     });
     phChart = new Chart(document.getElementById('chart-ph'), {
@@ -462,12 +503,17 @@
           var chartEl = document.getElementById('chart-' + sel);
           if (chartEl) chartEl.style.display = 'block';
         }
+        // KH trend info
+        var khTrend = document.getElementById('kh-trend');
+        if (khTrend) khTrend.style.display = (sel === 'kh') ? '' : 'none';
         // Gran sub-tabs visibility
         var granSub = document.getElementById('gran-subtabs');
         if (granSub) granSub.style.display = (sel === 'gran') ? 'flex' : 'none';
         // Gran info only in scatter view
         var granInfo = document.getElementById('gran-info');
         if (granInfo) granInfo.style.display = (sel === 'gran' && granView === 'last' && granInfo.textContent) ? '' : 'none';
+        var granQual = document.getElementById('gran-quality');
+        if (granQual) granQual.style.display = (sel === 'gran' && granView === 'last') ? '' : 'none';
         // Resize active chart
         if (sel === 'live' && liveChart) liveChart.resize();
         else if (sel === 'kh' && khChart) khChart.resize();
@@ -491,6 +537,8 @@
     showGranView();
     var granInfo = document.getElementById('gran-info');
     if (granInfo) granInfo.style.display = (view === 'last' && granInfo.textContent) ? '' : 'none';
+    var granQual = document.getElementById('gran-quality');
+    if (granQual) granQual.style.display = (view === 'last') ? '' : 'none';
   }
 
   function showGranView() {
@@ -707,8 +755,8 @@
   }
 
   function setDot(name, on) {
-    var el = document.getElementById('dot-' + name);
-    if (el) { el.className = 'dot ' + (on ? 'on' : 'off'); }
+    var el = document.getElementById('ind-' + name);
+    if (el) { el.className = 'si' + (on ? ' on' : ''); }
   }
 
   function fmtUptime(sec) {

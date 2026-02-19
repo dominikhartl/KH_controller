@@ -9,11 +9,22 @@
 <body>
   <header>
     <h1>KH Controller V3</h1>
-    <div class="status-dots">
-      <span id="dot-wifi" class="dot off" title="WiFi"></span>
-      <span id="dot-mqtt" class="dot off" title="MQTT"></span>
-      <span id="dot-ntp" class="dot off" title="NTP"></span>
-      <span id="dot-ws" class="dot off" title="WebSocket"></span>
+    <div class="status-icons">
+      <span id="ind-wifi" class="si" title="WiFi">
+        <svg viewBox="0 0 20 16" width="14" height="11"><path d="M10 14a1.5 1.5 0 100-3 1.5 1.5 0 000 3z" fill="currentColor"/><path d="M6 9.5a5.5 5.5 0 018 0" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M2.5 6a10.5 10.5 0 0115 0" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      </span>
+      <span id="ind-mqtt" class="si" title="MQTT">
+        <svg viewBox="0 0 16 15" width="13" height="12"><path d="M1 1h14v9H8l-3 3v-3H1z" fill="currentColor"/></svg>
+      </span>
+      <span id="ind-ntp" class="si" title="NTP">
+        <svg viewBox="0 0 16 16" width="13" height="13"><circle cx="8" cy="8" r="6.5" fill="none" stroke="currentColor" stroke-width="2"/><path d="M8 4.5V8l2.5 1.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+      </span>
+      <span id="ind-ws" class="si" title="WebSocket">
+        <svg viewBox="0 0 12 16" width="10" height="13"><path d="M7 1L3 9h3l-1 6 5-8H7z" fill="currentColor"/></svg>
+      </span>
+      <span id="ind-probe" class="si" title="Probe Health">
+        <svg viewBox="0 0 12 24" width="8" height="16"><rect x="3" y="0" width="6" height="14" rx="3" fill="currentColor"/><rect x="5" y="14" width="2" height="10" fill="currentColor"/></svg>
+      </span>
     </div>
   </header>
 
@@ -77,7 +88,11 @@
       <canvas id="chart-gran" style="display:none"></canvas>
       <canvas id="chart-gran-hist" style="display:none"></canvas>
     </div>
+    <div id="kh-trend" class="chart-sub">Trend: <strong id="val-kh-slope">--</strong> dKH/day</div>
     <div id="gran-info" class="gran-info" style="display:none"></div>
+    <div id="gran-quality" class="gran-quality" style="display:none">
+      <span>Confidence: <strong id="val-confidence">--</strong></span>
+    </div>
   </section>
 
   <section class="progress-section" id="progress-section" style="display:none">

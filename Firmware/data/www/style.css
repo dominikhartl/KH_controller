@@ -34,10 +34,11 @@ header{
   padding:16px 0 12px;
 }
 header h1{font-size:1.3em;font-weight:700;letter-spacing:-.02em}
-.status-dots{display:flex;gap:8px;align-items:center}
-.dot{width:10px;height:10px;border-radius:50%;background:var(--separator);display:block;transition:all .4s ease}
-.dot.on{background:var(--green);box-shadow:0 0 8px rgba(48,209,88,.5)}
-.dot.off{background:var(--text-tertiary)}
+.status-icons{display:flex;gap:8px;align-items:center}
+.si{color:var(--text-tertiary);display:flex;align-items:center;transition:color .4s ease}
+.si.on{color:var(--green)}
+.si.warn{color:var(--orange)}
+.si.err{color:var(--red)}
 
 /* === Section headings === */
 h2{font-size:.8em;font-weight:600;color:var(--text-secondary);text-transform:uppercase;letter-spacing:.05em;margin:0;padding:0}
@@ -76,7 +77,6 @@ h2{font-size:.8em;font-weight:600;color:var(--text-secondary);text-transform:upp
 .gauge-svg path:first-child{stroke:var(--separator)}
 .gauge-value{font-size:1.7em;font-weight:700;margin-top:4px;font-variant-numeric:tabular-nums;letter-spacing:-.02em}
 .gauge-label{font-size:.7em;font-weight:500;color:var(--text-secondary);margin-top:4px;text-transform:uppercase;letter-spacing:.04em}
-
 .hcl-tank{
   position:relative;width:56px;height:56px;
   border:2px solid var(--separator);border-radius:var(--radius-sm);
@@ -97,7 +97,11 @@ h2{font-size:.8em;font-weight:600;color:var(--text-secondary);text-transform:upp
 .tab.active{background:var(--card);color:var(--text-primary);box-shadow:0 1px 4px rgba(0,0,0,.3)}
 .chart-container{position:relative;height:200px}
 .chart-container canvas{position:absolute;top:0;left:0;width:100%!important;height:100%!important}
+.chart-sub{font-size:.75em;color:var(--text-secondary);text-align:center;padding:6px 0 0;font-variant-numeric:tabular-nums}
+.chart-sub strong{color:var(--text-primary);font-weight:600}
 .gran-info{font-size:.8em;color:var(--text-secondary);text-align:center;padding:8px 0 0;font-variant-numeric:tabular-nums}
+.gran-quality{font-size:.75em;color:var(--text-secondary);text-align:center;padding:4px 0 0;display:flex;justify-content:center;gap:16px;font-variant-numeric:tabular-nums}
+.gran-quality strong{color:var(--text-primary);font-weight:600}
 .gran-subtabs{display:flex;gap:4px;padding:3px;background:var(--card-elevated);border-radius:var(--radius-sm);margin-bottom:8px}
 .gran-subtab{flex:1;background:transparent;border:none;color:var(--text-secondary);padding:5px 10px;border-radius:5px;cursor:pointer;font-size:.75em;font-weight:500;transition:all .2s ease;-webkit-tap-highlight-color:transparent}
 .gran-subtab.active{background:var(--card);color:var(--text-primary);box-shadow:0 1px 4px rgba(0,0,0,.3)}

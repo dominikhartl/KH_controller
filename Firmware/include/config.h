@@ -29,8 +29,9 @@ static const float PH_FAST_OUTLIER_THRESHOLD = 0.3f;  // Fast mode: ±0.3 pH fro
 static const float VOLTAGE_OUTLIER_THRESHOLD = 30.0f; // ±30 mV from median (~0.2 pH equivalent)
 
 // KH measurement outlier validation
-static const float KH_OUTLIER_THRESHOLD_DKH = 1.0f;  // Re-measure if deviation from median exceeds this
-static const int KH_OUTLIER_HISTORY_COUNT = 5;        // Number of recent measurements for median
+static const float KH_OUTLIER_THRESHOLD_DKH = 0.5f;   // Re-measure if deviation from median exceeds this
+static const int KH_OUTLIER_HISTORY_COUNT = 5;         // Number of recent measurements for median
+static const float CROSS_VALIDATION_THRESHOLD_DKH = 0.3f; // Re-measure if Gran vs Endpoint disagree by more
 
 // Motor configuration
 static const int STEPS_PER_REVOLUTION = 1600;
@@ -71,6 +72,9 @@ static const float FAST_TITRATION_PH_DEFAULT = 5.0f; // pH threshold: fast→pre
 // Medium zone points aren't used by Gran analysis, so large steps are fine
 static const int MEDIUM_STEP_MULTIPLIER = 24;  // 2 * 24 = 48 units per step
 
+// Gran zone step multiplier — smaller = more data points for regression robustness
+static const int GRAN_STEP_MULTIPLIER = 2;     // 2 * 2 = 4 units per step
+
 // Adaptive fast-phase batch sizing — reduces batch as pH approaches threshold
 static const int FAST_BATCH_MAX = 200;
 static const int FAST_BATCH_MIN = 20;
@@ -100,8 +104,8 @@ static const float CARRYOVER_RETRY_PH = 7.0f;      // Below this: hard error; ab
 static const float POST_WASH_PH_THRESHOLD = 6.0f;  // Warn if post-wash pH is below this
 
 // Gran transformation endpoint detection
-static const float GRAN_REGION_PH       = 4.5f;  // Points below this used for Gran regression
-static const float GRAN_STOP_PH         = 3.5f;   // Stop titrating at this pH (Dickson protocol)
+static const float GRAN_REGION_PH       = 4.8f;  // Points below this used for Gran regression
+static const float GRAN_STOP_PH         = 3.8f;   // Stop titrating at this pH (Dickson protocol)
 static const int   MIN_GRAN_POINTS      = 8;       // Minimum points for reliable regression
 static const int   MAX_TITRATION_POINTS = 200;      // Data point buffer size
 static const float GRAN_MIN_R2          = 0.99f;   // Minimum R² for Gran fit acceptance

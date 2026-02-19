@@ -36,6 +36,11 @@ char MQstartpH[50];
 char MQmespH[50];
 char MQkhValue[50];
 char MQconfidence[50];
+char MQkhSlope[50];
+char MQgranR2[50];
+char MQcrossVal[50];
+char MQdataPoints[50];
+char MQmeasTime[50];
 
 // --- Deferred command execution ---
 // Long-running commands (measureKH, calibrate) must run on loopTask, not AsyncTCP.
@@ -59,6 +64,7 @@ struct KHResult {
   int dataPointCount;
   int stabTimeouts;
   unsigned long elapsedSec;
+  float crossValDiff;  // |KH_gran - KH_endpoint|, NAN if unavailable
 };
 
 KHResult measureKH();
@@ -72,9 +78,33 @@ static void publishKHResult(const KHResult& r) {
     mqttManager.publish(MQconfidence, mqBuf, true); }
   configStore.setLastKH(r.khValue);
   configStore.setLastStartPH(r.startPH);
-  appendHistory("kh", r.khValue);
-  appendHistory("ph", r.startPH);
-  appendGranHistory(r.granR2, r.hclUsed, r.endpointPH, r.usedGran);
+  lastConfidence = r.confidence;
+  uint32_t ts = (uint32_t)time(nullptr);
+  appendHistory("kh", r.khValue, ts);
+  appendHistory("ph", r.startPH, ts);
+  appendGranHistory(r.granR2, r.hclUsed, r.endpointPH, r.usedGran, r.confidence, ts);
+
+  // Quality metrics
+  { char mqBuf[16]; snprintf(mqBuf, sizeof(mqBuf), "%.4f", r.granR2);
+    mqttManager.publish(MQgranR2, mqBuf, true); }
+  if (!isnan(r.crossValDiff)) {
+    char mqBuf[16]; snprintf(mqBuf, sizeof(mqBuf), "%.3f", r.crossValDiff);
+    mqttManager.publish(MQcrossVal, mqBuf, true);
+  }
+  { char mqBuf[16]; snprintf(mqBuf, sizeof(mqBuf), "%d", r.dataPointCount);
+    mqttManager.publish(MQdataPoints, mqBuf, true); }
+  { char mqBuf[16]; snprintf(mqBuf, sizeof(mqBuf), "%lu", r.elapsedSec);
+    mqttManager.publish(MQmeasTime, mqBuf, true); }
+
+  // Compute and publish KH trend slope (dKH/day) from 72h history
+  float slope = computeKHSlope();
+  if (!isnan(slope)) {
+    char mqBuf[16]; snprintf(mqBuf, sizeof(mqBuf), "%.3f", slope);
+    mqttManager.publish(MQkhSlope, mqBuf, true);
+  }
+
+  // Update web UI with validated result
+  broadcastState();
 }
 
 // Compute median of a float array (sorts in-place)
@@ -93,7 +123,24 @@ static float computeMedian(float* values, int count) {
   return values[count / 2];
 }
 
-// Measure KH with outlier validation against recent history
+// Check if a measurement is suspect (outlier or failed cross-validation)
+static bool isSuspect(const KHResult& r, float median, bool hasMedian, char* reasonBuf, size_t reasonLen) {
+  if (hasMedian) {
+    float dev = fabsf(r.khValue - median);
+    if (dev > KH_OUTLIER_THRESHOLD_DKH) {
+      snprintf(reasonBuf, reasonLen, "Outlier: %.2f dKH (median %.2f, dev %.2f)",
+               r.khValue, median, dev);
+      return true;
+    }
+  }
+  if (!isnan(r.crossValDiff) && r.crossValDiff > CROSS_VALIDATION_THRESHOLD_DKH) {
+    snprintf(reasonBuf, reasonLen, "Cross-val failed (diff %.2f dKH)", r.crossValDiff);
+    return true;
+  }
+  return false;
+}
+
+// Measure KH with outlier and cross-validation checks against recent history
 void measureKHWithValidation() {
   // Read recent history BEFORE measuring (so current measurement is not included)
   float recent[10];
@@ -102,24 +149,18 @@ void measureKHWithValidation() {
   KHResult r1 = measureKH();
   if (isnan(r1.khValue)) return;  // measurement failed
 
-  // Skip validation if insufficient history
-  if (histCount < KH_OUTLIER_HISTORY_COUNT) {
+  bool hasMedian = (histCount >= KH_OUTLIER_HISTORY_COUNT);
+  float median = hasMedian ? computeMedian(recent, histCount) : 0;
+
+  char reason[96];
+  if (!isSuspect(r1, median, hasMedian, reason, sizeof(reason))) {
     publishKHResult(r1);
     return;
   }
 
-  float median = computeMedian(recent, histCount);
-  float dev1 = fabsf(r1.khValue - median);
-
-  if (dev1 <= KH_OUTLIER_THRESHOLD_DKH) {
-    publishKHResult(r1);
-    return;
-  }
-
-  // Outlier detected — re-measure
-  char buf[96];
-  snprintf(buf, sizeof(buf), "Outlier: %.2f dKH (median %.2f, dev %.2f). Re-measuring...",
-           r1.khValue, median, dev1);
+  // Suspect measurement — re-measure
+  char buf[128];
+  snprintf(buf, sizeof(buf), "%s. Re-measuring...", reason);
   publishMessage(buf);
 
   KHResult r2 = measureKH();
@@ -129,25 +170,27 @@ void measureKHWithValidation() {
     return;
   }
 
-  float dev2 = fabsf(r2.khValue - median);
-
-  if (dev2 <= KH_OUTLIER_THRESHOLD_DKH) {
-    snprintf(buf, sizeof(buf), "Re-measurement %.2f dKH accepted (within range)", r2.khValue);
+  if (!isSuspect(r2, median, hasMedian, reason, sizeof(reason))) {
+    snprintf(buf, sizeof(buf), "Re-measurement %.2f dKH accepted", r2.khValue);
     publishMessage(buf);
     publishKHResult(r2);
     return;
   }
 
-  // Both outliers — pick closest to median
-  if (dev1 <= dev2) {
-    snprintf(buf, sizeof(buf), "Both outliers. Using first (%.2f, closer to median %.2f)", r1.khValue, median);
-    publishMessage(buf);
-    publishKHResult(r1);
+  // Both suspect — pick closest to median if available, else smaller cross-val diff
+  bool pickFirst;
+  if (hasMedian) {
+    pickFirst = fabsf(r1.khValue - median) <= fabsf(r2.khValue - median);
   } else {
-    snprintf(buf, sizeof(buf), "Both outliers. Using second (%.2f, closer to median %.2f)", r2.khValue, median);
-    publishMessage(buf);
-    publishKHResult(r2);
+    float cv1 = isnan(r1.crossValDiff) ? 999.0f : r1.crossValDiff;
+    float cv2 = isnan(r2.crossValDiff) ? 999.0f : r2.crossValDiff;
+    pickFirst = cv1 <= cv2;
   }
+
+  const KHResult& best = pickFirst ? r1 : r2;
+  snprintf(buf, sizeof(buf), "Both suspect. Using %.2f dKH (better of two)", best.khValue);
+  publishMessage(buf);
+  publishKHResult(best);
 }
 
 void processPendingCommand() {
@@ -253,11 +296,18 @@ void calibrateTitrationPump() {
 // --- Measurement confidence score ---
 // Combines multiple quality signals into a 0.0-1.0 score
 static float computeConfidence(float granR2, bool usedGran, int nPoints,
-                                int stabTimeouts, const char* probeHealth) {
+                                int stabTimeouts, const char* probeHealth,
+                                float crossValDiff) {
   float score = 1.0f;
   // Gran R² contribution
   if (usedGran && granR2 > 0) {
     score -= (1.0f - granR2) * 40.0f;  // R²=0.99 → -0.4, R²=0.999 → -0.04
+  }
+  // Cross-validation: Gran vs Endpoint disagreement
+  if (!isnan(crossValDiff)) {
+    if (crossValDiff > 0.3f) score -= 0.3f;
+    else if (crossValDiff > 0.15f) score -= 0.15f;
+    else if (crossValDiff > 0.05f) score -= 0.05f;
   }
   // Data point count
   if (nPoints < 15) score -= 0.1f;
@@ -287,6 +337,7 @@ static int computeFastBatch(float currentPH, float thresholdPH) {
 KHResult measureKH() {
   KHResult result = {};
   result.khValue = NAN;
+  result.crossValDiff = NAN;
 
   // Re-entrancy guard: prevent concurrent measurements
   static bool measuring = false;
@@ -443,9 +494,9 @@ KHResult measureKH() {
         }
         if (pH < GRAN_REGION_PH) granCount++;
 
-        if (pH > lastFastPH - 0.05) {
+        if (pH > lastFastPH - 0.02) {
           stallCount++;
-          if (stallCount >= 10) {
+          if (stallCount >= 20) {
             errorMessage = "Error: insufficient pH change";
             errorflag = 1;
           }
@@ -488,7 +539,7 @@ KHResult measureKH() {
         measurePHStabilized(8);
       } else {
         // Gran zone (pH < 4.5): smaller steps, one stabilization, accurate readings
-        stepVol = TITRATION_STEP_SIZE * 4;  // 8 units
+        stepVol = TITRATION_STEP_SIZE * GRAN_STEP_MULTIPLIER;  // 4 units (more points = more robust regression)
         if (!titrate(stepVol, TITRATION_RPM)) {
           errorMessage = "Error: titration pump timeout in Gran zone";
           errorflag = 1;
@@ -623,18 +674,6 @@ KHResult measureKH() {
             snprintf(volBuf, sizeof(volBuf), "Endpoint: %.2f mL @ pH %.1f (interpolation)", hclUsed, ENDPOINT_PH);
           }
           publishMessage(volBuf);
-          { char mqBuf[16]; snprintf(mqBuf, sizeof(mqBuf), "%.2f", hclUsed);
-            mqttManager.publish(MQKH, mqBuf); }
-          { char mqBuf[16]; snprintf(mqBuf, sizeof(mqBuf), "%.2f", startPH);
-            mqttManager.publish(MQstartpH, mqBuf); }
-
-          char methodBuf[48];
-          if (usedGran) {
-            snprintf(methodBuf, sizeof(methodBuf), "Gran (R²=%.3f)", granR2);
-          } else {
-            snprintf(methodBuf, sizeof(methodBuf), "Interpolation");
-          }
-          mqttManager.publish(MQmsg, methodBuf);
 
           float remainingHCl = configStore.getHClVolume();
           if (remainingHCl <= 0) {
@@ -645,6 +684,21 @@ KHResult measureKH() {
             publishError(warnBuf);
           }
 
+          // Cross-validate: compare Gran KH vs endpoint interpolation KH
+          float crossValDiff = NAN;
+          if (usedGran) {
+            float epUnits = interpolateAtPH(dataPoints, nPoints, ENDPOINT_PH);
+            if (!isnan(epUnits)) {
+              float epHclUsed = (epUnits / calUnits) * titVol;
+              float epKH = (epHclUsed / samVol) * 2800.0f * hclMol * corrF;
+              crossValDiff = fabsf(khValue - epKH);
+              char cvBuf[80];
+              snprintf(cvBuf, sizeof(cvBuf), "Cross-val: Gran=%.2f Endpoint=%.2f diff=%.2f dKH",
+                       khValue, epKH, crossValDiff);
+              publishMessage(cvBuf);
+            }
+          }
+
           // Populate result struct — publishing deferred to measureKHWithValidation()
           result.khValue = khValue;
           result.startPH = startPH;
@@ -652,15 +706,15 @@ KHResult measureKH() {
           result.granR2 = granR2;
           result.endpointPH = endpointPHVal;
           result.usedGran = usedGran;
+          result.crossValDiff = crossValDiff;
           result.dataPointCount = nPoints;
           result.stabTimeouts = getStabilizationTimeoutCount();
           result.elapsedSec = (millis() - measStartMs) / 1000;
           result.confidence = computeConfidence(granR2, usedGran, nPoints,
-                                                 result.stabTimeouts, getProbeHealth());
+                                                 result.stabTimeouts, getProbeHealth(),
+                                                 crossValDiff);
 
-          // Update UI immediately (before post-wash)
-          configStore.setLastKH(khValue);
-          broadcastState();
+          // KH value deferred to publishKHResult() after validation
         }
       }
     } else {
@@ -786,6 +840,11 @@ void setup() {
   snprintf(MQmespH, sizeof(MQmespH), "%s/mes_pH", DEVICE_NAME);
   snprintf(MQkhValue, sizeof(MQkhValue), "%s/kh_value", DEVICE_NAME);
   snprintf(MQconfidence, sizeof(MQconfidence), "%s/confidence", DEVICE_NAME);
+  snprintf(MQkhSlope, sizeof(MQkhSlope), "%s/kh_slope", DEVICE_NAME);
+  snprintf(MQgranR2, sizeof(MQgranR2), "%s/gran_r2", DEVICE_NAME);
+  snprintf(MQcrossVal, sizeof(MQcrossVal), "%s/cross_val_diff", DEVICE_NAME);
+  snprintf(MQdataPoints, sizeof(MQdataPoints), "%s/data_points", DEVICE_NAME);
+  snprintf(MQmeasTime, sizeof(MQmeasTime), "%s/meas_time", DEVICE_NAME);
 
   // Non-blocking WiFi
   wifiManager.begin(WIFI_SSID, WIFI_PASSWORD);
