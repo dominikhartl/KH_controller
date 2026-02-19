@@ -100,7 +100,6 @@
 
   function clearLiveChart() {
     if (liveChart) {
-      liveChart.data.labels = [];
       liveChart.data.datasets[0].data = [];
       liveChart.update();
     }
@@ -116,12 +115,10 @@
   function loadMesData(d) {
     if (!liveChart || !d.data || d.data.length === 0) return;
     if (d.chunk === 0) {
-      liveChart.data.labels = [];
       liveChart.data.datasets[0].data = [];
     }
     for (var i = 0; i < d.data.length; i++) {
-      liveChart.data.labels.push(d.data[i][0].toFixed(2));
-      liveChart.data.datasets[0].data.push(d.data[i][1]);
+      liveChart.data.datasets[0].data.push({x: d.data[i][0], y: d.data[i][1]});
     }
     if (d.chunk === d.total - 1) liveChart.update();
   }
@@ -180,6 +177,8 @@
       setInput('cfg-cal_drops', d.config.cal_drops);
       setInput('cfg-fast_ph', d.config.fast_ph);
       setInput('cfg-endpoint_method', d.config.endpoint_method);
+      setInput('cfg-min_start_ph', d.config.min_start_ph);
+      setInput('cfg-stab_timeout', d.config.stab_timeout);
     }
 
     // Schedule
@@ -244,10 +243,6 @@
       var aCls = (p.asymmetry < 15) ? 'good' : (p.asymmetry < 25) ? 'fair' : 'replace';
       asymEl.innerHTML = '<span class="health-dot ' + (isNaN(p.asymmetry) ? '' : aCls) + '"></span>' + aVal + ' <small>%</small>';
     }
-    var respEl = document.getElementById('probe-response');
-    if (respEl && p.response != null) {
-      respEl.innerHTML = p.response + ' <small>ms</small>';
-    }
     var calEl = document.getElementById('probe-cal-age');
     if (calEl && p.calAge != null) {
       if (p.calAge < 0) {
@@ -291,11 +286,10 @@
   function updateLivePH(d) {
     var mesPhVal = (d.ph > 0) ? d.ph : 0;
     setGaugeArc('gauge-mesph-arc', mesPhVal, 6, 9);
-    setText('val-mesph', mesPhVal > 0 ? d.ph.toFixed(2) : '--');
+    setText('val-mesph', mesPhVal > 0 ? mesPhVal.toFixed(2) : '--');
 
     if (liveChart) {
-      liveChart.data.labels.push(d.ml.toFixed(2));
-      liveChart.data.datasets[0].data.push(d.ph);
+      liveChart.data.datasets[0].data.push({x: d.ml, y: d.ph});
       liveChart.update('none');
     }
   }
@@ -436,14 +430,16 @@
       options: chartOpts
     });
     liveChart = new Chart(document.getElementById('chart-live'), {
-      type: 'line',
-      data: { labels: [], datasets: [{ data: [], borderColor: '#ff9f0a', borderWidth: 2, pointRadius: 0, tension: 0 }] },
-      options: Object.assign({}, chartOpts, {
+      type: 'scatter',
+      data: { datasets: [{ data: [], showLine: true, borderColor: '#ff9f0a', borderWidth: 2, pointRadius: 0, tension: 0 }] },
+      options: {
+        responsive: true, maintainAspectRatio: false, animation: false,
+        plugins: { legend: { display: false } },
         scales: {
-          x: { title: { display: true, text: 'Volume (mL)', color: '#8e8e93' }, ticks: { color: '#8e8e93', font: { size: 10 } }, grid: { color: '#38383a' } },
+          x: { type: 'linear', title: { display: true, text: 'Volume (mL)', color: '#8e8e93' }, ticks: { color: '#8e8e93', font: { size: 10 } }, grid: { color: '#38383a' } },
           y: { title: { display: true, text: 'pH', color: '#8e8e93' }, ticks: { color: '#8e8e93', font: { size: 10 } }, grid: { color: '#38383a' } }
         }
-      })
+      }
     });
     granChart = new Chart(document.getElementById('chart-gran'), {
       type: 'scatter',

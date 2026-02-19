@@ -134,6 +134,12 @@ h2{font-size:.8em;font-weight:600;color:var(--text-secondary);text-transform:upp
   font-variant-numeric:tabular-nums;
 }
 .config-grid input:focus,.config-grid select:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-dim)}
+.config-advanced{margin-top:12px}
+.config-advanced summary{font-size:.75em;font-weight:600;color:var(--text-secondary);text-transform:uppercase;letter-spacing:.04em;cursor:pointer;padding:8px 0;list-style:none;-webkit-tap-highlight-color:transparent}
+.config-advanced summary::-webkit-details-marker{display:none}
+.config-advanced summary::before{content:'▸ ';transition:transform .2s}
+.config-advanced[open] summary::before{content:'▾ '}
+.config-advanced .config-grid{margin-top:8px}
 
 /* === Schedule === */
 .sched-grid{display:flex;flex-wrap:wrap;gap:8px}

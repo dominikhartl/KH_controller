@@ -63,7 +63,10 @@ All parameters can be configured via the web interface or Home Assistant. They a
 | HCl molarity | 0.02 mol/L | Concentration of titration acid |
 | HCl volume | 5000 mL | Remaining acid supply |
 | Calibration drops | 6000 | Drops counted during pump calibration |
-| Fast titration pH | 5.8 | pH threshold for switching to precise mode |
+| Fast titration pH | 5.0 | pH threshold for switching to precise mode |
+| Endpoint method | Gran (0) | `0` = Gran analysis, `1` = fixed pH endpoint |
+| Min start pH | 7.5 | Reject measurement if sample pH is below this |
+| Stabilization timeout | 2000 ms | Max wait time for pH reading to stabilize |
 
 ## Web Interface
 
@@ -71,15 +74,22 @@ Access the dashboard at `http://khcontrollerv3.local` (or the device's IP addres
 
 The web interface provides:
 
-- **KH and pH gauges** with last measurement values
+- **KH, pH, and measured pH gauges** with last measurement values
 - **HCl tank level** indicator showing remaining acid
-- **Live titration chart** showing pH vs. drops during measurement
-- **Historical charts** for KH and pH (7-day rolling window)
+- **Live titration chart** showing pH vs. volume (mL) with linear x-axis during measurement
+- **Gran analysis chart** with scatter plot, regression line, and R² display
+- **Gran history chart** tracking R² and endpoint pH across measurements
+- **Historical charts** for KH and pH (7-day rolling window) with trend line
+- **KH trend** (dKH/day) computed via linear regression
+- **Measurement confidence** score combining R², cross-validation, and data quality
+- **Progress bar** during active measurements
 - **Command buttons** for measurement, calibration, and maintenance
-- **Configuration panel** for all measurement parameters
-- **Schedule editor** for automated daily measurements
+- **Configuration panel** with common settings and collapsible advanced section
+- **Schedule editor** with custom time slots or interval mode
+- **Probe health** section showing acid/alkaline slope efficiency, asymmetry, calibration age, and efficiency trend sparkline
 - **Event log** with timestamped messages and errors
-- **Status indicators** for WiFi, MQTT, NTP, and WebSocket connectivity
+- **Status indicators** for WiFi, MQTT, NTP, WebSocket, and probe health
+- **CSV export** of measurement history
 
 ## Home Assistant Integration
 
@@ -87,13 +97,15 @@ The device uses MQTT auto-discovery, so entities appear automatically in Home As
 
 ### Entities Created
 
-**Sensors**: KH value (dKH), pH, measurement pH (live), WiFi signal, uptime
+**Sensors**: KH value (dKH), pH (start), measured pH (live), KH trend (dKH/day), measurement confidence, Gran R², cross-validation diff, data points, measurement time, WiFi signal, uptime, probe health, acid slope efficiency, alkaline slope efficiency, probe asymmetry, probe response time, calibration age
 
-**Number inputs** (configurable): Titration volume, sample volume, correction factor, HCl molarity, HCl volume, calibration drops, fast titration pH
+**Number inputs** (configurable): Titration volume, sample volume, correction factor, HCl molarity, HCl volume, calibration units, fast titration pH, min start pH, stabilization timeout
 
-**Text inputs**: 8 schedule slots (HH:MM format)
+**Select inputs**: Endpoint method (Gran/Fixed pH), schedule mode (Custom/Interval), interval hours
 
-**Buttons**: Measure KH, Measure pH, Wash sample, Fill titration, Calibrate pump, Calibrate pH 4/7/10, Measure voltage, Restart
+**Text inputs**: 8 schedule slots (HH:MM format), anchor time
+
+**Buttons**: Measure KH, Measure pH, Measure Sample, Measure Titration, Fill Titration, Calibrate pH 4/7/10, Measure Voltage, Restart
 
 **Binary sensor**: Device connectivity
 
@@ -109,9 +121,14 @@ All topics are prefixed with `KHcontrollerV3/`:
 | `kh_value` | Publish | Calculated KH in dKH (retained) |
 | `startPH` | Publish | pH at start of titration (retained) |
 | `mes_pH` | Publish | Live pH during measurement |
-| `KH` | Publish | Number of titration drops used |
+| `confidence` | Publish | Measurement confidence score (retained) |
+| `kh_slope` | Publish | KH trend in dKH/day (retained) |
+| `gran_r2` | Publish | Gran analysis R² value (retained) |
+| `cross_val` | Publish | Cross-validation difference in dKH (retained) |
+| `data_pts` | Publish | Number of data points used (retained) |
+| `meas_time` | Publish | Measurement duration in seconds (retained) |
 | `availability` | Publish | Online/offline status (LWT) |
-| `diagnostics` | Publish | RSSI, uptime, free heap (JSON) |
+| `diagnostics` | Publish | RSSI, uptime, free heap, probe health (JSON) |
 | `config/*/set` | Subscribe | Configuration commands from HA |
 | `config/*` | Publish | Configuration state for HA |
 
@@ -137,18 +154,32 @@ Commands can be sent via MQTT (`KHcontrollerV3/cmd`), the web interface, or Home
 
 ## Calculating KH
 
-The device calculates KH using:
+The device supports two endpoint detection methods:
+
+### Gran Analysis (default)
+
+Gran analysis uses a linearization technique to find the titration equivalence point without requiring the pH to actually reach 4.3. The Gran function `F = V_acid × 10^(-pH)` is plotted against acid volume; the x-intercept of the linear regression through these points gives the equivalence volume. This method is more robust to probe drift and provides quality metrics (R², confidence).
+
+### Fixed pH Endpoint
+
+Classic approach: interpolate the exact acid volume where pH crosses 4.3 (or configured endpoint pH).
+
+### KH Formula
 
 ```
-KH [dKH] = (drops / cal_drops) * titration_vol / sample_vol * 2800 * hcl_molarity * correction_factor
+KH [dKH] = (V_acid / sample_vol) * 2800 * hcl_molarity * correction_factor
 ```
 
-- `drops` — interpolated endpoint crossing from titration
-- `cal_drops` — drops counted during pump calibration (command `t`)
-- `titration_vol` — volume dispensed during calibration (measure accurately!)
-- `sample_vol` — water sample volume (measure accurately!)
-- `hcl_molarity` — acid concentration (default 0.02 mol/L)
-- `correction_factor` — manual adjustment if needed
+Where `V_acid` is the equivalence volume in mL (derived from drops: `V_acid = drops / cal_drops * titration_vol`).
+
+### Measurement Validation
+
+Each measurement is validated with:
+- **Cross-validation**: Compares Gran and fixed-pH results; large discrepancies flag unreliable readings
+- **R² threshold**: Gran regression must have R² > 0.95
+- **Minimum data points**: At least 3 valid Gran points required
+- **Start pH check**: Sample pH must exceed `min_start_ph` (default 7.5)
+- **Confidence score**: Combines R², cross-validation difference, and data point count into a single quality metric
 
 For best results, calibrate the pump (`t`) and carefully measure the dispensed volume.
 
@@ -159,7 +190,7 @@ For best results, calibrate the pump (`t`) and carefully measure the dispensed v
 | `src/main.cpp` | Application entry, KH measurement algorithm, MQTT routing |
 | `src/web_server.cpp` | HTTP server, WebSocket dashboard, command dispatch |
 | `src/ha_discovery.cpp` | Home Assistant MQTT auto-discovery |
-| `src/measurement.cpp` | pH/voltage ADC sampling with outlier rejection |
+| `src/measurement.cpp` | pH/voltage ADC, 3-point calibration, probe health, Gran analysis |
 | `src/motors.cpp` | Stepper motor control with acceleration ramps |
 | `src/config_store.cpp` | NVS persistent configuration |
 | `src/scheduler.cpp` | NTP-based scheduled measurements |

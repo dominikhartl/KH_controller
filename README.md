@@ -11,27 +11,34 @@ When I built the first prototype, I made an explanatory video (in English):
 
 The device takes a water sample from the aquarium and titrates it with dilute hydrochloric acid (HCl). The volume of acid needed to lower the pH to 4.3 determines the carbonate hardness. The firmware uses a two-phase titration approach:
 
-1. **Fast phase** - Dispenses acid in 200-drop batches until approaching the endpoint pH
-2. **Precise phase** - Adaptive 2-4 drop steps with high-precision pH measurement and endpoint interpolation
+1. **Fast phase** - Dispenses acid in adaptive batches (ramping down as pH approaches threshold) until near the endpoint
+2. **Precise phase** - Adaptive 2-4 drop steps with high-precision pH measurement
+3. **Endpoint detection** - Gran analysis (linearization method) or fixed-pH interpolation
 
 ### Why Is It Accurate?
 
+- **Gran analysis**: Finds equivalence point via linear regression — more robust than simple pH threshold crossing
 - **Low acid concentration** (0.02 mol/L HCl): Errors from air bubbles or small dosing variations have minimal impact
 - **Pressure titration**: Peristaltic pumps can dispense sub-drop volumes for fine control
 - **Adaptive measurement**: More readings and longer mixing time near the endpoint
+- **Cross-validation**: Compares Gran and fixed-pH results to detect unreliable measurements
 - **Outlier rejection**: Median-filtered pH readings with automatic outlier removal
 - **3-point pH calibration**: Linear least-squares fit across pH 4, 7, and 10 buffer solutions
 
 ## Features
 
 - Automated KH measurement via acid-base titration
+- **Gran analysis** for robust endpoint detection with R² and confidence scoring
 - Real-time pH monitoring with 3-point calibration
-- **Home Assistant integration** via MQTT auto-discovery
-- **Web dashboard** with live titration charts, gauges, and configuration
-- Scheduled measurements (up to 8 daily time slots, NTP-synced)
+- **Probe health monitoring** — slope efficiency, asymmetry, calibration age tracking
+- **Home Assistant integration** via MQTT auto-discovery (sensors, controls, diagnostics)
+- **Web dashboard** with live titration charts, Gran plots, gauges, and configuration
+- Scheduled measurements — custom time slots or interval mode (NTP-synced)
+- Cross-validation between Gran and fixed-pH endpoint methods
 - HCl consumption tracking with low-level warnings
 - Over-the-air (OTA) firmware updates
 - Persistent configuration stored in NVS (flash)
+- CSV export of measurement history
 
 ## Hardware
 
@@ -56,9 +63,9 @@ The device takes a water sample from the aquarium and titrates it with dilute hy
 | Silicone tubing (2/4 or 4/6mm) | - | For peristaltic pumps |
 | 12V power supply (>2A) | 1 | Main power |
 | JST-XH connectors (2/3/4-pin) | - | PCB connections |
-| 0.02M HCl solution | - | See preparation below |
+| 0.024M HCl solution | - | See preparation below |
 
-### Preparing 0.02M HCl
+### Preparing 0.024M HCl
 
 Mix 10 mL of 37% hydrochloric acid into 5 L of reverse osmosis water (**always add acid to water, never the reverse**). This gives a good balance between accuracy and practical handling volumes.
 

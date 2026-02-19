@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>KH Controller V3</title>
-  <link rel="stylesheet" href="style.css?v=4">
+  <link rel="stylesheet" href="style.css?v=5">
 </head>
 <body>
   <header>
@@ -107,8 +107,8 @@
         <button class="cmd-btn primary" data-cmd="k">Measure KH</button>
         <button class="cmd-btn primary" data-cmd="p">Measure pH</button>
         <button class="cmd-btn" data-cmd="s">Cal Sample</button>
-        <button class="cmd-btn" data-cmd="f">Fill</button>
         <button class="cmd-btn" data-cmd="t">Cal Titration</button>
+        <button class="cmd-btn" data-cmd="f">Fill</button>
         <button class="cmd-btn cal" data-cmd="4">Cal pH 4</button>
         <button class="cmd-btn cal" data-cmd="7">Cal pH 7</button>
         <button class="cmd-btn cal" data-cmd="10">Cal pH 10</button>
@@ -121,6 +121,12 @@
     <h2 class="section-header">Configuration <span class="chevron"></span></h2>
     <div class="section-body">
       <div class="config-grid">
+        <label>HCl Molarity (mol/L)
+          <input type="number" id="cfg-hcl_molarity" step="0.001" min="0.001" max="1">
+        </label>
+        <label>HCl Volume (mL)
+          <input type="number" id="cfg-hcl_volume" step="1" min="0" max="5000">
+        </label>
         <label>Titration Vol (mL)
           <input type="number" id="cfg-titration_vol" step="0.1" min="0.1" max="50">
         </label>
@@ -130,25 +136,30 @@
         <label>Correction Factor
           <input type="number" id="cfg-correction_factor" step="0.01" min="0.5" max="2">
         </label>
-        <label>HCl Molarity (mol/L)
-          <input type="number" id="cfg-hcl_molarity" step="0.001" min="0.001" max="1">
-        </label>
-        <label>HCl Volume (mL)
-          <input type="number" id="cfg-hcl_volume" step="1" min="0" max="5000">
-        </label>
-        <label>Calibration Units
-          <input type="number" id="cfg-cal_drops" step="100" min="1000" max="20000">
-        </label>
-        <label>Fast Titration pH
-          <input type="number" id="cfg-fast_ph" step="0.1" min="4.5" max="7.0">
-        </label>
-        <label>Endpoint Method
-          <select id="cfg-endpoint_method">
-            <option value="0">Gran</option>
-            <option value="1">Fixed pH</option>
-          </select>
-        </label>
       </div>
+      <details class="config-advanced">
+        <summary>Advanced</summary>
+        <div class="config-grid">
+          <label>Calibration Units
+            <input type="number" id="cfg-cal_drops" step="100" min="1000" max="20000">
+          </label>
+          <label>Fast Titration pH
+            <input type="number" id="cfg-fast_ph" step="0.1" min="4.5" max="7.0">
+          </label>
+          <label>Endpoint Method
+            <select id="cfg-endpoint_method">
+              <option value="0">Gran</option>
+              <option value="1">Fixed pH</option>
+            </select>
+          </label>
+          <label>Min Start pH
+            <input type="number" id="cfg-min_start_ph" step="0.1" min="6.0" max="9.0">
+          </label>
+          <label>Stabilization Timeout (ms)
+            <input type="number" id="cfg-stab_timeout" step="100" min="500" max="5000">
+          </label>
+        </div>
+      </details>
     </div>
   </section>
 
@@ -216,10 +227,6 @@
           <span class="probe-value" id="probe-asymmetry">-- <small>%</small></span>
         </div>
         <div class="probe-item">
-          <span class="probe-label">Response</span>
-          <span class="probe-value" id="probe-response">-- <small>ms</small></span>
-        </div>
-        <div class="probe-item">
           <span class="probe-label">Cal Age</span>
           <span class="probe-value" id="probe-cal-age">--</span>
         </div>
@@ -235,6 +242,6 @@
   </section>
 
   <script src="chart.min.js?v=2"></script>
-  <script src="app.js?v=3"></script>
+  <script src="app.js?v=4"></script>
 </body>
 </html>

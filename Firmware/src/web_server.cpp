@@ -185,15 +185,15 @@ static void handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
       if (!doc.containsKey("value")) return;
       float value = doc["value"];
 
-      if (strcmp(key, "titration_vol") == 0) configStore.setTitrationVolume(value);
-      else if (strcmp(key, "sample_vol") == 0) configStore.setSampleVolume(value);
-      else if (strcmp(key, "correction_factor") == 0) configStore.setCorrectionFactor(value);
-      else if (strcmp(key, "hcl_molarity") == 0) configStore.setHClMolarity(value);
-      else if (strcmp(key, "hcl_volume") == 0) configStore.setHClVolume(value);
-      else if (strcmp(key, "cal_drops") == 0) configStore.setCalUnits((int)value);
-      else if (strcmp(key, "fast_ph") == 0) configStore.setFastTitrationPH(value);
+      if (strcmp(key, "titration_vol") == 0 && value > 0) configStore.setTitrationVolume(value);
+      else if (strcmp(key, "sample_vol") == 0 && value > 0) configStore.setSampleVolume(value);
+      else if (strcmp(key, "correction_factor") == 0 && value > 0 && value <= 5) configStore.setCorrectionFactor(value);
+      else if (strcmp(key, "hcl_molarity") == 0 && value > 0 && value <= 1) configStore.setHClMolarity(value);
+      else if (strcmp(key, "hcl_volume") == 0 && value >= 0) configStore.setHClVolume(value);
+      else if (strcmp(key, "cal_drops") == 0 && (int)value > 0) configStore.setCalUnits((int)value);
+      else if (strcmp(key, "fast_ph") == 0 && value >= 4.0f && value <= 7.0f) configStore.setFastTitrationPH(value);
       else if (strcmp(key, "endpoint_method") == 0) configStore.setEndpointMethod((uint8_t)value);
-      else if (strcmp(key, "min_start_ph") == 0) configStore.setMinStartPH(value);
+      else if (strcmp(key, "min_start_ph") == 0 && value >= 6.0f && value <= 9.0f) configStore.setMinStartPH(value);
       else if (strcmp(key, "stab_timeout") == 0) {
         configStore.setStabilizationTimeout((int)value);
         setStabilizationTimeoutMs(configStore.getStabilizationTimeout());
@@ -316,8 +316,11 @@ void calibratePH(int bufferPH) {
     default: return;
   }
   updateCalibrationFit();
-  configStore.setCalTimestamp((uint32_t)time(nullptr));
-  if (isCalibrationValid()) configStore.addSlopeEntry((uint32_t)time(nullptr), getAcidSlope());
+  uint32_t now = (uint32_t)time(nullptr);
+  if (now > MIN_VALID_EPOCH) {
+    configStore.setCalTimestamp(now);
+    if (isCalibrationValid()) configStore.addSlopeEntry(now, getAcidSlope());
+  }
   char msg[32];
   snprintf(msg, sizeof(msg), "Calibrated pH %.2f", actualPH);
   publishMessage(msg);

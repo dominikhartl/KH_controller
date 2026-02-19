@@ -111,6 +111,8 @@ bool isCalibrationValid() {
   if (voltage_4PH <= 0 || voltage_7PH <= 0 || voltage_10PH <= 0) return false;
   if (fabs(voltage_4PH - voltage_7PH) < 50.0f) return false;
   if (fabs(voltage_7PH - voltage_10PH) < 50.0f) return false;
+  // Verify monotonic ordering (lower pH → higher voltage on DFRobot board)
+  if (!(voltage_4PH > voltage_7PH && voltage_7PH > voltage_10PH)) return false;
   return true;
 }
 
@@ -185,19 +187,11 @@ const char* getProbeHealthDetail(char* reasonBuf, size_t reasonLen) {
     return "Fair";
   }
 
-  // Secondary: asymmetry and response time
+  // Secondary: asymmetry check
   float asym = getProbeAsymmetry();
   if (!isnan(asym) && asym > PROBE_ASYMMETRY_FAIR) {
     if (reasonBuf) snprintf(reasonBuf, reasonLen, "asymmetry %.1f%% (limit %.0f%%)", asym, PROBE_ASYMMETRY_FAIR);
     return "Replace";
-  }
-  if (lastStabilizationMs >= PROBE_RESPONSE_FAIR_MS) {
-    if (reasonBuf) snprintf(reasonBuf, reasonLen, "response time %lums (limit %lums)", lastStabilizationMs, PROBE_RESPONSE_FAIR_MS);
-    return "Replace";
-  }
-  if (lastStabilizationMs >= PROBE_RESPONSE_GOOD_MS) {
-    if (reasonBuf) snprintf(reasonBuf, reasonLen, "response time %lums (limit %lums)", lastStabilizationMs, PROBE_RESPONSE_GOOD_MS);
-    return "Fair";
   }
   if (!isnan(asym) && asym > PROBE_ASYMMETRY_GOOD) {
     if (reasonBuf) snprintf(reasonBuf, reasonLen, "asymmetry %.1f%% (limit %.0f%%)", asym, PROBE_ASYMMETRY_GOOD);
