@@ -21,7 +21,7 @@ static const char FW_VERSION[] = "0.1";
 static const int MEASUREMENT_DELAY_FAST_MS = 20;
 
 // pH stabilization (adaptive: waits for readings to converge)
-static const int STABILIZATION_TIMEOUT_MS = 2000;
+static const int STABILIZATION_TIMEOUT_MS = 4000;
 static const float STABILIZATION_THRESHOLD_MV = 2.0;
 
 // pH measurement outlier thresholds
@@ -74,7 +74,7 @@ static const float FAST_TITRATION_PH_DEFAULT = 5.0f; // pH threshold: fast→pre
 static const int MEDIUM_STEP_MULTIPLIER = 24;  // 2 * 24 = 48 units per step
 
 // Gran zone step multiplier — smaller = more data points for regression robustness
-static const int GRAN_STEP_MULTIPLIER = 2;     // 2 * 2 = 4 units per step
+static const int GRAN_STEP_MULTIPLIER = 4;     // 2 * 4 = 8 units per step
 
 // Adaptive fast-phase batch sizing — reduces batch as pH approaches threshold
 static const int FAST_BATCH_MAX = 200;
@@ -106,7 +106,7 @@ static const float POST_WASH_PH_THRESHOLD = 6.0f;  // Warn if post-wash pH is be
 
 // Gran transformation endpoint detection
 static const float GRAN_REGION_PH       = 4.8f;  // Points below this used for Gran regression
-static const float GRAN_STOP_PH         = 3.8f;   // Stop titrating at this pH (Dickson protocol)
+static const float GRAN_STOP_PH         = 4.0f;   // Stop titrating at this pH
 static const int   MIN_GRAN_POINTS      = 8;       // Minimum points for reliable regression
 static const int   MAX_TITRATION_POINTS = 200;      // Data point buffer size
 static const float GRAN_MIN_R2          = 0.99f;   // Minimum R² for Gran fit acceptance

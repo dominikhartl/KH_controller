@@ -33,6 +33,7 @@ void setStabilizationTimeoutMs(int ms);  // Override default timeout (call befor
 void resetStabilizationStats();
 int getStabilizationTimeoutCount();       // Number of times stabilization timed out
 unsigned long getTotalStabilizationMs();  // Cumulative stabilization time
+bool getLastStabilizationTimedOut();      // Whether last stabilization call timed out
 
 // Probe health metrics
 unsigned long getLastStabilizationMs();  // Last stabilization time in ms
@@ -49,6 +50,10 @@ const char* getProbeHealthDetail(char* reasonBuf, size_t reasonLen);  // Same, w
 struct TitrationPoint {
   float units;
   float pH;
+  float mV;           // raw ADC voltage
+  uint16_t stabMs;    // stabilization time in ms (0 = no stab wait)
+  uint8_t phase;      // 0=fast, 1=medium, 2=gran
+  uint8_t flags;      // bit 0: stabTimedOut
 };
 
 // Determine equivalence point via Gran function linearization

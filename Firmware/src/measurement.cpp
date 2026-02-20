@@ -12,9 +12,19 @@ float voltage_4PH = 0;
 float voltage_7PH = 0;
 float voltage_10PH = 0;
 
-// Cached linear fit coefficients: pH = phSlope * voltage + phOffset
-static float phSlope = 0;
-static float phOffset = 7.0;
+// Piecewise linear coefficients: pH = slope * voltage + offset
+// Acid segment (pH 4→7, voltage >= voltage_7PH) and base segment (pH 7→10)
+static float acidSlope = 0, acidOffset = 7.0;
+static float baseSlope = 0, baseOffset = 7.0;
+
+// Convert voltage to pH using piecewise interpolation
+static inline float voltageToPH(float v) {
+  if (v >= voltage_7PH) {
+    return acidSlope * v + acidOffset;
+  } else {
+    return baseSlope * v + baseOffset;
+  }
+}
 
 // Response time tracking
 static unsigned long lastStabilizationMs = 0;
@@ -25,11 +35,13 @@ static int stabilizationTimeoutMs = STABILIZATION_TIMEOUT_MS;
 // Stabilization statistics (per measurement cycle)
 static int stabTimeoutCount = 0;
 static unsigned long stabTotalMs = 0;
+static bool lastStabTimedOut = false;
 
 void setStabilizationTimeoutMs(int ms) { stabilizationTimeoutMs = ms; }
-void resetStabilizationStats() { stabTimeoutCount = 0; stabTotalMs = 0; }
+void resetStabilizationStats() { stabTimeoutCount = 0; stabTotalMs = 0; lastStabTimedOut = false; }
 int getStabilizationTimeoutCount() { return stabTimeoutCount; }
 unsigned long getTotalStabilizationMs() { return stabTotalMs; }
+bool getLastStabilizationTimedOut() { return lastStabTimedOut; }
 
 // Sort an array of floats in ascending order (bubble sort — sufficient for small N)
 static void sortFloats(float* arr, int count) {
@@ -89,21 +101,28 @@ void initADC() {
 }
 
 void updateCalibrationFit() {
-  float v[3] = {voltage_4PH, voltage_7PH, voltage_10PH};
-  float p[3] = {BUFFER_PH_4, BUFFER_PH_7, BUFFER_PH_10};
-  float sumV = v[0] + v[1] + v[2];
-  float sumP = p[0] + p[1] + p[2];
-  float sumVV = v[0]*v[0] + v[1]*v[1] + v[2]*v[2];
-  float sumVP = v[0]*p[0] + v[1]*p[1] + v[2]*p[2];
-  float denom = 3.0f * sumVV - sumV * sumV;
-  if (fabs(denom) < 1e-6f) {
-    // Fallback: approximate Nernst slope at 25C (~-59mV/pH ≈ -1/17 pH/mV)
-    phSlope = -1.0f / 173.0f;
-    phOffset = BUFFER_PH_7 + voltage_7PH / 173.0f;
-    return;
+  // Piecewise linear: two segments that pass exactly through calibration points
+  float dv;
+
+  // Acid segment: pH 4 → pH 7
+  dv = voltage_7PH - voltage_4PH;
+  if (fabsf(dv) > 1e-6f) {
+    acidSlope = (BUFFER_PH_7 - BUFFER_PH_4) / dv;
+    acidOffset = BUFFER_PH_4 - acidSlope * voltage_4PH;
+  } else {
+    acidSlope = -1.0f / 173.0f;
+    acidOffset = BUFFER_PH_7 + voltage_7PH / 173.0f;
   }
-  phSlope = (3.0f * sumVP - sumV * sumP) / denom;
-  phOffset = (sumP - phSlope * sumV) / 3.0f;
+
+  // Base segment: pH 7 → pH 10
+  dv = voltage_10PH - voltage_7PH;
+  if (fabsf(dv) > 1e-6f) {
+    baseSlope = (BUFFER_PH_10 - BUFFER_PH_7) / dv;
+    baseOffset = BUFFER_PH_7 - baseSlope * voltage_7PH;
+  } else {
+    baseSlope = acidSlope;
+    baseOffset = acidOffset;
+  }
 }
 
 bool isCalibrationValid() {
@@ -202,15 +221,18 @@ const char* getProbeHealthDetail(char* reasonBuf, size_t reasonLen) {
   return "Good";
 }
 
-// Wait for ADC readings to converge instead of fixed delay
+// Wait for filtered ADC readings to converge instead of fixed delay.
+// Uses trimmed-mean reads (16 samples) instead of raw single-sample reads
+// to avoid false instability from ADC/WiFi noise spikes.
 static void waitForStabilization() {
+  lastStabTimedOut = false;
   analogReadMilliVolts(PH_PIN);  // Dummy read to prime ADC after idle
   delayMicroseconds(100);
-  float prev = (float)analogReadMilliVolts(PH_PIN);
+  float prev = readADCTrimmed(16, ADC_INTER_SAMPLE_DELAY_MS);
   delay(50);
   unsigned long start = millis();
   while (millis() - start < (unsigned long)stabilizationTimeoutMs) {
-    float curr = (float)analogReadMilliVolts(PH_PIN);
+    float curr = readADCTrimmed(16, ADC_INTER_SAMPLE_DELAY_MS);
     if (fabs(curr - prev) < STABILIZATION_THRESHOLD_MV) {
       unsigned long elapsed = millis() - start;
       lastStabilizationMs = elapsed;
@@ -223,6 +245,7 @@ static void waitForStabilization() {
   lastStabilizationMs = stabilizationTimeoutMs;  // Timed out
   stabTotalMs += stabilizationTimeoutMs;
   stabTimeoutCount++;
+  lastStabTimedOut = true;
 }
 
 void waitForPHStabilization() {
@@ -238,7 +261,7 @@ static void measurePHCore(int nreadings) {
   for (int t = 0; t < maxReadings; t++) {
     voltage = readADCTrimmed(ADC_OVERSAMPLING, ADC_INTER_SAMPLE_DELAY_MS);
 
-    float calculatedPH = phSlope * voltage + phOffset;
+    float calculatedPH = voltageToPH(voltage);
 
     if (!isnan(calculatedPH) && calculatedPH > 0.0 && calculatedPH < 14.0) {
       pHReadings[validReadings] = calculatedPH;
@@ -279,7 +302,7 @@ void measurePHFast(int nreadings) {
   for (int t = 0; t < maxReadings; t++) {
     voltage = readADCTrimmed(ADC_OVERSAMPLING_FAST, ADC_INTER_SAMPLE_DELAY_FAST_MS);
 
-    float calculatedPH = phSlope * voltage + phOffset;
+    float calculatedPH = voltageToPH(voltage);
 
     if (!isnan(calculatedPH) && calculatedPH > 0.0 && calculatedPH < 14.0) {
       pHReadings[validReadings] = calculatedPH;
@@ -438,7 +461,7 @@ float granAnalysis(TitrationPoint* points, int nPoints,
   float k = titVol / calUnits;
 
   // Adaptive window selection: try multiple upper pH bounds, keep best R²
-  static const float upperBounds[] = {4.5f, 4.3f, 4.1f, 3.9f, 3.7f};
+  static const float upperBounds[] = {4.5f, 4.3f, 4.1f};
   static const int nBounds = sizeof(upperBounds) / sizeof(upperBounds[0]);
 
   float bestR2 = 0;

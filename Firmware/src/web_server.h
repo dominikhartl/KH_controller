@@ -17,9 +17,13 @@ struct KHResult {
   int stabTimeouts;
   unsigned long elapsedSec;
   float crossValDiff;  // |KH_gran - KH_endpoint|, NAN if unavailable
+  int8_t rssiMin;      // WiFi RSSI min during measurement
+  int8_t rssiMax;      // WiFi RSSI max during measurement
 };
 
 void storeLastKHResult(const KHResult& r);
+struct TitrationPoint;
+void storeAnalysisPoints(const TitrationPoint* points, int count);
 void setupWebServer();
 void executeCommand(const char* cmd);
 void calibratePH(int bufferPH);

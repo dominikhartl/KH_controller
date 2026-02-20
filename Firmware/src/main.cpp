@@ -126,6 +126,10 @@ static bool isSuspect(const KHResult& r, float median, bool hasMedian, char* rea
     snprintf(reasonBuf, reasonLen, "Cross-val failed (diff %.2f dKH)", r.crossValDiff);
     return true;
   }
+  if (r.granR2 > 0 && r.granR2 < GRAN_MIN_R2) {
+    snprintf(reasonBuf, reasonLen, "Poor Gran fit (R²=%.3f)", r.granR2);
+    return true;
+  }
   return false;
 }
 
@@ -137,6 +141,7 @@ void measureKHWithValidation() {
 
   KHResult r1 = measureKH();
   if (isnan(r1.khValue)) return;  // measurement failed
+  storeLastKHResult(r1);  // store immediately so diagnostics always has data
 
   bool hasMedian = (histCount >= KH_OUTLIER_HISTORY_COUNT);
   float median = hasMedian ? computeMedian(recent, histCount) : 0;
@@ -210,7 +215,10 @@ void processPendingCommand() {
       broadcastState();
       break;
     case 'p':
+      startStirrer();
+      delay(STIRRER_WARMUP_MS);
       measurePH(100);
+      stopStirrer();
       if (isnan(pH)) {
         publishError("Error: pH probe not working");
       } else {
@@ -347,6 +355,9 @@ KHResult measureKH() {
   const char* errorMessage = "";
   publishError("");  // Clear previous error
 
+  // Track WiFi RSSI range during measurement
+  int8_t rssiMin = 0, rssiMax = -127;
+
   // Validate calibration before starting
   if (!isCalibrationValid()) {
     publishError("Error: pH calibration invalid. Re-calibrate with pH 4/7/10 buffers.");
@@ -472,6 +483,9 @@ KHResult measureKH() {
       broadcastTitrationPH(pH, units);
       mqttManager.loop();
       ArduinoOTA.handle();
+      { int8_t rssi = wifiManager.getRSSI();
+        if (rssi < rssiMin) rssiMin = rssi;
+        if (rssi > rssiMax) rssiMax = rssi; }
 
       if (isnan(pH)) {
         errorMessage = "Error: pH probe not working!";
@@ -479,7 +493,7 @@ KHResult measureKH() {
       } else {
         // Store data points near the endpoint even during fast phase
         if (pH < DATA_STORE_PH && nPoints < MAX_TITRATION_POINTS) {
-          dataPoints[nPoints++] = {(float)units, pH};
+          dataPoints[nPoints++] = {(float)units, pH, voltage, 0, 0, 0};
         }
         if (pH < GRAN_REGION_PH) granCount++;
 
@@ -515,9 +529,11 @@ KHResult measureKH() {
       mqttManager.loop();
 
       int stepVol;
+      uint8_t curPhase;
       if (pH > GRAN_REGION_PH) {
         // Medium zone (pH above Gran region): large steps, rough tracking only
         // No stabilization needed — we just need to detect when to enter Gran zone
+        curPhase = 1;
         stepVol = TITRATION_STEP_SIZE * MEDIUM_STEP_MULTIPLIER;  // 48 units
         if (!titrate(stepVol, TITRATION_RPM)) {
           errorMessage = "Error: titration pump timeout in precise phase";
@@ -528,6 +544,7 @@ KHResult measureKH() {
         measurePHStabilized(8);
       } else {
         // Gran zone (pH below GRAN_REGION_PH): smaller steps, stabilization, accurate readings
+        curPhase = 2;
         stepVol = TITRATION_STEP_SIZE * GRAN_STEP_MULTIPLIER;  // 4 units (more points = more robust regression)
         if (!titrate(stepVol, TITRATION_RPM)) {
           errorMessage = "Error: titration pump timeout in Gran zone";
@@ -542,7 +559,9 @@ KHResult measureKH() {
 
       // Store data points near the endpoint for Gran analysis and interpolation
       if (pH < DATA_STORE_PH && nPoints < MAX_TITRATION_POINTS) {
-        dataPoints[nPoints++] = {(float)units, pH};
+        uint16_t sMs = (curPhase == 2) ? (uint16_t)min((unsigned long)0xFFFF, getLastStabilizationMs()) : (uint16_t)0;
+        uint8_t fl = (curPhase == 2 && getLastStabilizationTimedOut()) ? 1 : 0;
+        dataPoints[nPoints++] = {(float)units, pH, voltage, sMs, curPhase, fl};
       }
       if (pH < GRAN_REGION_PH) granCount++;
 
@@ -551,6 +570,9 @@ KHResult measureKH() {
       { char phBuf[16]; snprintf(phBuf, sizeof(phBuf), "%.2f", pH);
         mqttManager.publish(MQmespH, phBuf); }
       broadcastTitrationPH(pH, units);
+      { int8_t rssi = wifiManager.getRSSI();
+        if (rssi < rssiMin) rssiMin = rssi;
+        if (rssi > rssiMax) rssiMax = rssi; }
 
       if (isnan(pH)) {
         errorMessage = "Error: pH probe not working!";
@@ -590,7 +612,7 @@ KHResult measureKH() {
         bool usedGran = false;
 
         if (epMethod == 0) {
-          // Gran mode: strict R² cutoff, no fallback to interpolation
+          // Gran mode: try Gran analysis, fall back to endpoint if it fails
           if (granCount >= MIN_GRAN_POINTS) {
             char granReason[64] = "";
             exactUnits = granAnalysis(dataPoints, nPoints, samVol, titVol, calUnits, &granR2, granReason, sizeof(granReason));
@@ -598,14 +620,21 @@ KHResult measureKH() {
               usedGran = true;
             } else {
               char failBuf[128];
-              snprintf(failBuf, sizeof(failBuf), "Gran failed: %s", granReason);
-              errorMessage = "Error: Gran analysis failed";
+              snprintf(failBuf, sizeof(failBuf), "Gran failed: %s. Falling back to endpoint.", granReason);
               publishMessage(failBuf);
-              errorflag = 1;
+              exactUnits = interpolateAtPH(dataPoints, nPoints, ENDPOINT_PH);
+              if (isnan(exactUnits)) {
+                errorMessage = "Error: both Gran and endpoint interpolation failed";
+                errorflag = 1;
+              }
             }
           } else {
-            errorMessage = "Error: insufficient Gran data points";
-            errorflag = 1;
+            publishMessage("Insufficient Gran points. Falling back to endpoint.");
+            exactUnits = interpolateAtPH(dataPoints, nPoints, ENDPOINT_PH);
+            if (isnan(exactUnits)) {
+              errorMessage = "Error: insufficient data for any method";
+              errorflag = 1;
+            }
           }
         } else {
           // Fixed endpoint mode: interpolate at ENDPOINT_PH
@@ -717,8 +746,11 @@ KHResult measureKH() {
           result.usedGran = usedGran;
           result.crossValDiff = crossValDiff;
           result.dataPointCount = nPoints;
+          storeAnalysisPoints(dataPoints, nPoints);
           result.stabTimeouts = getStabilizationTimeoutCount();
           result.elapsedSec = (millis() - measStartMs) / 1000;
+          result.rssiMin = rssiMin;
+          result.rssiMax = rssiMax;
           result.confidence = computeConfidence(granR2, usedGran, nPoints,
                                                  result.stabTimeouts, getProbeHealth(),
                                                  crossValDiff);

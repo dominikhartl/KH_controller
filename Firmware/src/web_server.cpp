@@ -23,13 +23,13 @@ AsyncWebSocket ws("/ws");
 
 // In-memory buffer for live titration pH data (survives page reload)
 // When full, downsamples by averaging pairs -> halves count, then continues
-static const uint16_t MES_BUF_MAX = 2000;
-struct MesPoint { float ml; float ph; };
+static const uint16_t MES_BUF_MAX = 1500;
+struct MesPoint { float ml; float ph; float mV; };
 static MesPoint mesBuffer[MES_BUF_MAX];
 static uint16_t mesCount = 0;
 
 // In-memory ring buffer for event log entries (survives page reload)
-static const uint8_t LOG_BUF_MAX = 10;
+static const uint8_t LOG_BUF_MAX = 40;
 struct LogEntry {
   char type;       // 'm' = msg, 'e' = error
   char text[96];
@@ -57,6 +57,15 @@ void storeLastKHResult(const KHResult& r) {
   lastKHResult = r;
   hasLastKHResult = true;
   lastMeasTimestamp = (uint32_t)time(nullptr);
+}
+
+// Analysis data points (pH < 5.0 subset used for Gran/interpolation)
+static TitrationPoint analysisBuf[MAX_TITRATION_POINTS];
+static int analysisCount = 0;
+
+void storeAnalysisPoints(const TitrationPoint* points, int count) {
+  analysisCount = (count > MAX_TITRATION_POINTS) ? MAX_TITRATION_POINTS : count;
+  memcpy(analysisBuf, points, analysisCount * sizeof(TitrationPoint));
 }
 
 // Forward declarations for command/config handlers from main
@@ -109,8 +118,8 @@ static void sendLogData(AsyncWebSocketClient* client) {
 static void sendMesData(AsyncWebSocketClient* client) {
   if (mesCount == 0) return;
 
-  // Send in chunks of 500 points to avoid huge stack allocations
-  static const uint16_t CHUNK = 500;
+  // Send in chunks of 400 points to avoid huge stack allocations
+  static const uint16_t CHUNK = 400;
   uint16_t totalChunks = (mesCount + CHUNK - 1) / CHUNK;
 
   for (uint16_t c = 0; c < totalChunks; c++) {
@@ -126,6 +135,7 @@ static void sendMesData(AsyncWebSocketClient* client) {
       JsonArray point = dataArr.createNestedArray();
       point.add(mesBuffer[i].ml);
       point.add(mesBuffer[i].ph);
+      point.add(mesBuffer[i].mV);
     }
 
     static char buf[8192];
@@ -520,6 +530,7 @@ void broadcastTitrationPH(float phVal, int unitsVal) {
     for (uint16_t i = 0; i < pairs; i++) {
       mesBuffer[i].ml = mesBuffer[i * 2 + 1].ml; // keep later volume
       mesBuffer[i].ph = (mesBuffer[i * 2].ph + mesBuffer[i * 2 + 1].ph) / 2.0f;
+      mesBuffer[i].mV = (mesBuffer[i * 2].mV + mesBuffer[i * 2 + 1].mV) / 2.0f;
     }
     // Preserve last point if odd count
     if (mesCount % 2 != 0) {
@@ -532,16 +543,18 @@ void broadcastTitrationPH(float phVal, int unitsVal) {
 
   mesBuffer[mesCount].ml = ml;
   mesBuffer[mesCount].ph = phVal;
+  mesBuffer[mesCount].mV = voltage;
   mesCount++;
 
   if (ws.count() == 0) return;
 
-  StaticJsonDocument<64> doc;
+  StaticJsonDocument<96> doc;
   doc["type"] = "mesPh";
   doc["ph"] = phVal;
   doc["ml"] = ml;
+  doc["mV"] = voltage;
 
-  char buf[64];
+  char buf[96];
   serializeJson(doc, buf, sizeof(buf));
   ws.textAll(buf);
 }
@@ -760,6 +773,10 @@ float computeKHSlope() {
   f.close();
 
   if (n < 3) return NAN;
+
+  // Require data spanning at least 48h to avoid diurnal cycle bias
+  uint32_t span = ts[n - 1] - ts[0];
+  if (span < 48 * 3600) return NAN;
 
   // Linear regression: kh = slope * t + intercept
   // Normalize timestamps to hours from first point to avoid overflow
@@ -1021,12 +1038,14 @@ void setupWebServer() {
                 "\"gran_r2\":%s,\"endpoint_ph\":%s,"
                 "\"used_gran\":%s,\"confidence\":%s,"
                 "\"data_points\":%d,\"stab_timeouts\":%d,"
-                "\"elapsed_sec\":%lu,\"cross_val_diff\":%s},",
+                "\"elapsed_sec\":%lu,\"cross_val_diff\":%s,"
+                "\"rssi_min\":%d,\"rssi_max\":%d},",
                 lastMeasTimestamp,
                 sv, sg, se, sp, sh, sr, ep,
                 r.usedGran ? "true" : "false",
                 co, r.dataPointCount, r.stabTimeouts,
-                r.elapsedSec, cv);
+                r.elapsedSec, cv,
+                (int)r.rssiMin, (int)r.rssiMax);
             }
             ds = 3;
             break;
@@ -1063,7 +1082,7 @@ void setupWebServer() {
               (int)granBufCount);
             for (uint8_t i = 0; i < granBufCount && p < (int)maxLen - 30; i++) {
               if (i > 0) p += snprintf(b + p, maxLen - p, ",");
-              p += snprintf(b + p, maxLen - p, "[%.3f,%.1f]",
+              p += snprintf(b + p, maxLen - p, "[%.3f,%.6f]",
                            granBuffer[i].ml, granBuffer[i].f);
             }
             p += snprintf(b + p, maxLen - p, "]},");
@@ -1071,50 +1090,82 @@ void setupWebServer() {
             ds = 5;
             break;
           }
-          case 5: { // Titration curve header
+          case 5: { // Analysis data points header
             n = snprintf(b, maxLen,
-              "\"titration_curve\":{\"count\":%d,\"points\":[", mesCount);
+              "\"analysis_points\":{\"count\":%d,"
+              "\"fields\":[\"units\",\"pH\",\"mV\",\"stabMs\",\"phase\",\"flags\"],"
+              "\"points\":[", analysisCount);
             dp = 0;
-            ds = (mesCount > 0) ? 6 : 7;
+            ds = (analysisCount > 0) ? 6 : 7;
             break;
           }
-          case 6: { // Titration points (batched)
+          case 6: { // Analysis points (batched)
             int p = 0;
-            while (dp < mesCount && p < (int)maxLen - 30) {
+            while (dp < (uint16_t)analysisCount && p < (int)maxLen - 50) {
               if (dp > 0) p += snprintf(b + p, maxLen - p, ",");
-              p += snprintf(b + p, maxLen - p, "[%.3f,%.2f]",
-                           mesBuffer[dp].ml, mesBuffer[dp].ph);
+              p += snprintf(b + p, maxLen - p, "[%.0f,%.3f,%.1f,%u,%u,%u]",
+                           analysisBuf[dp].units, analysisBuf[dp].pH,
+                           analysisBuf[dp].mV, analysisBuf[dp].stabMs,
+                           analysisBuf[dp].phase, analysisBuf[dp].flags);
               dp++;
             }
             n = p;
-            if (dp >= mesCount) ds = 7;
+            if (dp >= (uint16_t)analysisCount) ds = 7;
             break;
           }
-          case 7: { // Close titration + event log + close JSON
-            int p = snprintf(b, maxLen, "]},\"event_log\":[");
-            if (logCount > 0) {
-              uint8_t st = (logCount < LOG_BUF_MAX) ? 0 : logHead;
-              for (uint8_t i = 0; i < logCount && p < (int)maxLen - 160; i++) {
-                uint8_t idx = (st + i) % LOG_BUF_MAX;
-                if (i > 0) p += snprintf(b + p, maxLen - p, ",");
-                // JSON-escape quotes and backslashes in log text
-                char esc[200];
-                int e = 0;
-                for (int j = 0; logBuffer[idx].text[j] && e < 198; j++) {
-                  char c = logBuffer[idx].text[j];
-                  if (c == '"' || c == '\\') esc[e++] = '\\';
-                  esc[e++] = c;
-                }
-                esc[e] = '\0';
-                p += snprintf(b + p, maxLen - p,
-                  "{\"type\":\"%s\",\"text\":\"%s\",\"ts\":%u}",
-                  logBuffer[idx].type == 'e' ? "error" : "msg",
-                  esc, logBuffer[idx].ts);
-              }
+          case 7: { // Close analysis + titration curve header
+            n = snprintf(b, maxLen,
+              "]},\"titration_curve\":{\"count\":%d,\"points\":[", mesCount);
+            dp = 0;
+            ds = (mesCount > 0) ? 8 : 9;
+            break;
+          }
+          case 8: { // Titration points (batched)
+            int p = 0;
+            while (dp < mesCount && p < (int)maxLen - 40) {
+              if (dp > 0) p += snprintf(b + p, maxLen - p, ",");
+              p += snprintf(b + p, maxLen - p, "[%.3f,%.2f,%.1f]",
+                           mesBuffer[dp].ml, mesBuffer[dp].ph, mesBuffer[dp].mV);
+              dp++;
             }
-            p += snprintf(b + p, maxLen - p, "]}");
             n = p;
-            ds = 8;
+            if (dp >= mesCount) ds = 9;
+            break;
+          }
+          case 9: { // Close titration + event log header
+            n = snprintf(b, maxLen, "]},\"event_log\":[");
+            dp = 0;
+            ds = (logCount > 0) ? 10 : 11;
+            break;
+          }
+          case 10: { // Event log entries (batched)
+            int p = 0;
+            uint8_t st = (logCount < LOG_BUF_MAX) ? 0 : logHead;
+            while (dp < logCount && p < (int)maxLen - 160) {
+              uint8_t idx = (st + dp) % LOG_BUF_MAX;
+              if (dp > 0) p += snprintf(b + p, maxLen - p, ",");
+              // JSON-escape quotes and backslashes in log text
+              char esc[200];
+              int e = 0;
+              for (int j = 0; logBuffer[idx].text[j] && e < 198; j++) {
+                char c = logBuffer[idx].text[j];
+                if (c == '"' || c == '\\') esc[e++] = '\\';
+                esc[e++] = c;
+              }
+              esc[e] = '\0';
+              p += snprintf(b + p, maxLen - p,
+                "{\"type\":\"%s\",\"text\":\"%s\",\"ts\":%u}",
+                logBuffer[idx].type == 'e' ? "error" : "msg",
+                esc, logBuffer[idx].ts);
+              dp++;
+            }
+            n = p;
+            if (dp >= logCount) ds = 11;
+            break;
+          }
+          case 11: { // Close event log + close JSON
+            n = snprintf(b, maxLen, "]}");
+            ds = 12;
             break;
           }
           default:
