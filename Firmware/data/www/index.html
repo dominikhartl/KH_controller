@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>KH Controller V3</title>
-  <link rel="stylesheet" href="style.css?v=7">
+  <link rel="stylesheet" href="style.css?v=8">
 </head>
 <body>
   <header>
@@ -76,6 +76,11 @@
       <button class="tab" data-tab="ph">pH</button>
       <button class="tab" data-tab="live">Live pH</button>
       <button class="tab" data-tab="gran">Gran</button>
+    </div>
+    <div id="kh-method-toggle" class="kh-method-toggle">
+      <button class="kh-method-btn active" data-method="combined">Combined</button>
+      <button class="kh-method-btn" data-method="gran">Gran</button>
+      <button class="kh-method-btn" data-method="endpoint">Endpoint</button>
     </div>
     <div id="gran-subtabs" class="gran-subtabs" style="display:none">
       <button id="gran-tab-last" class="gran-subtab active">Last</button>
@@ -241,9 +246,10 @@
     <div><strong>RSSI:</strong> <span id="rssi">--</span> dBm</div>
     <div><strong>Uptime:</strong> <span id="uptime">--</span></div>
     <a class="export-btn" href="/api/export.csv" download="kh_history.csv">Export CSV</a>
+    <a class="export-btn" href="/api/diagnostics" download="kh_diagnostics.json">Diagnostics</a>
   </section>
 
   <script src="chart.min.js?v=2"></script>
-  <script src="app.js?v=4"></script>
+  <script src="app.js?v=5"></script>
 </body>
 </html>

@@ -347,46 +347,91 @@
 
   function updateHistory(d) {
     if (!d.data || !d.sensor) return;
-    if (d.sensor === 'gran') { updateGranHistory(d.data); return; }
-    var chart = (d.sensor === 'kh') ? khChart : phChart;
-    if (!chart) return;
-    chart.data.labels = d.data.map(function(p) { return fmtDate(p[0]); });
-    chart.data.datasets[0].data = d.data.map(function(p) { return p[1]; });
+    if (d.sensor === 'gran') {
+      granHistoryData = d.data;
+      updateGranHistChart();
+      renderKHChart(); // gran data may affect KH chart when method filter is active
+      return;
+    }
+    if (d.sensor === 'kh') {
+      khHistoryData = d.data;
+      renderKHChart();
+      return;
+    }
+    // pH chart
+    if (!phChart) return;
+    phChart.data.labels = d.data.map(function(p) { return fmtDate(p[0]); });
+    phChart.data.datasets[0].data = d.data.map(function(p) { return p[1]; });
+    phChart.update();
+  }
 
-    // Compute and display regression trend line for KH chart
-    if (d.sensor === 'kh' && d.data.length >= 3) {
-      var n = d.data.length;
-      var t0 = d.data[0][0];
+  function renderKHChart() {
+    if (!khChart) return;
+    // Build data series based on selected method
+    var data;
+    if (khMethod === 'combined' || !granHistoryData) {
+      data = khHistoryData || [];
+    } else {
+      // Extract from gran history: [ts, r2, eqML, eph, mth, khG, khE]
+      var idx = (khMethod === 'gran') ? 5 : 6;
+      data = [];
+      for (var i = 0; i < granHistoryData.length; i++) {
+        var val = granHistoryData[i][idx];
+        if (val > 0) data.push([granHistoryData[i][0], val]);
+      }
+    }
+    if (!data || data.length === 0) {
+      khChart.data.labels = [];
+      khChart.data.datasets[0].data = [];
+      khChart.data.datasets[1].data = [];
+      khChart.update();
+      setText('val-kh-slope', '--');
+      return;
+    }
+    khChart.data.labels = data.map(function(p) { return fmtDate(p[0]); });
+    khChart.data.datasets[0].data = data.map(function(p) { return p[1]; });
+
+    // Compute regression trend line
+    if (data.length >= 3) {
+      var n = data.length;
+      var t0 = data[0][0];
       var sx = 0, sy = 0, sxx = 0, sxy = 0;
       for (var i = 0; i < n; i++) {
-        var x = (d.data[i][0] - t0) / 3600;  // hours from first point
-        var y = d.data[i][1];
+        var x = (data[i][0] - t0) / 3600;
+        var y = data[i][1];
         sx += x; sy += y; sxx += x * x; sxy += x * y;
       }
       var denom = n * sxx - sx * sx;
       if (Math.abs(denom) > 1e-12) {
         var slope = (n * sxy - sx * sy) / denom;
         var intercept = (sy - slope * sx) / n;
-        chart.data.datasets[1].data = d.data.map(function(p) {
+        khChart.data.datasets[1].data = data.map(function(p) {
           var x = (p[0] - t0) / 3600;
           return slope * x + intercept;
         });
+        // Update trend display (slope is dKH/hour, convert to dKH/day)
+        var slopePerDay = slope * 24;
+        setText('val-kh-slope', (slopePerDay >= 0 ? '+' : '') + slopePerDay.toFixed(2));
       } else {
-        chart.data.datasets[1].data = [];
+        khChart.data.datasets[1].data = [];
+        setText('val-kh-slope', '--');
       }
+    } else {
+      khChart.data.datasets[1].data = [];
+      setText('val-kh-slope', '--');
     }
-    chart.update();
+    khChart.update();
   }
 
-  function updateGranHistory(data) {
-    if (!granHistChart || !data || data.length === 0) return;
-    // data: [[ts, r2, eqML, endpointPH, method], ...]
-    granHistChart.data.labels = data.map(function(p) { return fmtDate(p[0]); });
-    granHistChart.data.datasets[0].data = data.map(function(p) { return p[1]; }); // R2
-    granHistChart.data.datasets[1].data = data.map(function(p) { return p[3]; }); // endpointPH
+  function updateGranHistChart() {
+    if (!granHistChart || !granHistoryData || granHistoryData.length === 0) return;
+    // data: [[ts, r2, eqML, endpointPH, method, khGran, khEndpoint], ...]
+    granHistChart.data.labels = granHistoryData.map(function(p) { return fmtDate(p[0]); });
+    granHistChart.data.datasets[0].data = granHistoryData.map(function(p) { return p[1]; }); // R2
+    granHistChart.data.datasets[1].data = granHistoryData.map(function(p) { return p[3]; }); // endpointPH
     // Color interpolation points red
-    var r2Colors = data.map(function(p) { return p[4] === 1 ? '#0a84ff' : '#ff453a'; });
-    var phColors = data.map(function(p) { return p[4] === 1 ? '#ff9f0a' : '#ff453a'; });
+    var r2Colors = granHistoryData.map(function(p) { return p[4] === 1 ? '#0a84ff' : '#ff453a'; });
+    var phColors = granHistoryData.map(function(p) { return p[4] === 1 ? '#ff9f0a' : '#ff453a'; });
     granHistChart.data.datasets[0].pointBackgroundColor = r2Colors;
     granHistChart.data.datasets[1].pointBackgroundColor = phColors;
     granHistChart.update();
@@ -404,6 +449,9 @@
   // --- Charts ---
   var khChart, phChart, liveChart, granChart, granHistChart;
   var granView = 'last'; // 'last' or 'history'
+  var khMethod = 'combined'; // 'combined', 'gran', 'endpoint'
+  var khHistoryData = null;  // raw kh history [[ts, val], ...]
+  var granHistoryData = null; // raw gran history [[ts, r2, eqML, eph, mth, khG, khE], ...]
   var chartOpts = {
     responsive: true,
     maintainAspectRatio: false,
@@ -499,9 +547,11 @@
           var chartEl = document.getElementById('chart-' + sel);
           if (chartEl) chartEl.style.display = 'block';
         }
-        // KH trend info
+        // KH trend info and method toggle
         var khTrend = document.getElementById('kh-trend');
         if (khTrend) khTrend.style.display = (sel === 'kh') ? '' : 'none';
+        var khToggle = document.getElementById('kh-method-toggle');
+        if (khToggle) khToggle.style.display = (sel === 'kh') ? 'flex' : 'none';
         // Gran sub-tabs visibility
         var granSub = document.getElementById('gran-subtabs');
         if (granSub) granSub.style.display = (sel === 'gran') ? 'flex' : 'none';
@@ -782,6 +832,17 @@
   function pad(n) { return n < 10 ? '0' + n : '' + n; }
 
   // --- Init ---
+  function initKHMethodToggle() {
+    document.querySelectorAll('.kh-method-btn').forEach(function(btn) {
+      btn.addEventListener('click', function() {
+        document.querySelectorAll('.kh-method-btn').forEach(function(b) { b.classList.remove('active'); });
+        btn.classList.add('active');
+        khMethod = btn.getAttribute('data-method');
+        renderKHChart();
+      });
+    });
+  }
+
   function init() {
     initCharts();
     initTabs();
@@ -789,6 +850,7 @@
     initButtons();
     initConfigInputs();
     initSchedule();
+    initKHMethodToggle();
     connect();
   }
 

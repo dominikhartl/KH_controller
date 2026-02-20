@@ -10,6 +10,9 @@
 # Credentials (use credentials.h.example as template)
 include/credentials.h
 
+# History backup (auto-created by save_history.py during uploadfs)
+data/history/
+
 # macOS
 .DS_Store
 

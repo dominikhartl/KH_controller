@@ -9,6 +9,7 @@ static const int mqtt_port = 1883;
 
 // Device name used as MQTT topic prefix / hostname
 static const char DEVICE_NAME[] = "KHcontrollerV3";
+static const char FW_VERSION[] = "1.0.0";
 
 // ADC configuration (full-precision mode)
 #define ADC_OVERSAMPLING 64

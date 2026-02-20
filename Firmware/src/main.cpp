@@ -53,27 +53,16 @@ void publishMessage(const char* message);
 void publishError(const char* errorMessage);
 void calibrateTitrationPump();
 
-struct KHResult {
-  float khValue;       // NAN on error
-  float startPH;
-  float hclUsed;
-  float granR2;
-  float endpointPH;
-  bool usedGran;
-  float confidence;    // 0.0-1.0 composite quality score
-  int dataPointCount;
-  int stabTimeouts;
-  unsigned long elapsedSec;
-  float crossValDiff;  // |KH_gran - KH_endpoint|, NAN if unavailable
-};
-
 KHResult measureKH();
 void measureKHWithValidation();
 
 // Publish a finalized KH result to MQTT, config store, and history
 static void publishKHResult(const KHResult& r) {
+  storeLastKHResult(r);
   { char mqBuf[16]; snprintf(mqBuf, sizeof(mqBuf), "%.2f", r.khValue);
     mqttManager.publish(MQkhValue, mqBuf, true); }
+  { char mqBuf[16]; snprintf(mqBuf, sizeof(mqBuf), "%.2f", r.startPH);
+    mqttManager.publish(MQstartpH, mqBuf, true); }
   { char mqBuf[16]; snprintf(mqBuf, sizeof(mqBuf), "%.2f", r.confidence);
     mqttManager.publish(MQconfidence, mqBuf, true); }
   configStore.setLastKH(r.khValue);
@@ -82,7 +71,7 @@ static void publishKHResult(const KHResult& r) {
   uint32_t ts = (uint32_t)time(nullptr);
   appendHistory("kh", r.khValue, ts);
   appendHistory("ph", r.startPH, ts);
-  appendGranHistory(r.granR2, r.hclUsed, r.endpointPH, r.usedGran, r.confidence, ts);
+  appendGranHistory(r.granR2, r.hclUsed, r.endpointPH, r.usedGran, r.confidence, r.khGran, r.khEndpoint, ts);
 
   // Quality metrics
   { char mqBuf[16]; snprintf(mqBuf, sizeof(mqBuf), "%.4f", r.granR2);
@@ -684,23 +673,43 @@ KHResult measureKH() {
             publishError(warnBuf);
           }
 
-          // Cross-validate: compare Gran KH vs endpoint interpolation KH
+          // Always compute both Gran and endpoint KH for cross-validation and CSV
+          float khGran = NAN;
+          float khEp = NAN;
           float crossValDiff = NAN;
+
           if (usedGran) {
+            khGran = khValue;
             float epUnits = interpolateAtPH(dataPoints, nPoints, ENDPOINT_PH);
             if (!isnan(epUnits)) {
               float epHclUsed = (epUnits / calUnits) * titVol;
-              float epKH = (epHclUsed / samVol) * 2800.0f * hclMol * corrF;
-              crossValDiff = fabsf(khValue - epKH);
+              khEp = (epHclUsed / samVol) * 2800.0f * hclMol * corrF;
+              crossValDiff = fabsf(khGran - khEp);
               char cvBuf[80];
               snprintf(cvBuf, sizeof(cvBuf), "Cross-val: Gran=%.2f Endpoint=%.2f diff=%.2f dKH",
-                       khValue, epKH, crossValDiff);
+                       khGran, khEp, crossValDiff);
               publishMessage(cvBuf);
+            }
+          } else {
+            khEp = khValue;
+            // Try Gran even when endpoint method is primary (for CSV record)
+            if (granCount >= MIN_GRAN_POINTS) {
+              float tryR2 = 0;
+              char granReason2[64] = "";
+              float granUnits2 = granAnalysis(dataPoints, nPoints, samVol, titVol, calUnits, &tryR2, granReason2, sizeof(granReason2));
+              if (!isnan(granUnits2)) {
+                granR2 = tryR2;
+                float granHcl = (granUnits2 / calUnits) * titVol;
+                khGran = (granHcl / samVol) * 2800.0f * hclMol * corrF;
+                crossValDiff = fabsf(khGran - khEp);
+              }
             }
           }
 
           // Populate result struct — publishing deferred to measureKHWithValidation()
           result.khValue = khValue;
+          result.khGran = khGran;
+          result.khEndpoint = khEp;
           result.startPH = startPH;
           result.hclUsed = hclUsed;
           result.granR2 = granR2;

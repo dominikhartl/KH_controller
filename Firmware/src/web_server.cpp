@@ -48,6 +48,17 @@ static float granBufR2 = 0;
 static float granBufEqML = 0;
 static bool granBufUsed = false;
 
+// Last measurement result (for diagnostics download)
+static KHResult lastKHResult = {};
+static bool hasLastKHResult = false;
+static uint32_t lastMeasTimestamp = 0;
+
+void storeLastKHResult(const KHResult& r) {
+  lastKHResult = r;
+  hasLastKHResult = true;
+  lastMeasTimestamp = (uint32_t)time(nullptr);
+}
+
 // Forward declarations for command/config handlers from main
 extern int units;
 extern float startPH;
@@ -241,8 +252,8 @@ static void handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
       bool isGran = (strcmp(sensor, "gran") == 0);
 
       if (isGran) {
-        // Gran CSV: timestamp,r2,eqML,endpointPH,method
-        DynamicJsonDocument resp(4096);
+        // Gran CSV: timestamp,r2,eqML,endpointPH,method,confidence,khGran,khEndpoint
+        DynamicJsonDocument resp(6144);
         resp["type"] = "history";
         resp["sensor"] = "gran";
         JsonArray dataArr = resp.createNestedArray("data");
@@ -261,17 +272,36 @@ static void handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
           float r2  = line.substring(c1 + 1, c2).toFloat();
           float eq  = line.substring(c2 + 1, c3).toFloat();
           float eph = line.substring(c3 + 1, c4).toFloat();
-          int   mth = line.substring(c4 + 1).toInt();
+          // Parse remaining fields: method, confidence, khGran, khEndpoint
+          int c5 = line.indexOf(',', c4 + 1);
+          int mth = 0;
+          float khG = 0, khE = 0;
+          if (c5 > 0) {
+            mth = line.substring(c4 + 1, c5).toInt();
+            int c6 = line.indexOf(',', c5 + 1);
+            if (c6 > 0) {
+              // confidence at c5+1..c6
+              int c7 = line.indexOf(',', c6 + 1);
+              if (c7 > 0) {
+                khG = line.substring(c6 + 1, c7).toFloat();
+                khE = line.substring(c7 + 1).toFloat();
+              }
+            }
+          } else {
+            mth = line.substring(c4 + 1).toInt();
+          }
           JsonArray pt = dataArr.createNestedArray();
           pt.add(ts);
           pt.add(r2);
           pt.add(eq);
           pt.add(eph);
           pt.add(mth);
+          pt.add(khG);
+          pt.add(khE);
         }
         f.close();
 
-        static char buf[4096];
+        static char buf[6144];
         size_t written = serializeJson(resp, buf, sizeof(buf));
         if (written > 0) ws.textAll(buf);
       } else {
@@ -622,7 +652,7 @@ void appendHistory(const char* sensor, float value, uint32_t ts) {
   }
 }
 
-void appendGranHistory(float r2, float eqML, float endpointPH, bool usedGran, float confidence, uint32_t ts) {
+void appendGranHistory(float r2, float eqML, float endpointPH, bool usedGran, float confidence, float khGran, float khEndpoint, uint32_t ts) {
   const char* filename = "/history/gran.csv";
 
   if (!LittleFS.exists("/history")) {
@@ -655,7 +685,8 @@ void appendGranHistory(float r2, float eqML, float endpointPH, bool usedGran, fl
 
   File f = LittleFS.open(filename, "a");
   if (f) {
-    f.printf("%u,%.4f,%.3f,%.2f,%d,%.2f\n", ts, r2, eqML, endpointPH, usedGran ? 1 : 0, confidence);
+    f.printf("%u,%.4f,%.3f,%.2f,%d,%.2f,%.2f,%.2f\n", ts, r2, eqML, endpointPH, usedGran ? 1 : 0, confidence,
+             isnan(khGran) ? 0.0f : khGran, isnan(khEndpoint) ? 0.0f : khEndpoint);
     f.close();
   }
 }
@@ -746,6 +777,12 @@ float computeKHSlope() {
   return (float)(slopePerHour * 24.0);  // Convert to dKH/day
 }
 
+// NAN-safe float formatter for JSON diagnostics output
+static int diagFloat(char* buf, size_t len, float val, int dec) {
+  if (isnan(val)) return snprintf(buf, len, "null");
+  return snprintf(buf, len, "%.*f", dec, (double)val);
+}
+
 void setupWebServer() {
   LittleFS.begin(true); // Format if mount fails
 
@@ -759,7 +796,7 @@ void setupWebServer() {
   // CSV export: merge kh, ph, gran history into one download
   server.on("/api/export.csv", HTTP_GET, [](AsyncWebServerRequest* request) {
     // Collect entries keyed by timestamp
-    struct Row { float kh; float ph; float r2; float eqML; float epPH; int method; float confidence; bool hasGran; };
+    struct Row { float kh; float ph; float r2; float eqML; float epPH; int method; float confidence; float khGran; float khEndpoint; bool hasGran; };
     static const int MAX_ROWS = 200;
     static uint32_t timestamps[200];
     static Row rows[200];
@@ -769,7 +806,7 @@ void setupWebServer() {
       for (int i = 0; i < nRows; i++) { if (timestamps[i] == ts) return i; }
       if (nRows >= MAX_ROWS) return -1;
       timestamps[nRows] = ts;
-      rows[nRows] = {NAN, NAN, NAN, NAN, NAN, -1, NAN, false};
+      rows[nRows] = {NAN, NAN, NAN, NAN, NAN, -1, NAN, NAN, NAN, false};
       return nRows++;
     };
 
@@ -815,11 +852,23 @@ void setupWebServer() {
           rows[idx].r2 = line.substring(c1 + 1, c2).toFloat();
           rows[idx].eqML = line.substring(c2 + 1, c3).toFloat();
           rows[idx].epPH = line.substring(c3 + 1, c4).toFloat();
-          // Parse method and optional confidence (6th field)
+          // Parse method, confidence, khGran, khEndpoint (fields 5-8)
           int c5 = line.indexOf(',', c4 + 1);
           if (c5 > 0) {
             rows[idx].method = line.substring(c4 + 1, c5).toInt();
-            rows[idx].confidence = line.substring(c5 + 1).toFloat();
+            int c6 = line.indexOf(',', c5 + 1);
+            if (c6 > 0) {
+              rows[idx].confidence = line.substring(c5 + 1, c6).toFloat();
+              int c7 = line.indexOf(',', c6 + 1);
+              if (c7 > 0) {
+                float g = line.substring(c6 + 1, c7).toFloat();
+                float e = line.substring(c7 + 1).toFloat();
+                if (g > 0) rows[idx].khGran = g;
+                if (e > 0) rows[idx].khEndpoint = e;
+              }
+            } else {
+              rows[idx].confidence = line.substring(c5 + 1).toFloat();
+            }
           } else {
             rows[idx].method = line.substring(c4 + 1).toInt();
           }
@@ -840,7 +889,7 @@ void setupWebServer() {
     // Stream response
     String csv;
     csv.reserve(nRows * 80 + 80);
-    csv += "timestamp,datetime,kh,ph,r2,eq_ml,endpoint_ph,method,confidence\n";
+    csv += "timestamp,datetime,kh,ph,r2,eq_ml,endpoint_ph,method,confidence,kh_gran,kh_endpoint\n";
     for (int i = 0; i < nRows; i++) {
       time_t t = (time_t)timestamps[i];
       struct tm tm;
@@ -854,8 +903,10 @@ void setupWebServer() {
         csv += "," + String(rows[i].r2, 4) + "," + String(rows[i].eqML, 3)
              + "," + String(rows[i].epPH, 2) + "," + String(rows[i].method);
         csv += isnan(rows[i].confidence) ? "," : ("," + String(rows[i].confidence, 2));
+        csv += isnan(rows[i].khGran) ? "," : ("," + String(rows[i].khGran, 2));
+        csv += isnan(rows[i].khEndpoint) ? "," : ("," + String(rows[i].khEndpoint, 2));
       } else {
-        csv += ",,,,,";
+        csv += ",,,,,,,";
       }
       csv += "\n";
     }
@@ -863,6 +914,220 @@ void setupWebServer() {
     AsyncWebServerResponse* resp = request->beginResponse(200, "text/csv", csv);
     resp->addHeader("Content-Disposition", "attachment; filename=\"kh_history.csv\"");
     request->send(resp);
+  });
+
+  // Raw history file download (used by backup script before uploadfs)
+  const char* historyFiles[] = {"kh", "ph", "gran"};
+  for (int i = 0; i < 3; i++) {
+    server.on(
+      (String("/api/history/") + historyFiles[i]).c_str(), HTTP_GET,
+      [](AsyncWebServerRequest* request) {
+        String path = request->url();
+        String name = path.substring(path.lastIndexOf('/') + 1);
+        String filePath = "/history/" + name + ".csv";
+        if (LittleFS.exists(filePath)) {
+          request->send(LittleFS, filePath, "text/csv");
+        } else {
+          request->send(204);  // No content
+        }
+      }
+    );
+  }
+
+  // Diagnostics JSON download — chunked to avoid large heap allocation
+  server.on("/api/diagnostics", HTTP_GET, [](AsyncWebServerRequest* request) {
+    static int ds;       // section index
+    static uint16_t dp;  // point index for batched arrays
+    ds = 0;
+    dp = 0;
+
+    AsyncWebServerResponse* response = request->beginChunkedResponse(
+      "application/json",
+      [](uint8_t* buffer, size_t maxLen, size_t /* index */) -> size_t {
+        char* b = (char*)buffer;
+        int n = 0;
+        if (maxLen < 64) return 0;
+
+        switch (ds) {
+          case 0: { // Header + config
+            n = snprintf(b, maxLen,
+              "{\"device\":\"%s\",\"firmware\":\"%s\","
+              "\"timestamp\":%u,\"uptime\":%lu,\"freeHeap\":%u,"
+              "\"config\":{"
+              "\"titration_vol\":%.2f,\"sample_vol\":%.1f,"
+              "\"correction_factor\":%.3f,\"hcl_molarity\":%.4f,"
+              "\"hcl_volume\":%.1f,\"cal_units\":%d,"
+              "\"fast_ph\":%.1f,\"endpoint_method\":%d,"
+              "\"min_start_ph\":%.1f,\"stab_timeout\":%d,"
+              "\"cal_v4\":%.2f,\"cal_v7\":%.2f,\"cal_v10\":%.2f,"
+              "\"schedule_mode\":%d,\"interval_hours\":%d,\"anchor_time\":%d"
+              "},",
+              DEVICE_NAME, FW_VERSION,
+              (uint32_t)time(nullptr), millis() / 1000, ESP.getFreeHeap(),
+              configStore.getTitrationVolume(), configStore.getSampleVolume(),
+              configStore.getCorrectionFactor(), configStore.getHClMolarity(),
+              configStore.getHClVolume(), configStore.getCalUnits(),
+              configStore.getFastTitrationPH(), (int)configStore.getEndpointMethod(),
+              configStore.getMinStartPH(), configStore.getStabilizationTimeout(),
+              voltage_4PH, voltage_7PH, voltage_10PH,
+              (int)configStore.getScheduleMode(),
+              (int)configStore.getIntervalHours(),
+              (int)configStore.getAnchorTime());
+            ds = 1;
+            break;
+          }
+          case 1: { // Constants
+            n = snprintf(b, maxLen,
+              "\"constants\":{"
+              "\"gran_region_ph\":%.1f,\"gran_stop_ph\":%.1f,"
+              "\"endpoint_ph\":%.1f,\"fixed_stop_ph\":%.1f,"
+              "\"min_gran_points\":%d,\"gran_min_r2\":%.2f,"
+              "\"steps_per_rev\":%d,\"motor_steps_per_unit\":%d,"
+              "\"titration_step_size\":%d,\"medium_step_mult\":%d,"
+              "\"gran_step_mult\":%d,\"fast_batch_max\":%d,"
+              "\"fast_batch_min\":%d,\"nernst_factor\":%.5f,"
+              "\"meas_temp_c\":%.1f,\"ph_amp_gain\":%.1f},",
+              GRAN_REGION_PH, GRAN_STOP_PH,
+              ENDPOINT_PH, FIXED_ENDPOINT_STOP_PH,
+              MIN_GRAN_POINTS, GRAN_MIN_R2,
+              STEPS_PER_REVOLUTION, MOTOR_STEPS_PER_UNIT,
+              TITRATION_STEP_SIZE, MEDIUM_STEP_MULTIPLIER,
+              GRAN_STEP_MULTIPLIER, FAST_BATCH_MAX,
+              FAST_BATCH_MIN, NERNST_FACTOR,
+              MEASUREMENT_TEMP_C, PH_AMP_GAIN);
+            ds = 2;
+            break;
+          }
+          case 2: { // Measurement result
+            if (!hasLastKHResult) {
+              n = snprintf(b, maxLen, "\"measurement\":{\"available\":false},");
+            } else {
+              const KHResult& r = lastKHResult;
+              char sv[16],sg[16],se[16],sp[16],sh[16],sr[16],ep[16],co[16],cv[16];
+              diagFloat(sv, 16, r.khValue, 2);
+              diagFloat(sg, 16, r.khGran, 2);
+              diagFloat(se, 16, r.khEndpoint, 2);
+              diagFloat(sp, 16, r.startPH, 2);
+              diagFloat(sh, 16, r.hclUsed, 3);
+              diagFloat(sr, 16, r.granR2, 4);
+              diagFloat(ep, 16, r.endpointPH, 2);
+              diagFloat(co, 16, r.confidence, 2);
+              diagFloat(cv, 16, r.crossValDiff, 2);
+              n = snprintf(b, maxLen,
+                "\"measurement\":{\"available\":true,"
+                "\"timestamp\":%u,"
+                "\"kh_value\":%s,\"kh_gran\":%s,\"kh_endpoint\":%s,"
+                "\"start_ph\":%s,\"hcl_used_ml\":%s,"
+                "\"gran_r2\":%s,\"endpoint_ph\":%s,"
+                "\"used_gran\":%s,\"confidence\":%s,"
+                "\"data_points\":%d,\"stab_timeouts\":%d,"
+                "\"elapsed_sec\":%lu,\"cross_val_diff\":%s},",
+                lastMeasTimestamp,
+                sv, sg, se, sp, sh, sr, ep,
+                r.usedGran ? "true" : "false",
+                co, r.dataPointCount, r.stabTimeouts,
+                r.elapsedSec, cv);
+            }
+            ds = 3;
+            break;
+          }
+          case 3: { // Probe health
+            char reason[96];
+            const char* health = getProbeHealthDetail(reason, sizeof(reason));
+            char ae[16], al[16], ay[16], as[16], ls[16];
+            diagFloat(ae, 16, getAcidEfficiency(), 1);
+            diagFloat(al, 16, getAlkalineEfficiency(), 1);
+            diagFloat(ay, 16, getProbeAsymmetry(), 1);
+            diagFloat(as, 16, getAcidSlope(), 3);
+            diagFloat(ls, 16, getAlkalineSlope(), 3);
+            n = snprintf(b, maxLen,
+              "\"probe\":{\"health\":\"%s\",\"reason\":\"%s\","
+              "\"acid_eff\":%s,\"alk_eff\":%s,\"asymmetry\":%s,"
+              "\"acid_slope\":%s,\"alk_slope\":%s,"
+              "\"nernst_ideal\":%.3f,"
+              "\"response_ms\":%lu,\"cal_ts\":%u},",
+              health, reason,
+              ae, al, ay, as, ls,
+              NERNST_FACTOR * (273.15f + MEASUREMENT_TEMP_C),
+              getLastStabilizationMs(),
+              configStore.getCalTimestamp());
+            ds = 4;
+            break;
+          }
+          case 4: { // Gran scatter (header + all points)
+            int p = snprintf(b, maxLen,
+              "\"gran_scatter\":{\"r2\":%.4f,\"eq_ml\":%.3f,"
+              "\"used\":%s,\"count\":%d,\"points\":[",
+              granBufR2, granBufEqML,
+              granBufUsed ? "true" : "false",
+              (int)granBufCount);
+            for (uint8_t i = 0; i < granBufCount && p < (int)maxLen - 30; i++) {
+              if (i > 0) p += snprintf(b + p, maxLen - p, ",");
+              p += snprintf(b + p, maxLen - p, "[%.3f,%.1f]",
+                           granBuffer[i].ml, granBuffer[i].f);
+            }
+            p += snprintf(b + p, maxLen - p, "]},");
+            n = p;
+            ds = 5;
+            break;
+          }
+          case 5: { // Titration curve header
+            n = snprintf(b, maxLen,
+              "\"titration_curve\":{\"count\":%d,\"points\":[", mesCount);
+            dp = 0;
+            ds = (mesCount > 0) ? 6 : 7;
+            break;
+          }
+          case 6: { // Titration points (batched)
+            int p = 0;
+            while (dp < mesCount && p < (int)maxLen - 30) {
+              if (dp > 0) p += snprintf(b + p, maxLen - p, ",");
+              p += snprintf(b + p, maxLen - p, "[%.3f,%.2f]",
+                           mesBuffer[dp].ml, mesBuffer[dp].ph);
+              dp++;
+            }
+            n = p;
+            if (dp >= mesCount) ds = 7;
+            break;
+          }
+          case 7: { // Close titration + event log + close JSON
+            int p = snprintf(b, maxLen, "]},\"event_log\":[");
+            if (logCount > 0) {
+              uint8_t st = (logCount < LOG_BUF_MAX) ? 0 : logHead;
+              for (uint8_t i = 0; i < logCount && p < (int)maxLen - 160; i++) {
+                uint8_t idx = (st + i) % LOG_BUF_MAX;
+                if (i > 0) p += snprintf(b + p, maxLen - p, ",");
+                // JSON-escape quotes and backslashes in log text
+                char esc[200];
+                int e = 0;
+                for (int j = 0; logBuffer[idx].text[j] && e < 198; j++) {
+                  char c = logBuffer[idx].text[j];
+                  if (c == '"' || c == '\\') esc[e++] = '\\';
+                  esc[e++] = c;
+                }
+                esc[e] = '\0';
+                p += snprintf(b + p, maxLen - p,
+                  "{\"type\":\"%s\",\"text\":\"%s\",\"ts\":%u}",
+                  logBuffer[idx].type == 'e' ? "error" : "msg",
+                  esc, logBuffer[idx].ts);
+              }
+            }
+            p += snprintf(b + p, maxLen - p, "]}");
+            n = p;
+            ds = 8;
+            break;
+          }
+          default:
+            return (size_t)0;
+        }
+
+        if (n >= (int)maxLen) n = (int)maxLen - 1;
+        return (size_t)n;
+      });
+
+    response->addHeader("Content-Disposition",
+                        "attachment; filename=\"kh_diagnostics.json\"");
+    request->send(response);
   });
 
   // Fallback API for state

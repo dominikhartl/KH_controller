@@ -105,6 +105,9 @@ h2{font-size:.8em;font-weight:600;color:var(--text-secondary);text-transform:upp
 .gran-subtabs{display:flex;gap:4px;padding:3px;background:var(--card-elevated);border-radius:var(--radius-sm);margin-bottom:8px}
 .gran-subtab{flex:1;background:transparent;border:none;color:var(--text-secondary);padding:5px 10px;border-radius:5px;cursor:pointer;font-size:.75em;font-weight:500;transition:all .2s ease;-webkit-tap-highlight-color:transparent}
 .gran-subtab.active{background:var(--card);color:var(--text-primary);box-shadow:0 1px 4px rgba(0,0,0,.3)}
+.kh-method-toggle{display:flex;gap:4px;padding:3px;background:var(--card-elevated);border-radius:var(--radius-sm);margin-bottom:8px}
+.kh-method-btn{flex:1;background:transparent;border:none;color:var(--text-secondary);padding:5px 10px;border-radius:5px;cursor:pointer;font-size:.75em;font-weight:500;transition:all .2s ease;-webkit-tap-highlight-color:transparent}
+.kh-method-btn.active{background:var(--card);color:var(--text-primary);box-shadow:0 1px 4px rgba(0,0,0,.3)}
 
 /* === Buttons === */
 .btn-row-primary{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px}
