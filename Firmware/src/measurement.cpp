@@ -225,9 +225,9 @@ const char* getProbeHealthDetail(char* reasonBuf, size_t reasonLen) {
     return "Fair";
   }
 
-  // Tertiary: noise check (only if we have data from a recent measurement)
+  // Tertiary: noise check (only after enough stabilization readings for a meaningful average)
   float avgNoise = getAvgStabNoiseMv();
-  if (avgNoise > 0) {
+  if (avgNoise > 0 && stabNoiseMvCount >= 5) {
     if (avgNoise > PROBE_NOISE_FAIR_MV) {
       if (reasonBuf) snprintf(reasonBuf, reasonLen, "high noise %.1f mV (limit %.0f mV)", avgNoise, PROBE_NOISE_FAIR_MV);
       return "Fair";

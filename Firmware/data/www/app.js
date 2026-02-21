@@ -403,12 +403,22 @@
       khChart.data.labels = [];
       khChart.data.datasets[0].data = [];
       khChart.data.datasets[1].data = [];
+      khChart.data.datasets[2].data = [];
       khChart.update();
       setText('val-kh-slope', '--');
       return;
     }
     khChart.data.labels = data.map(function(p) { return fmtDate(p[0]); });
     khChart.data.datasets[0].data = data.map(function(p) { return p[1]; });
+
+    // Confidence line from gran history (index 9), matched by timestamp
+    if (granHistoryData) {
+      var confByTs = {};
+      for (var i = 0; i < granHistoryData.length; i++) confByTs[granHistoryData[i][0]] = granHistoryData[i][9];
+      khChart.data.datasets[2].data = data.map(function(p) { return confByTs[p[0]] || null; });
+    } else {
+      khChart.data.datasets[2].data = [];
+    }
 
     // Compute regression trend line
     if (data.length >= 3) {
@@ -470,7 +480,7 @@
   var granView = 'last'; // 'last' or 'history'
   var khMethod = 'combined'; // 'combined', 'gran', 'endpoint'
   var khHistoryData = null;  // raw kh history [[ts, val], ...]
-  var granHistoryData = null; // raw gran history [[ts, r2, eqML, eph, mth, khG, khE, noiseMv, reversals], ...]
+  var granHistoryData = null; // raw gran history [[ts, r2, eqML, eph, mth, khG, khE, noiseMv, reversals, conf], ...]
   var chartOpts = {
     responsive: true,
     maintainAspectRatio: false,
@@ -486,10 +496,19 @@
     khChart = new Chart(document.getElementById('chart-kh'), {
       type: 'line',
       data: { labels: [], datasets: [
-        { label: 'KH', data: [], borderColor: '#0a84ff', borderWidth: 2, pointRadius: 3, tension: 0.1 },
-        { label: 'Trend', data: [], borderColor: 'rgba(255,159,10,0.6)', borderWidth: 2, borderDash: [6,3], pointRadius: 0, tension: 0 }
+        { label: 'KH', data: [], borderColor: '#0a84ff', borderWidth: 2, pointRadius: 3, tension: 0.1, yAxisID: 'y' },
+        { label: 'Trend', data: [], borderColor: 'rgba(255,159,10,0.6)', borderWidth: 2, borderDash: [6,3], pointRadius: 0, tension: 0, yAxisID: 'y' },
+        { label: 'Conf', data: [], borderColor: '#30d158', backgroundColor: 'rgba(48,209,88,0.15)', borderWidth: 2, pointRadius: 3, tension: 0.1, yAxisID: 'yConf' }
       ] },
-      options: chartOpts
+      options: {
+        responsive: true, maintainAspectRatio: false, animation: false,
+        plugins: { legend: { display: true, labels: { color: '#8e8e93', font: { size: 10 }, boxWidth: 12 } } },
+        scales: {
+          x: { ticks: { color: '#8e8e93', maxTicksLimit: 6, font: { size: 10 } }, grid: { color: '#38383a' } },
+          y: { ticks: { color: '#8e8e93', font: { size: 10 } }, grid: { color: '#38383a' } },
+          yConf: { type: 'linear', position: 'right', min: 0.5, max: 1.0, ticks: { color: '#30d158', font: { size: 9 } }, grid: { drawOnChartArea: false }, title: { display: true, text: 'Conf', color: '#30d158', font: { size: 10 } } }
+        }
+      }
     });
     phChart = new Chart(document.getElementById('chart-ph'), {
       type: 'line',
@@ -539,7 +558,7 @@
         plugins: { legend: { display: true, labels: { color: '#8e8e93', font: { size: 10 }, boxWidth: 12 } } },
         scales: {
           x: { ticks: { color: '#8e8e93', maxTicksLimit: 6, font: { size: 10 } }, grid: { color: '#38383a' } },
-          yR2: { type: 'linear', position: 'left', min: 0.9, max: 1.0, ticks: { color: '#0a84ff', font: { size: 9 } }, grid: { color: '#38383a' }, title: { display: true, text: 'R\u00b2', color: '#0a84ff', font: { size: 10 } } },
+          yR2: { type: 'linear', position: 'left', min: 0.98, max: 1.0, ticks: { color: '#0a84ff', font: { size: 9 } }, grid: { color: '#38383a' }, title: { display: true, text: 'R\u00b2', color: '#0a84ff', font: { size: 10 } } },
           yRight: { type: 'linear', position: 'right', ticks: { color: '#ff9f0a', font: { size: 9 } }, grid: { drawOnChartArea: false }, title: { display: true, text: 'pH', color: '#ff9f0a', font: { size: 10 } } }
         }
       }

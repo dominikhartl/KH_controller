@@ -52,6 +52,7 @@ void queueCommand(char cmd) {
 void publishMessage(const char* message);
 void publishError(const char* errorMessage);
 void calibrateTitrationPump();
+void subtractHCl(int unitsUsed);
 
 KHResult measureKH();
 void measureKHWithValidation();
@@ -230,6 +231,48 @@ void processPendingCommand() {
       }
       broadcastState();
       break;
+    case 'f': {
+      publishMessage("Filling");
+      float pfUL = configStore.getPrefillVolumeUL();
+      float pfCalU = (float)configStore.getCalUnits();
+      float pfTitV = configStore.getTitrationVolume();
+      int pfUnits = max(2, (int)round(pfUL * pfCalU / (pfTitV * 1000.0f)));
+      if (!titrate(pfUnits, configStore.getTitrationRPM(), true)) {
+        publishError("Error: titration pump timeout during fill");
+      } else {
+        publishMessage("Fill done");
+      }
+      subtractHCl(pfUnits);
+      digitalWrite(EN_PIN2, HIGH);
+      broadcastState();
+      break;
+    }
+    case 's':
+      publishMessage("Washing sample");
+      if (!washSample(1.2, 1.0)) {
+        publishError("Error: sample pump timeout during wash");
+      } else {
+        publishMessage("Wash done");
+      }
+      broadcastState();
+      break;
+    case 'r':
+      publishMessage("Removing sample");
+      if (!removeSample(SAMPLE_PUMP_VOLUME)) {
+        publishError("Error: sample pump timeout during remove");
+      } else {
+        publishMessage("Sample removed");
+      }
+      broadcastState();
+      break;
+    case 'v': {
+      float v = measureVoltage(100);
+      char vBuf[32];
+      snprintf(vBuf, sizeof(vBuf), "Voltage: %.1f mV", v);
+      publishMessage(vBuf);
+      broadcastState();
+      break;
+    }
   }
 }
 

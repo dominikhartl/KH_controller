@@ -97,12 +97,12 @@ static void sendLogData(AsyncWebSocketClient* client) {
 
   // Walk ring buffer oldest-first
   uint8_t start = (logCount < LOG_BUF_MAX) ? 0 : logHead;
-  DynamicJsonDocument doc(4096);
+  JsonDocument doc;
   doc["type"] = "logData";
-  JsonArray arr = doc.createNestedArray("entries");
+  JsonArray arr = doc["entries"].to<JsonArray>();
   for (uint8_t i = 0; i < logCount; i++) {
     uint8_t idx = (start + i) % LOG_BUF_MAX;
-    JsonObject entry = arr.createNestedObject();
+    JsonObject entry = arr.add<JsonObject>();
     entry["t"] = (logBuffer[idx].type == 'e') ? "error" : "msg";
     entry["text"] = logBuffer[idx].text;
     entry["ts"] = logBuffer[idx].ts;
@@ -126,13 +126,13 @@ static void sendMesData(AsyncWebSocketClient* client) {
     uint16_t start = c * CHUNK;
     uint16_t end = min((uint16_t)(start + CHUNK), mesCount);
 
-    DynamicJsonDocument doc(8192);
+    JsonDocument doc;
     doc["type"] = "mesData";
     doc["chunk"] = c;
     doc["total"] = totalChunks;
-    JsonArray dataArr = doc.createNestedArray("data");
+    JsonArray dataArr = doc["data"].to<JsonArray>();
     for (uint16_t i = start; i < end; i++) {
-      JsonArray point = dataArr.createNestedArray();
+      JsonArray point = dataArr.add<JsonArray>();
       point.add(mesBuffer[i].ml);
       point.add(mesBuffer[i].ph);
       point.add(mesBuffer[i].mV);
@@ -149,15 +149,15 @@ static void sendMesData(AsyncWebSocketClient* client) {
 static void sendGranData(AsyncWebSocketClient* client) {
   if (granBufCount == 0) return;
 
-  DynamicJsonDocument doc(2048);
+  JsonDocument doc;
   doc["type"] = "granData";
   doc["r2"] = granBufR2;
   doc["eqML"] = granBufEqML;
   doc["used"] = granBufUsed;
 
-  JsonArray pts = doc.createNestedArray("points");
+  JsonArray pts = doc["points"].to<JsonArray>();
   for (uint8_t i = 0; i < granBufCount; i++) {
-    JsonArray pt = pts.createNestedArray();
+    JsonArray pt = pts.add<JsonArray>();
     pt.add(granBuffer[i].ml);
     pt.add(granBuffer[i].f);
   }
@@ -190,7 +190,7 @@ void onWebSocketEvent(AsyncWebSocket* server, AsyncWebSocketClient* client,
 static void handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
   AwsFrameInfo* info = (AwsFrameInfo*)arg;
   if (info->final && info->index == 0 && info->len == len && info->opcode == WS_TEXT) {
-    StaticJsonDocument<256> doc;
+    JsonDocument doc;
     DeserializationError err = deserializeJson(doc, (char*)data, len);
     if (err) return;
 
@@ -203,7 +203,7 @@ static void handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
     } else if (strcmp(type, "config") == 0) {
       const char* key = doc["key"];
       if (!key) return;
-      if (!doc.containsKey("value")) return;
+      if (!doc["value"].is<JsonVariant>()) return;
       float value = doc["value"];
 
       if (strcmp(key, "titration_vol") == 0 && value > 0) configStore.setTitrationVolume(value);
@@ -229,15 +229,15 @@ static void handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
       broadcastState(); // Confirm the update
     } else if (strcmp(type, "schedule") == 0) {
       // Schedule mode (0=custom, 1=interval)
-      if (doc.containsKey("mode")) {
+      if (doc["mode"].is<JsonVariant>()) {
         configStore.setScheduleMode(doc["mode"].as<uint8_t>());
         scheduler.resetDailyFlags();
       }
-      if (doc.containsKey("intervalHours")) {
+      if (doc["intervalHours"].is<JsonVariant>()) {
         configStore.setIntervalHours(doc["intervalHours"].as<uint8_t>());
         scheduler.resetDailyFlags();
       }
-      if (doc.containsKey("anchorTime")) {
+      if (doc["anchorTime"].is<JsonVariant>()) {
         configStore.setAnchorTime(doc["anchorTime"].as<uint16_t>());
         scheduler.resetDailyFlags();
       }
@@ -269,10 +269,10 @@ static void handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
 
       if (isGran) {
         // Gran CSV: timestamp,r2,eqML,endpointPH,method,confidence,khGran,khEndpoint
-        DynamicJsonDocument resp(6144);
+        JsonDocument resp;
         resp["type"] = "history";
         resp["sensor"] = "gran";
-        JsonArray dataArr = resp.createNestedArray("data");
+        JsonArray dataArr = resp["data"].to<JsonArray>();
 
         while (f.available() && dataArr.size() < 150) {
           String line = f.readStringUntil('\n');
@@ -291,13 +291,13 @@ static void handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
           // Parse remaining fields: method, confidence, khGran, khEndpoint
           int c5 = line.indexOf(',', c4 + 1);
           int mth = 0;
-          float khG = 0, khE = 0, noiseMv = 0;
+          float conf = 0, khG = 0, khE = 0, noiseMv = 0;
           int reversals = 0;
           if (c5 > 0) {
             mth = line.substring(c4 + 1, c5).toInt();
             int c6 = line.indexOf(',', c5 + 1);
             if (c6 > 0) {
-              // confidence at c5+1..c6
+              conf = line.substring(c5 + 1, c6).toFloat();
               int c7 = line.indexOf(',', c6 + 1);
               if (c7 > 0) {
                 khG = line.substring(c6 + 1, c7).toFloat();
@@ -319,7 +319,7 @@ static void handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
           } else {
             mth = line.substring(c4 + 1).toInt();
           }
-          JsonArray pt = dataArr.createNestedArray();
+          JsonArray pt = dataArr.add<JsonArray>();
           pt.add(ts);
           pt.add(r2);
           pt.add(eq);
@@ -329,6 +329,7 @@ static void handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
           pt.add(khE);
           pt.add(noiseMv);
           pt.add(reversals);
+          pt.add(conf);
         }
         f.close();
 
@@ -337,10 +338,10 @@ static void handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
         if (written > 0) ws.textAll(buf);
       } else {
         // KH/pH CSV: timestamp,value
-        StaticJsonDocument<512> resp;
+        JsonDocument resp;
         resp["type"] = "history";
         resp["sensor"] = sensor;
-        JsonArray dataArr = resp.createNestedArray("data");
+        JsonArray dataArr = resp["data"].to<JsonArray>();
 
         while (f.available() && dataArr.size() < 150) {
           String line = f.readStringUntil('\n');
@@ -350,7 +351,7 @@ static void handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
           uint32_t ts = line.substring(0, comma).toInt();
           if (ts < cutoff) continue;
           float val = line.substring(comma + 1).toFloat();
-          JsonArray point = dataArr.createNestedArray();
+          JsonArray point = dataArr.add<JsonArray>();
           point.add(ts);
           point.add(val);
         }
@@ -406,48 +407,20 @@ void executeCommand(const char* cmd) {
     // Defer to loopTask — measurePH blocks ~7s (stabilization + 100 readings)
     queueCommand('p');
     return;
-  } else if (strcmp(cmd, "f") == 0) {
-    publishMessage("Filling");
-    float pfUL = configStore.getPrefillVolumeUL();
-    float pfCalU = (float)configStore.getCalUnits();
-    float pfTitV = configStore.getTitrationVolume();
-    int pfUnits = max(2, (int)round(pfUL * pfCalU / (pfTitV * 1000.0f)));
-    if (!titrate(pfUnits, configStore.getTitrationRPM(), true)) {
-      publishError("Error: titration pump timeout during fill");
-    } else {
-      publishMessage("Fill done");
-    }
-    subtractHCl(pfUnits);
-    digitalWrite(EN_PIN2, HIGH);
-  } else if (strcmp(cmd, "s") == 0) {
-    publishMessage("Washing sample");
-    if (!washSample(1.2, 1.0)) {
-      publishError("Error: sample pump timeout during wash");
-    } else {
-      publishMessage("Wash done");
-    }
+  } else if (strcmp(cmd, "f") == 0 || strcmp(cmd, "s") == 0 || strcmp(cmd, "r") == 0 || strcmp(cmd, "v") == 0) {
+    // Defer motor/ADC ops to loopTask — these block for seconds
+    queueCommand(cmd[0]);
+    return;
   } else if (strcmp(cmd, "m") == 0) {
     startStirrer();
     publishMessage("Stirrer started");
   } else if (strcmp(cmd, "e") == 0) {
     stopStirrer();
     publishMessage("Stirrer stopped");
-  } else if (strcmp(cmd, "r") == 0) {
-    publishMessage("Removing sample");
-    if (!removeSample(SAMPLE_PUMP_VOLUME)) {
-      publishError("Error: sample pump timeout during remove");
-    } else {
-      publishMessage("Sample removed");
-    }
   } else if (strcmp(cmd, "o") == 0) {
     publishMessage("Restarting...");
     delay(100);
     ESP.restart();
-  } else if (strcmp(cmd, "v") == 0) {
-    float v = measureVoltage(100);
-    char vBuf[32];
-    snprintf(vBuf, sizeof(vBuf), "Voltage: %.1f mV", v);
-    publishMessage(vBuf);
   } else if (strcmp(cmd, "4") == 0 || strcmp(cmd, "7") == 0 || strcmp(cmd, "10") == 0) {
     // Defer to loopTask — calibratePH blocks ~10s (stirrer warmup + voltage measurement)
     queueCommand(cmd[0] == '1' ? 'A' : cmd[0]);  // '4','7','A' (A=pH10)
@@ -465,7 +438,7 @@ void broadcastTitrationStart() {
 void broadcastState() {
   if (ws.count() == 0) return;
 
-  StaticJsonDocument<1536> doc;
+  JsonDocument doc;
   doc["type"] = "state";
   doc["ph"] = pH;
   doc["startPh"] = startPH;
@@ -486,7 +459,7 @@ void broadcastState() {
   if (!isnan(lastConfidence)) doc["confidence"] = lastConfidence;
 
   // Probe health
-  JsonObject probe = doc.createNestedObject("probe");
+  JsonObject probe = doc["probe"].to<JsonObject>();
   probe["acidEff"] = getAcidEfficiency();
   probe["alkEff"] = getAlkalineEfficiency();
   probe["asymmetry"] = getProbeAsymmetry();
@@ -506,16 +479,16 @@ void broadcastState() {
   ConfigStore::SlopeEntry slopeHist[ConfigStore::MAX_SLOPE_HISTORY];
   int slopeCount = configStore.getSlopeHistory(slopeHist, ConfigStore::MAX_SLOPE_HISTORY);
   if (slopeCount > 0) {
-    JsonArray eh = probe.createNestedArray("effHist");
+    JsonArray eh = probe["effHist"].to<JsonArray>();
     for (int i = 0; i < slopeCount; i++) {
-      JsonArray entry = eh.createNestedArray();
+      JsonArray entry = eh.add<JsonArray>();
       entry.add(slopeHist[i].timestamp);
       entry.add((int)(slopeHist[i].asymmetry * 10.0f + 0.5f) / 10.0f);  // 1 decimal
     }
   }
 
   // Config values
-  JsonObject cfg = doc.createNestedObject("config");
+  JsonObject cfg = doc["config"].to<JsonObject>();
   cfg["titration_vol"] = configStore.getTitrationVolume();
   cfg["sample_vol"] = configStore.getSampleVolume();
   cfg["correction_factor"] = configStore.getCorrectionFactor();
@@ -536,13 +509,13 @@ void broadcastState() {
   doc["intervalHours"] = configStore.getIntervalHours();
   doc["anchorTime"] = configStore.getAnchorTime();
 
-  JsonArray sched = doc.createNestedArray("schedule");
+  JsonArray sched = doc["schedule"].to<JsonArray>();
   uint8_t count = configStore.getScheduleCount();
   for (uint8_t i = 0; i < count; i++) {
     sched.add(configStore.getScheduleTime(i));
   }
 
-  char buf[1536];
+  static char buf[1536];
   serializeJson(doc, buf, sizeof(buf));
   ws.textAll(buf);
 }
@@ -577,7 +550,7 @@ void broadcastTitrationPH(float phVal, int unitsVal) {
 
   if (ws.count() == 0) return;
 
-  StaticJsonDocument<96> doc;
+  JsonDocument doc;
   doc["type"] = "mesPh";
   doc["ph"] = phVal;
   doc["ml"] = ml;
@@ -591,7 +564,7 @@ void broadcastTitrationPH(float phVal, int unitsVal) {
 void broadcastMessage(const char* msg) {
   addLogEntry('m', msg);
   if (ws.count() == 0) return;
-  StaticJsonDocument<128> doc;
+  JsonDocument doc;
   doc["type"] = "msg";
   doc["text"] = msg;
   char buf[128];
@@ -603,7 +576,7 @@ void broadcastError(const char* msg) {
   if (!msg || msg[0] == '\0') return;  // Skip empty errors
   addLogEntry('e', msg);
   if (ws.count() == 0) return;
-  StaticJsonDocument<128> doc;
+  JsonDocument doc;
   doc["type"] = "error";
   doc["text"] = msg;
   char buf[128];
@@ -631,15 +604,15 @@ void broadcastGranData(float r2, float eqML, bool usedGran,
 
   if (ws.count() == 0 || nPts == 0) return;
 
-  DynamicJsonDocument doc(2048);
+  JsonDocument doc;
   doc["type"] = "granData";
   doc["r2"] = r2;
   doc["eqML"] = eqML;
   doc["used"] = usedGran;
 
-  JsonArray pts = doc.createNestedArray("points");
+  JsonArray pts = doc["points"].to<JsonArray>();
   for (int i = 0; i < nPts; i++) {
-    JsonArray pt = pts.createNestedArray();
+    JsonArray pt = pts.add<JsonArray>();
     pt.add(pointsML[i]);
     pt.add(pointsF[i]);
   }
@@ -655,7 +628,10 @@ void appendHistory(const char* sensor, float value, uint32_t ts) {
 
   // Ensure directory exists
   if (!LittleFS.exists("/history")) {
-    LittleFS.mkdir("/history");
+    if (!LittleFS.mkdir("/history")) {
+      Serial.println("Error: failed to create /history directory");
+      return;
+    }
   }
 
   // Remove entries older than 7 days
@@ -681,6 +657,8 @@ void appendHistory(const char* sensor, float value, uint32_t ts) {
       if (fw) {
         fw.print(kept);
         fw.close();
+      } else {
+        Serial.printf("Warning: failed to open %s for pruning\n", filename);
       }
     }
   }
@@ -691,6 +669,8 @@ void appendHistory(const char* sensor, float value, uint32_t ts) {
   if (f) {
     f.printf("%u,%.2f\n", ts, value);
     f.close();
+  } else {
+    Serial.printf("Warning: failed to append to %s\n", filename);
   }
 }
 
@@ -698,7 +678,10 @@ void appendGranHistory(float r2, float eqML, float endpointPH, bool usedGran, fl
   const char* filename = "/history/gran.csv";
 
   if (!LittleFS.exists("/history")) {
-    LittleFS.mkdir("/history");
+    if (!LittleFS.mkdir("/history")) {
+      Serial.println("Error: failed to create /history directory");
+      return;
+    }
   }
 
   // Remove entries older than 7 days
@@ -720,6 +703,7 @@ void appendGranHistory(float r2, float eqML, float endpointPH, bool usedGran, fl
       f.close();
       File fw = LittleFS.open(filename, "w");
       if (fw) { fw.print(kept); fw.close(); }
+      else { Serial.println("Warning: failed to open gran.csv for pruning"); }
     }
   }
 
@@ -731,6 +715,8 @@ void appendGranHistory(float r2, float eqML, float endpointPH, bool usedGran, fl
              isnan(khGran) ? 0.0f : khGran, isnan(khEndpoint) ? 0.0f : khEndpoint,
              isnan(probeNoiseMv) ? 0.0f : probeNoiseMv, phReversals, dropUL, titrationRPM);
     f.close();
+  } else {
+    Serial.println("Warning: failed to append to gran.csv");
   }
 }
 
@@ -1265,7 +1251,7 @@ void setupWebServer() {
 
   // Fallback API for state
   server.on("/api/state", HTTP_GET, [](AsyncWebServerRequest* request) {
-    StaticJsonDocument<256> doc;
+    JsonDocument doc;
     doc["ph"] = pH;
     doc["hclVol"] = configStore.getHClVolume();
     doc["rssi"] = wifiManager.getRSSI();

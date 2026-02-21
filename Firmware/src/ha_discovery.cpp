@@ -97,8 +97,8 @@ static uint16_t timeStrToMins(const char* str) {
 }
 
 static void addDeviceBlock(JsonObject& doc) {
-  JsonObject dev = doc.createNestedObject("dev");
-  JsonArray ids = dev.createNestedArray("ids");
+  JsonObject dev = doc["dev"].to<JsonObject>();
+  JsonArray ids = dev["ids"].to<JsonArray>();
   ids.add("khcontrollerv3");
   dev["name"] = "KH Controller V3";
   dev["mf"] = "DIY";
@@ -118,7 +118,7 @@ static void publishDiscoveryPayload(const char* discoveryTopic, JsonDocument& do
 static void publishSensorDiscovery(const char* id, const char* name, const char* statTopic,
                                     const char* unit, const char* devClass,
                                     const char* valTpl, const char* entityCat) {
-  StaticJsonDocument<768> doc;
+  JsonDocument doc;
   doc["name"] = name;
   doc["stat_t"] = statTopic;
   doc["uniq_id"] = id;
@@ -140,7 +140,7 @@ static void publishNumberDiscovery(const char* id, const char* name,
                                     const char* statTopic, const char* cmdTopic,
                                     float minVal, float maxVal, float step,
                                     const char* unit) {
-  StaticJsonDocument<768> doc;
+  JsonDocument doc;
   doc["name"] = name;
   doc["stat_t"] = statTopic;
   doc["cmd_t"] = cmdTopic;
@@ -163,7 +163,7 @@ static void publishNumberDiscovery(const char* id, const char* name,
 static void publishButtonDiscovery(const char* id, const char* name,
                                     const char* cmdTopic, const char* payload,
                                     const char* entityCat) {
-  StaticJsonDocument<512> doc;
+  JsonDocument doc;
   doc["name"] = name;
   doc["cmd_t"] = cmdTopic;
   doc["pl_prs"] = payload;
@@ -181,14 +181,14 @@ static void publishButtonDiscovery(const char* id, const char* name,
 static void publishSelectDiscovery(const char* id, const char* name,
                                     const char* statTopic, const char* cmdTopic,
                                     const char** options, uint8_t optCount) {
-  StaticJsonDocument<768> doc;
+  JsonDocument doc;
   doc["name"] = name;
   doc["stat_t"] = statTopic;
   doc["cmd_t"] = cmdTopic;
   doc["uniq_id"] = id;
   doc["avty_t"] = availability_topic;
   doc["ent_cat"] = "config";
-  JsonArray opts = doc.createNestedArray("options");
+  JsonArray opts = doc["options"].to<JsonArray>();
   for (uint8_t i = 0; i < optCount; i++) opts.add(options[i]);
   JsonObject root = doc.as<JsonObject>();
   addDeviceBlock(root);
@@ -255,7 +255,7 @@ void publishAllDiscovery() {
 
   // Probe health text sensor (no unit, no state_class)
   {
-    StaticJsonDocument<512> doc;
+    JsonDocument doc;
     doc["name"] = "Probe Health";
     doc["stat_t"] = topicDiagnostics;
     doc["uniq_id"] = "khv3_probe_health";
@@ -270,7 +270,7 @@ void publishAllDiscovery() {
 
   // Text sensors (no unit, no state_class)
   {
-    StaticJsonDocument<512> doc;
+    JsonDocument doc;
     doc["name"] = "Last Error";
     doc["stat_t"] = errorTopic;
     doc["uniq_id"] = "khv3_error";
@@ -283,7 +283,7 @@ void publishAllDiscovery() {
     publishDiscoveryPayload(dt, doc);
   }
   {
-    StaticJsonDocument<512> doc;
+    JsonDocument doc;
     doc["name"] = "Last Message";
     doc["stat_t"] = messageTopic;
     doc["uniq_id"] = "khv3_message";
@@ -298,7 +298,7 @@ void publishAllDiscovery() {
 
   // Binary sensor - connectivity
   {
-    StaticJsonDocument<512> doc;
+    JsonDocument doc;
     doc["name"] = "Connectivity";
     doc["stat_t"] = availability_topic;
     doc["uniq_id"] = "khv3_connectivity";
@@ -344,7 +344,7 @@ void publishAllDiscovery() {
     snprintf(id, sizeof(id), "khv3_sched_%d", i);
     snprintf(name, sizeof(name), "Schedule %d", i + 1);
 
-    StaticJsonDocument<768> doc;
+    JsonDocument doc;
     doc["name"] = name;
     doc["stat_t"] = topicCfgSched[i];
     doc["cmd_t"] = topicCfgSchedSet[i];
@@ -378,7 +378,7 @@ void publishAllDiscovery() {
 
   // Anchor time text input
   {
-    StaticJsonDocument<768> doc;
+    JsonDocument doc;
     doc["name"] = "Anchor Time";
     doc["stat_t"] = topicCfgAnchorTime;
     doc["cmd_t"] = topicCfgAnchorTimeSet;
@@ -457,7 +457,7 @@ void publishAllConfigStates() {
 }
 
 void publishDiagnostics() {
-  StaticJsonDocument<512> doc;
+  JsonDocument doc;
   doc["rssi"] = wifiManager.getRSSI();
   doc["uptime"] = millis() / 1000;
   doc["heap"] = ESP.getFreeHeap();
