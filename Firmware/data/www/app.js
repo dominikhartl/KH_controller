@@ -254,7 +254,7 @@
       if (isNaN(nv) || nv <= 0) {
         noiseEl.innerHTML = '<span class="health-dot"></span>--';
       } else {
-        var nCls = (nv < 2) ? 'good' : (nv < 4) ? 'fair' : 'replace';
+        var nCls = (nv < 5) ? 'good' : (nv < 8) ? 'fair' : 'replace';
         noiseEl.innerHTML = '<span class="health-dot ' + nCls + '"></span>' + nv.toFixed(1) + ' <small>mV</small>';
       }
     }
@@ -295,7 +295,7 @@
     noiseChart.data.labels = data.map(function(e) { return fmtDate(e[0]); });
     noiseChart.data.datasets[0].data = data.map(function(e) { return e[1]; });
     var last = data[data.length - 1][1];
-    var nColor = (last < 2) ? '#30d158' : (last < 4) ? '#ff9f0a' : '#ff453a';
+    var nColor = (last < 5) ? '#30d158' : (last < 8) ? '#ff9f0a' : '#ff453a';
     noiseChart.data.datasets[0].borderColor = nColor;
     noiseChart.data.datasets[0].pointBackgroundColor = nColor;
     noiseChart.update();

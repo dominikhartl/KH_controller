@@ -372,7 +372,7 @@ KHResult measureKH() {
     return result;
   }
 
-  if (!titrate(prefillUnits, configStore.getTitrationRPM())) {
+  if (!titrate(prefillUnits, configStore.getTitrationRPM(), true)) {
     publishError("Error: titration pump timeout during prefill");
     measuring = false;
     return result;

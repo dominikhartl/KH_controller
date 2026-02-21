@@ -412,7 +412,7 @@ void executeCommand(const char* cmd) {
     float pfCalU = (float)configStore.getCalUnits();
     float pfTitV = configStore.getTitrationVolume();
     int pfUnits = max(2, (int)round(pfUL * pfCalU / (pfTitV * 1000.0f)));
-    if (!titrate(pfUnits, configStore.getTitrationRPM())) {
+    if (!titrate(pfUnits, configStore.getTitrationRPM(), true)) {
       publishError("Error: titration pump timeout during fill");
     } else {
       publishMessage("Fill done");

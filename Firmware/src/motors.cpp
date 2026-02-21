@@ -173,7 +173,7 @@ bool washSample(float remPart, float fillPart) {
   return ok;
 }
 
-bool titrate(int volume, float speedRpm) {
+bool titrate(int volume, float speedRpm, bool noAccel) {
   float speedUs = rpmToHalfPeriodUs(speedRpm);
 
   // Only add enable settle delay if motor wasn't already on
@@ -186,7 +186,7 @@ bool titrate(int volume, float speedRpm) {
 
   int totalSteps = volume * MOTOR_STEPS_PER_UNIT;
 
-  if (volume > TITRATE_ACCEL_THRESHOLD) {
+  if (volume > TITRATE_ACCEL_THRESHOLD && !noAccel) {
     // Large volume: use acceleration/deceleration
     // Ramp from startUs (slow) down to speedUs (fast)
     int rampLen = 0;

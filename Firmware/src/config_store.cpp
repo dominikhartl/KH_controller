@@ -97,12 +97,12 @@ void ConfigStore::setDropVolumeUL(float ul) {
 float ConfigStore::getTitrationRPM() {
   float rpm = prefs.getFloat("tit_rpm", TITRATION_RPM);
   if (rpm < 10.0) rpm = 10.0;
-  if (rpm > 150.0) rpm = 150.0;
+  if (rpm > 200.0) rpm = 200.0;
   return rpm;
 }
 void ConfigStore::setTitrationRPM(float rpm) {
   if (rpm < 10.0) rpm = 10.0;
-  if (rpm > 150.0) rpm = 150.0;
+  if (rpm > 200.0) rpm = 200.0;
   prefs.putFloat("tit_rpm", rpm);
 }
 

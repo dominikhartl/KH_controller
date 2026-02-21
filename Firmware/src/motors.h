@@ -19,6 +19,6 @@ void clearMultiWashContext();
 bool removeSample(int volume);
 bool takeSample(int volume);
 bool washSample(float remPart, float fillPart);
-bool titrate(int volume, float speedRpm);
+bool titrate(int volume, float speedRpm, bool noAccel = false);
 
 #endif // MOTORS_H
