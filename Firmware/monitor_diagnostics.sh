@@ -2,7 +2,8 @@
 # Monitor KH controller for new diagnostics and download with timestamp
 DEVICE="http://khcontrollerv3.local"
 INTERVAL=900  # 15 minutes
-OUTDIR="$(cd "$(dirname "$0")" && pwd)"
+OUTDIR="$(cd "$(dirname "$0")" && pwd)/diagnostics"
+mkdir -p "$OUTDIR"
 LAST_TS_FILE="/tmp/kh_monitor_last_ts"
 
 last_ts=$(cat "$LAST_TS_FILE" 2>/dev/null || echo "0")

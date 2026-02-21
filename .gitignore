@@ -19,3 +19,6 @@ Thumbs.db
 
 # Credentials (secrets)
 **/credentials.h
+
+# Diagnostics and history downloads
+Firmware/diagnostics/
