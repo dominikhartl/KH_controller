@@ -689,7 +689,7 @@ KHResult measureKH() {
           // Gran mode: try Gran analysis, fall back to endpoint if it fails
           if (granCount >= MIN_GRAN_POINTS) {
             char granReason[64] = "";
-            exactUnits = granAnalysis(dataPoints, nPoints, samVol, titVol, calUnits, &granR2, granReason, sizeof(granReason));
+            exactUnits = granAnalysis(dataPoints, nPoints, samVol, titVol, calUnits, &granR2, &result.granWinLow, &result.granWinHigh, granReason, sizeof(granReason));
             if (!isnan(exactUnits)) {
               usedGran = true;
             } else {
@@ -799,7 +799,7 @@ KHResult measureKH() {
             if (granCount >= MIN_GRAN_POINTS) {
               float tryR2 = 0;
               char granReason2[64] = "";
-              float granUnits2 = granAnalysis(dataPoints, nPoints, samVol, titVol, calUnits, &tryR2, granReason2, sizeof(granReason2));
+              float granUnits2 = granAnalysis(dataPoints, nPoints, samVol, titVol, calUnits, &tryR2, nullptr, nullptr, granReason2, sizeof(granReason2));
               if (!isnan(granUnits2)) {
                 granR2 = tryR2;
                 float granHcl = (granUnits2 / calUnits) * titVol;

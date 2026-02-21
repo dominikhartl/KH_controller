@@ -514,7 +514,9 @@ static float tryGranWindow(TitrationPoint* points, int nPoints,
 
 float granAnalysis(TitrationPoint* points, int nPoints,
                    float sampleVol, float titVol, float calUnits,
-                   float* outR2, char* reasonBuf, size_t reasonLen) {
+                   float* outR2,
+                   float* outWinLow, float* outWinHigh,
+                   char* reasonBuf, size_t reasonLen) {
   auto fail = [&](const char* reason) -> float {
     if (reasonBuf && reasonLen > 0) snprintf(reasonBuf, reasonLen, "%s", reason);
     return NAN;
@@ -576,6 +578,7 @@ float granAnalysis(TitrationPoint* points, int nPoints,
 
   float bestR2 = 0;
   float bestEqUnits = NAN;
+  float bestLow = GRAN_STOP_PH, bestHigh = 0;
 
   for (int lb = 0; lb < nLower; lb++) {
     for (int b = 0; b < nBounds; b++) {
@@ -586,11 +589,16 @@ float granAnalysis(TitrationPoint* points, int nPoints,
       if (!isnan(eq) && r2 > bestR2) {
         bestR2 = r2;
         bestEqUnits = eq;
+        bestLow = lowerBounds[lb];
+        bestHigh = upperBounds[b];
       }
     }
   }
 
   if (isnan(bestEqUnits)) return fail("No valid Gran window found");
+
+  if (outWinLow) *outWinLow = bestLow;
+  if (outWinHigh) *outWinHigh = bestHigh;
 
   if (outR2) {
     *outR2 = bestR2;

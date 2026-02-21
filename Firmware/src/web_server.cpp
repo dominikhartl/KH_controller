@@ -1146,9 +1146,11 @@ void setupWebServer() {
           case 5: { // Gran scatter (header + all points)
             int p = snprintf(b, maxLen,
               "\"gran_scatter\":{\"r2\":%.4f,\"eq_ml\":%.3f,"
-              "\"used\":%s,\"count\":%d,\"points\":[",
+              "\"used\":%s,\"win_low\":%.2f,\"win_high\":%.2f,"
+              "\"count\":%d,\"points\":[",
               granBufR2, granBufEqML,
               granBufUsed ? "true" : "false",
+              lastKHResult.granWinLow, lastKHResult.granWinHigh,
               (int)granBufCount);
             for (uint8_t i = 0; i < granBufCount && p < (int)maxLen - 30; i++) {
               if (i > 0) p += snprintf(b + p, maxLen - p, ",");

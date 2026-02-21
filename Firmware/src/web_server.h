@@ -23,6 +23,8 @@ struct KHResult {
   float stepNoisePh;   // Average |delta pH| per Gran step
   int phReversals;     // Count of pH reversals in Gran zone
   int granStepCount;   // Total Gran zone steps
+  float granWinLow;    // Selected Gran window lower pH bound
+  float granWinHigh;   // Selected Gran window upper pH bound
 };
 
 void storeLastKHResult(const KHResult& r);
