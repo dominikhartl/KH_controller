@@ -219,6 +219,12 @@ static void handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
         configStore.setStabilizationTimeout((int)value);
         setStabilizationTimeoutMs(configStore.getStabilizationTimeout());
       }
+      else if (strcmp(key, "gran_mix_delay") == 0) {
+        configStore.setGranMixDelay((int)value);
+      }
+      else if (strcmp(key, "drop_ul") == 0) { configStore.setDropVolumeUL(value); }
+      else if (strcmp(key, "titration_rpm") == 0) { configStore.setTitrationRPM(value); }
+      else if (strcmp(key, "prefill_ul") == 0) { configStore.setPrefillVolumeUL(value); }
 
       broadcastState(); // Confirm the update
     } else if (strcmp(type, "schedule") == 0) {
@@ -285,7 +291,8 @@ static void handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
           // Parse remaining fields: method, confidence, khGran, khEndpoint
           int c5 = line.indexOf(',', c4 + 1);
           int mth = 0;
-          float khG = 0, khE = 0;
+          float khG = 0, khE = 0, noiseMv = 0;
+          int reversals = 0;
           if (c5 > 0) {
             mth = line.substring(c4 + 1, c5).toInt();
             int c6 = line.indexOf(',', c5 + 1);
@@ -294,7 +301,19 @@ static void handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
               int c7 = line.indexOf(',', c6 + 1);
               if (c7 > 0) {
                 khG = line.substring(c6 + 1, c7).toFloat();
-                khE = line.substring(c7 + 1).toFloat();
+                int c8 = line.indexOf(',', c7 + 1);
+                if (c8 > 0) {
+                  khE = line.substring(c7 + 1, c8).toFloat();
+                  int c9 = line.indexOf(',', c8 + 1);
+                  if (c9 > 0) {
+                    noiseMv = line.substring(c8 + 1, c9).toFloat();
+                    reversals = line.substring(c9 + 1).toInt();
+                  } else {
+                    noiseMv = line.substring(c8 + 1).toFloat();
+                  }
+                } else {
+                  khE = line.substring(c7 + 1).toFloat();
+                }
               }
             }
           } else {
@@ -308,6 +327,8 @@ static void handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
           pt.add(mth);
           pt.add(khG);
           pt.add(khE);
+          pt.add(noiseMv);
+          pt.add(reversals);
         }
         f.close();
 
@@ -387,12 +408,16 @@ void executeCommand(const char* cmd) {
     return;
   } else if (strcmp(cmd, "f") == 0) {
     publishMessage("Filling");
-    if (!titrate(FILL_VOLUME, PREFILL_RPM)) {
+    float pfUL = configStore.getPrefillVolumeUL();
+    float pfCalU = (float)configStore.getCalUnits();
+    float pfTitV = configStore.getTitrationVolume();
+    int pfUnits = max(2, (int)round(pfUL * pfCalU / (pfTitV * 1000.0f)));
+    if (!titrate(pfUnits, configStore.getTitrationRPM())) {
       publishError("Error: titration pump timeout during fill");
     } else {
       publishMessage("Fill done");
     }
-    subtractHCl(FILL_VOLUME);
+    subtractHCl(pfUnits);
     digitalWrite(EN_PIN2, HIGH);
   } else if (strcmp(cmd, "s") == 0) {
     publishMessage("Washing sample");
@@ -466,6 +491,8 @@ void broadcastState() {
   probe["alkEff"] = getAlkalineEfficiency();
   probe["asymmetry"] = getProbeAsymmetry();
   probe["response"] = getLastStabilizationMs();
+  float avgNoise = getAvgStabNoiseMv();
+  if (avgNoise > 0) probe["noise"] = serialized(String(avgNoise, 1));
   probe["health"] = getProbeHealth();
   uint32_t calTs = configStore.getCalTimestamp();
   if (calTs > 0) {
@@ -501,6 +528,10 @@ void broadcastState() {
   cfg["endpoint_method"] = configStore.getEndpointMethod();
   cfg["min_start_ph"] = configStore.getMinStartPH();
   cfg["stab_timeout"] = configStore.getStabilizationTimeout();
+  cfg["gran_mix_delay"] = configStore.getGranMixDelay();
+  cfg["drop_ul"] = configStore.getDropVolumeUL();
+  cfg["titration_rpm"] = configStore.getTitrationRPM();
+  cfg["prefill_ul"] = configStore.getPrefillVolumeUL();
 
   // Schedule
   doc["schedMode"] = configStore.getScheduleMode();
@@ -665,7 +696,7 @@ void appendHistory(const char* sensor, float value, uint32_t ts) {
   }
 }
 
-void appendGranHistory(float r2, float eqML, float endpointPH, bool usedGran, float confidence, float khGran, float khEndpoint, uint32_t ts) {
+void appendGranHistory(float r2, float eqML, float endpointPH, bool usedGran, float confidence, float khGran, float khEndpoint, float probeNoiseMv, int phReversals, float dropUL, float titrationRPM, uint32_t ts) {
   const char* filename = "/history/gran.csv";
 
   if (!LittleFS.exists("/history")) {
@@ -698,8 +729,9 @@ void appendGranHistory(float r2, float eqML, float endpointPH, bool usedGran, fl
 
   File f = LittleFS.open(filename, "a");
   if (f) {
-    f.printf("%u,%.4f,%.3f,%.2f,%d,%.2f,%.2f,%.2f\n", ts, r2, eqML, endpointPH, usedGran ? 1 : 0, confidence,
-             isnan(khGran) ? 0.0f : khGran, isnan(khEndpoint) ? 0.0f : khEndpoint);
+    f.printf("%u,%.4f,%.3f,%.2f,%d,%.2f,%.2f,%.2f,%.2f,%d,%.1f,%.1f\n", ts, r2, eqML, endpointPH, usedGran ? 1 : 0, confidence,
+             isnan(khGran) ? 0.0f : khGran, isnan(khEndpoint) ? 0.0f : khEndpoint,
+             isnan(probeNoiseMv) ? 0.0f : probeNoiseMv, phReversals, dropUL, titrationRPM);
     f.close();
   }
 }
@@ -806,6 +838,9 @@ void setupWebServer() {
   // Serve static files from LittleFS
   server.serveStatic("/", LittleFS, "/www/").setDefaultFile("index.html").setCacheControl("no-cache");
 
+  // Serve history files for backup before filesystem upload
+  server.serveStatic("/history/", LittleFS, "/history/");
+
   // WebSocket handler
   ws.onEvent(onWebSocketEvent);
   server.addHandler(&ws);
@@ -813,7 +848,7 @@ void setupWebServer() {
   // CSV export: merge kh, ph, gran history into one download
   server.on("/api/export.csv", HTTP_GET, [](AsyncWebServerRequest* request) {
     // Collect entries keyed by timestamp
-    struct Row { float kh; float ph; float r2; float eqML; float epPH; int method; float confidence; float khGran; float khEndpoint; bool hasGran; };
+    struct Row { float kh; float ph; float r2; float eqML; float epPH; int method; float confidence; float khGran; float khEndpoint; float probeNoiseMv; int phReversals; bool hasGran; };
     static const int MAX_ROWS = 200;
     static uint32_t timestamps[200];
     static Row rows[200];
@@ -823,7 +858,7 @@ void setupWebServer() {
       for (int i = 0; i < nRows; i++) { if (timestamps[i] == ts) return i; }
       if (nRows >= MAX_ROWS) return -1;
       timestamps[nRows] = ts;
-      rows[nRows] = {NAN, NAN, NAN, NAN, NAN, -1, NAN, NAN, NAN, false};
+      rows[nRows] = {NAN, NAN, NAN, NAN, NAN, -1, NAN, NAN, NAN, NAN, -1, false};
       return nRows++;
     };
 
@@ -879,9 +914,22 @@ void setupWebServer() {
               int c7 = line.indexOf(',', c6 + 1);
               if (c7 > 0) {
                 float g = line.substring(c6 + 1, c7).toFloat();
-                float e = line.substring(c7 + 1).toFloat();
-                if (g > 0) rows[idx].khGran = g;
-                if (e > 0) rows[idx].khEndpoint = e;
+                int c8 = line.indexOf(',', c7 + 1);
+                if (c8 > 0) {
+                  float e = line.substring(c7 + 1, c8).toFloat();
+                  if (g > 0) rows[idx].khGran = g;
+                  if (e > 0) rows[idx].khEndpoint = e;
+                  // Parse noise fields (probeNoiseMv, phReversals) if present
+                  int c9 = line.indexOf(',', c8 + 1);
+                  if (c9 > 0) {
+                    rows[idx].probeNoiseMv = line.substring(c8 + 1, c9).toFloat();
+                    rows[idx].phReversals = line.substring(c9 + 1).toInt();
+                  }
+                } else {
+                  float e = line.substring(c7 + 1).toFloat();
+                  if (g > 0) rows[idx].khGran = g;
+                  if (e > 0) rows[idx].khEndpoint = e;
+                }
               }
             } else {
               rows[idx].confidence = line.substring(c5 + 1).toFloat();
@@ -906,7 +954,7 @@ void setupWebServer() {
     // Stream response
     String csv;
     csv.reserve(nRows * 80 + 80);
-    csv += "timestamp,datetime,kh,ph,r2,eq_ml,endpoint_ph,method,confidence,kh_gran,kh_endpoint\n";
+    csv += "timestamp,datetime,kh,ph,r2,eq_ml,endpoint_ph,method,confidence,kh_gran,kh_endpoint,probe_noise_mv,ph_reversals\n";
     for (int i = 0; i < nRows; i++) {
       time_t t = (time_t)timestamps[i];
       struct tm tm;
@@ -922,8 +970,10 @@ void setupWebServer() {
         csv += isnan(rows[i].confidence) ? "," : ("," + String(rows[i].confidence, 2));
         csv += isnan(rows[i].khGran) ? "," : ("," + String(rows[i].khGran, 2));
         csv += isnan(rows[i].khEndpoint) ? "," : ("," + String(rows[i].khEndpoint, 2));
+        csv += isnan(rows[i].probeNoiseMv) ? "," : ("," + String(rows[i].probeNoiseMv, 2));
+        csv += (rows[i].phReversals >= 0) ? ("," + String(rows[i].phReversals)) : ",";
       } else {
-        csv += ",,,,,,,";
+        csv += ",,,,,,,,,";
       }
       csv += "\n";
     }
@@ -975,7 +1025,8 @@ void setupWebServer() {
               "\"correction_factor\":%.3f,\"hcl_molarity\":%.4f,"
               "\"hcl_volume\":%.1f,\"cal_units\":%d,"
               "\"fast_ph\":%.1f,\"endpoint_method\":%d,"
-              "\"min_start_ph\":%.1f,\"stab_timeout\":%d,"
+              "\"min_start_ph\":%.1f,\"stab_timeout\":%d,\"gran_mix_delay\":%d,"
+              "\"drop_ul\":%.1f,\"titration_rpm\":%.1f,\"prefill_ul\":%.1f,"
               "\"cal_v4\":%.2f,\"cal_v7\":%.2f,\"cal_v10\":%.2f,"
               "\"schedule_mode\":%d,\"interval_hours\":%d,\"anchor_time\":%d"
               "},",
@@ -985,7 +1036,8 @@ void setupWebServer() {
               configStore.getCorrectionFactor(), configStore.getHClMolarity(),
               configStore.getHClVolume(), configStore.getCalUnits(),
               configStore.getFastTitrationPH(), (int)configStore.getEndpointMethod(),
-              configStore.getMinStartPH(), configStore.getStabilizationTimeout(),
+              configStore.getMinStartPH(), configStore.getStabilizationTimeout(), configStore.getGranMixDelay(),
+              configStore.getDropVolumeUL(), configStore.getTitrationRPM(), configStore.getPrefillVolumeUL(),
               voltage_4PH, voltage_7PH, voltage_10PH,
               (int)configStore.getScheduleMode(),
               (int)configStore.getIntervalHours(),
@@ -1050,7 +1102,39 @@ void setupWebServer() {
             ds = 3;
             break;
           }
-          case 3: { // Probe health
+          case 3: { // Noise metrics
+            if (hasLastKHResult) {
+              const KHResult& r = lastKHResult;
+              float reversalPct = (r.granStepCount > 1)
+                ? (r.phReversals * 100.0f / (r.granStepCount - 1)) : 0;
+              // Estimate pump noise: sqrt(step_noise^2 - (probe_noise_mv * acidSlope_ph_per_mv)^2)
+              float acidSl = getAcidSlope();
+              float phPerMv = (!isnan(acidSl) && fabsf(acidSl) > 1.0f)
+                ? 1.0f / fabsf(acidSl) : 0.00575f;
+              float probeNoisePh = r.probeNoiseMv * phPerMv;
+              float pumpNoise = 0;
+              if (r.stepNoisePh > probeNoisePh) {
+                pumpNoise = sqrtf(r.stepNoisePh * r.stepNoisePh
+                                  - probeNoisePh * probeNoisePh);
+              }
+              char pn[16], sn[16], pmp[16];
+              diagFloat(pn, 16, r.probeNoiseMv, 2);
+              diagFloat(sn, 16, r.stepNoisePh, 4);
+              diagFloat(pmp, 16, pumpNoise, 4);
+              n = snprintf(b, maxLen,
+                "\"noise\":{\"probe_noise_mv\":%s,\"step_noise_ph\":%s,"
+                "\"ph_reversals\":%d,\"gran_steps\":%d,"
+                "\"reversal_rate_pct\":%.1f,"
+                "\"estimated_pump_noise_ph\":%s},",
+                pn, sn, r.phReversals, r.granStepCount,
+                reversalPct, pmp);
+            } else {
+              n = 0;  // No noise data without measurement
+            }
+            ds = 4;
+            break;
+          }
+          case 4: { // Probe health
             char reason[96];
             const char* health = getProbeHealthDetail(reason, sizeof(reason));
             char ae[16], al[16], ay[16], as[16], ls[16];
@@ -1070,10 +1154,10 @@ void setupWebServer() {
               NERNST_FACTOR * (273.15f + MEASUREMENT_TEMP_C),
               getLastStabilizationMs(),
               configStore.getCalTimestamp());
-            ds = 4;
+            ds = 5;
             break;
           }
-          case 4: { // Gran scatter (header + all points)
+          case 5: { // Gran scatter (header + all points)
             int p = snprintf(b, maxLen,
               "\"gran_scatter\":{\"r2\":%.4f,\"eq_ml\":%.3f,"
               "\"used\":%s,\"count\":%d,\"points\":[",
@@ -1087,19 +1171,19 @@ void setupWebServer() {
             }
             p += snprintf(b + p, maxLen - p, "]},");
             n = p;
-            ds = 5;
+            ds = 6;
             break;
           }
-          case 5: { // Analysis data points header
+          case 6: { // Analysis data points header
             n = snprintf(b, maxLen,
               "\"analysis_points\":{\"count\":%d,"
               "\"fields\":[\"units\",\"pH\",\"mV\",\"stabMs\",\"phase\",\"flags\"],"
               "\"points\":[", analysisCount);
             dp = 0;
-            ds = (analysisCount > 0) ? 6 : 7;
+            ds = (analysisCount > 0) ? 7 : 8;
             break;
           }
-          case 6: { // Analysis points (batched)
+          case 7: { // Analysis points (batched)
             int p = 0;
             while (dp < (uint16_t)analysisCount && p < (int)maxLen - 50) {
               if (dp > 0) p += snprintf(b + p, maxLen - p, ",");
@@ -1110,17 +1194,17 @@ void setupWebServer() {
               dp++;
             }
             n = p;
-            if (dp >= (uint16_t)analysisCount) ds = 7;
+            if (dp >= (uint16_t)analysisCount) ds = 8;
             break;
           }
-          case 7: { // Close analysis + titration curve header
+          case 8: { // Close analysis + titration curve header
             n = snprintf(b, maxLen,
               "]},\"titration_curve\":{\"count\":%d,\"points\":[", mesCount);
             dp = 0;
-            ds = (mesCount > 0) ? 8 : 9;
+            ds = (mesCount > 0) ? 9 : 10;
             break;
           }
-          case 8: { // Titration points (batched)
+          case 9: { // Titration points (batched)
             int p = 0;
             while (dp < mesCount && p < (int)maxLen - 40) {
               if (dp > 0) p += snprintf(b + p, maxLen - p, ",");
@@ -1129,16 +1213,16 @@ void setupWebServer() {
               dp++;
             }
             n = p;
-            if (dp >= mesCount) ds = 9;
+            if (dp >= mesCount) ds = 10;
             break;
           }
-          case 9: { // Close titration + event log header
+          case 10: { // Close titration + event log header
             n = snprintf(b, maxLen, "]},\"event_log\":[");
             dp = 0;
-            ds = (logCount > 0) ? 10 : 11;
+            ds = (logCount > 0) ? 11 : 12;
             break;
           }
-          case 10: { // Event log entries (batched)
+          case 11: { // Event log entries (batched)
             int p = 0;
             uint8_t st = (logCount < LOG_BUF_MAX) ? 0 : logHead;
             while (dp < logCount && p < (int)maxLen - 160) {
@@ -1160,12 +1244,12 @@ void setupWebServer() {
               dp++;
             }
             n = p;
-            if (dp >= logCount) ds = 11;
+            if (dp >= logCount) ds = 12;
             break;
           }
-          case 11: { // Close event log + close JSON
+          case 12: { // Close event log + close JSON
             n = snprintf(b, maxLen, "]}");
-            ds = 12;
+            ds = 13;
             break;
           }
           default:

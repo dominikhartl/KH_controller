@@ -19,6 +19,10 @@ struct KHResult {
   float crossValDiff;  // |KH_gran - KH_endpoint|, NAN if unavailable
   int8_t rssiMin;      // WiFi RSSI min during measurement
   int8_t rssiMax;      // WiFi RSSI max during measurement
+  float probeNoiseMv;  // Average probe noise (mV StdDev during stabilization)
+  float stepNoisePh;   // Average |delta pH| per Gran step
+  int phReversals;     // Count of pH reversals in Gran zone
+  int granStepCount;   // Total Gran zone steps
 };
 
 void storeLastKHResult(const KHResult& r);
@@ -36,7 +40,7 @@ void broadcastProgress(int percent);
 void broadcastGranData(float r2, float eqML, bool usedGran,
                        float* pointsML, float* pointsF, int nPts);
 void appendHistory(const char* sensor, float value, uint32_t ts);
-void appendGranHistory(float r2, float eqML, float endpointPH, bool usedGran, float confidence, float khGran, float khEndpoint, uint32_t ts);
+void appendGranHistory(float r2, float eqML, float endpointPH, bool usedGran, float confidence, float khGran, float khEndpoint, float probeNoiseMv, int phReversals, float dropUL, float titrationRPM, uint32_t ts);
 int getRecentKHValues(float* outValues, int maxCount);
 float computeKHSlope();
 extern float lastConfidence;

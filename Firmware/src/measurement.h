@@ -35,6 +35,11 @@ int getStabilizationTimeoutCount();       // Number of times stabilization timed
 unsigned long getTotalStabilizationMs();  // Cumulative stabilization time
 bool getLastStabilizationTimedOut();      // Whether last stabilization call timed out
 
+// Noise statistics (reset per measurement cycle)
+void resetNoiseStats();
+float getLastStabNoiseMv();              // StdDev of mV readings during last stabilization
+float getAvgStabNoiseMv();               // Average noise StdDev across all stabilizations
+
 // Probe health metrics
 unsigned long getLastStabilizationMs();  // Last stabilization time in ms
 float getProbeSlope();                   // Average conditioned mV/pH from calibration

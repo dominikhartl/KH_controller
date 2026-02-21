@@ -37,11 +37,19 @@ static int stabTimeoutCount = 0;
 static unsigned long stabTotalMs = 0;
 static bool lastStabTimedOut = false;
 
+// Noise tracking (per measurement cycle)
+static float lastStabNoiseMv = 0;      // StdDev of mV readings during last stabilization
+static float stabNoiseMvSum = 0;       // Running sum of noise StdDevs
+static int stabNoiseMvCount = 0;       // Number of stabilizations measured
+
 void setStabilizationTimeoutMs(int ms) { stabilizationTimeoutMs = ms; }
 void resetStabilizationStats() { stabTimeoutCount = 0; stabTotalMs = 0; lastStabTimedOut = false; }
+void resetNoiseStats() { lastStabNoiseMv = 0; stabNoiseMvSum = 0; stabNoiseMvCount = 0; }
 int getStabilizationTimeoutCount() { return stabTimeoutCount; }
 unsigned long getTotalStabilizationMs() { return stabTotalMs; }
 bool getLastStabilizationTimedOut() { return lastStabTimedOut; }
+float getLastStabNoiseMv() { return lastStabNoiseMv; }
+float getAvgStabNoiseMv() { return (stabNoiseMvCount > 0) ? stabNoiseMvSum / stabNoiseMvCount : 0; }
 
 // Sort an array of floats in ascending order (bubble sort — sufficient for small N)
 static void sortFloats(float* arr, int count) {
@@ -217,6 +225,19 @@ const char* getProbeHealthDetail(char* reasonBuf, size_t reasonLen) {
     return "Fair";
   }
 
+  // Tertiary: noise check (only if we have data from a recent measurement)
+  float avgNoise = getAvgStabNoiseMv();
+  if (avgNoise > 0) {
+    if (avgNoise > PROBE_NOISE_FAIR_MV) {
+      if (reasonBuf) snprintf(reasonBuf, reasonLen, "high noise %.1f mV (limit %.0f mV)", avgNoise, PROBE_NOISE_FAIR_MV);
+      return "Fair";
+    }
+    if (avgNoise > PROBE_NOISE_GOOD_MV) {
+      if (reasonBuf) snprintf(reasonBuf, reasonLen, "elevated noise %.1f mV (limit %.0f mV)", avgNoise, PROBE_NOISE_GOOD_MV);
+      return "Fair";
+    }
+  }
+
   if (reasonBuf && reasonLen > 0) reasonBuf[0] = '\0';
   return "Good";
 }
@@ -228,24 +249,57 @@ static void waitForStabilization() {
   lastStabTimedOut = false;
   analogReadMilliVolts(PH_PIN);  // Dummy read to prime ADC after idle
   delayMicroseconds(100);
+
+  // Collect readings for both convergence check and noise computation
+  static const int MAX_STAB_READINGS = 80;  // 4s / 50ms = 80 max
+  float stabReadings[MAX_STAB_READINGS];
+  int nReadings = 0;
+
   float prev = readADCTrimmed(16, ADC_INTER_SAMPLE_DELAY_MS);
+  stabReadings[nReadings++] = prev;
   delay(50);
   unsigned long start = millis();
+  bool converged = false;
+  int consecCount = 0;
   while (millis() - start < (unsigned long)stabilizationTimeoutMs) {
     float curr = readADCTrimmed(16, ADC_INTER_SAMPLE_DELAY_MS);
+    if (nReadings < MAX_STAB_READINGS) stabReadings[nReadings++] = curr;
     if (fabs(curr - prev) < STABILIZATION_THRESHOLD_MV) {
-      unsigned long elapsed = millis() - start;
-      lastStabilizationMs = elapsed;
-      stabTotalMs += elapsed;
-      return;
+      consecCount++;
+      if (consecCount >= STAB_CONSEC_REQUIRED) {
+        unsigned long elapsed = millis() - start;
+        lastStabilizationMs = elapsed;
+        stabTotalMs += elapsed;
+        converged = true;
+        break;
+      }
+    } else {
+      consecCount = 0;
     }
     prev = curr;
     delay(50);
   }
-  lastStabilizationMs = stabilizationTimeoutMs;  // Timed out
-  stabTotalMs += stabilizationTimeoutMs;
-  stabTimeoutCount++;
-  lastStabTimedOut = true;
+  if (!converged) {
+    lastStabilizationMs = stabilizationTimeoutMs;
+    stabTotalMs += stabilizationTimeoutMs;
+    stabTimeoutCount++;
+    lastStabTimedOut = true;
+  }
+
+  // Compute noise StdDev from collected readings
+  if (nReadings >= 2) {
+    float sum = 0;
+    for (int i = 0; i < nReadings; i++) sum += stabReadings[i];
+    float mean = sum / nReadings;
+    float sumSq = 0;
+    for (int i = 0; i < nReadings; i++) {
+      float d = stabReadings[i] - mean;
+      sumSq += d * d;
+    }
+    lastStabNoiseMv = sqrtf(sumSq / (nReadings - 1));
+    stabNoiseMvSum += lastStabNoiseMv;
+    stabNoiseMvCount++;
+  }
 }
 
 void waitForPHStabilization() {

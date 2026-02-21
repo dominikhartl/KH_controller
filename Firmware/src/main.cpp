@@ -71,7 +71,7 @@ static void publishKHResult(const KHResult& r) {
   uint32_t ts = (uint32_t)time(nullptr);
   appendHistory("kh", r.khValue, ts);
   appendHistory("ph", r.startPH, ts);
-  appendGranHistory(r.granR2, r.hclUsed, r.endpointPH, r.usedGran, r.confidence, r.khGran, r.khEndpoint, ts);
+  appendGranHistory(r.granR2, r.hclUsed, r.endpointPH, r.usedGran, r.confidence, r.khGran, r.khEndpoint, r.probeNoiseMv, r.phReversals, configStore.getDropVolumeUL(), configStore.getTitrationRPM(), ts);
 
   // Quality metrics
   { char mqBuf[16]; snprintf(mqBuf, sizeof(mqBuf), "%.4f", r.granR2);
@@ -302,9 +302,9 @@ static float computeConfidence(float granR2, bool usedGran, int nPoints,
   }
   // Cross-validation: Gran vs Endpoint disagreement
   if (!isnan(crossValDiff)) {
-    if (crossValDiff > 0.3f) score -= 0.3f;
-    else if (crossValDiff > 0.15f) score -= 0.15f;
-    else if (crossValDiff > 0.05f) score -= 0.05f;
+    if (crossValDiff > 0.5f) score -= 0.3f;
+    else if (crossValDiff > 0.3f) score -= 0.15f;
+    else if (crossValDiff > 0.15f) score -= 0.05f;
   }
   // Data point count
   if (nPoints < 15) score -= 0.1f;
@@ -347,6 +347,7 @@ KHResult measureKH() {
   // Configure stabilization from NVS and reset per-measurement stats
   setStabilizationTimeoutMs(configStore.getStabilizationTimeout());
   resetStabilizationStats();
+  resetNoiseStats();
 
   broadcastTitrationStart();  // Signal dashboard to clear live pH chart
   int errorflag = 0;
@@ -358,6 +359,12 @@ KHResult measureKH() {
   // Track WiFi RSSI range during measurement
   int8_t rssiMin = 0, rssiMax = -127;
 
+  // Compute prefill volume in units from µL config
+  float prefillUL = configStore.getPrefillVolumeUL();
+  float calU = (float)configStore.getCalUnits();
+  float titV = configStore.getTitrationVolume();
+  int prefillUnits = max(2, (int)round(prefillUL * calU / (titV * 1000.0f)));
+
   // Validate calibration before starting
   if (!isCalibrationValid()) {
     publishError("Error: pH calibration invalid. Re-calibrate with pH 4/7/10 buffers.");
@@ -365,7 +372,7 @@ KHResult measureKH() {
     return result;
   }
 
-  if (!titrate(FILL_VOLUME, PREFILL_RPM)) {
+  if (!titrate(prefillUnits, configStore.getTitrationRPM())) {
     publishError("Error: titration pump timeout during prefill");
     measuring = false;
     return result;
@@ -391,7 +398,7 @@ KHResult measureKH() {
   delay(100);
   startStirrer();
   delay(STIRRER_WARMUP_MS);  // Wait for solution to homogenize
-  measurePH(40);
+  measurePH(100);
   float minStartPH = configStore.getMinStartPH();
   if (isnan(pH)) {
     errorMessage = "Error: pH probe not working";
@@ -418,7 +425,7 @@ KHResult measureKH() {
     delay(100);
     startStirrer();
     delay(STIRRER_WARMUP_MS);
-    measurePH(40);
+    measurePH(100);
     if (isnan(pH) || pH < minStartPH) {
       startPH = isnan(pH) ? 0 : pH;
       snprintf(retryBuf, sizeof(retryBuf), "Error: Starting pH still %.2f after rinse", pH);
@@ -521,6 +528,12 @@ KHResult measureKH() {
     float lastPrecisePH = pH;
     int preciseStall = 0;
 
+    // Gran zone noise tracking
+    float prevGranPH = NAN;
+    int phReversals = 0;
+    int granStepCount = 0;
+    float stepDeltaSum = 0;
+
     uint8_t epMethod = configStore.getEndpointMethod();
     float stopPH = (epMethod == 1) ? FIXED_ENDPOINT_STOP_PH : GRAN_STOP_PH;
 
@@ -545,15 +558,21 @@ KHResult measureKH() {
       } else {
         // Gran zone (pH below GRAN_REGION_PH): smaller steps, stabilization, accurate readings
         curPhase = 2;
-        stepVol = TITRATION_STEP_SIZE * GRAN_STEP_MULTIPLIER;  // 4 units (more points = more robust regression)
-        if (!titrate(stepVol, TITRATION_RPM)) {
+        // Compute step volume from configurable drop size (µL → units via calibration)
+        float dropUL = configStore.getDropVolumeUL();
+        float calU = (float)configStore.getCalUnits();
+        float titV = configStore.getTitrationVolume();
+        float unitsPerUL = calU / (titV * 1000.0f);
+        stepVol = max(2, (int)round(dropUL * unitsPerUL));
+        float granRPM = configStore.getTitrationRPM();
+        if (!titrate(stepVol, granRPM)) {
           errorMessage = "Error: titration pump timeout in Gran zone";
           errorflag = 1;
           break;
         }
-        delay(TITRATION_MIX_DELAY_GRAN_MS);
+        delay(configStore.getGranMixDelay());
         waitForPHStabilization();
-        measurePHStabilized(14);
+        measurePHStabilized(20);
       }
       units += stepVol;
 
@@ -564,6 +583,17 @@ KHResult measureKH() {
         dataPoints[nPoints++] = {(float)units, pH, voltage, sMs, curPhase, fl};
       }
       if (pH < GRAN_REGION_PH) granCount++;
+
+      // Track step-to-step noise in Gran zone
+      if (curPhase == 2 && !isnan(pH)) {
+        if (!isnan(prevGranPH)) {
+          float delta = prevGranPH - pH;  // Expected positive (pH decreasing)
+          stepDeltaSum += fabsf(delta);
+          if (delta < 0) phReversals++;   // pH went UP after acid = reversal
+        }
+        prevGranPH = pH;
+        granStepCount++;
+      }
 
       mqttManager.loop();
       ArduinoOTA.handle();
@@ -670,7 +700,7 @@ KHResult measureKH() {
         } else {
           float hclUsed = (exactUnits / calUnits) * titVol;
           float khValue = (hclUsed / samVol) * 2800.0f * hclMol * corrF;
-          subtractHCl(units + FILL_VOLUME);
+          subtractHCl(units + prefillUnits);
 
           // Interpolate pH at equivalence point
           float endpointPHVal = ENDPOINT_PH;
@@ -751,6 +781,10 @@ KHResult measureKH() {
           result.elapsedSec = (millis() - measStartMs) / 1000;
           result.rssiMin = rssiMin;
           result.rssiMax = rssiMax;
+          result.probeNoiseMv = getAvgStabNoiseMv();
+          result.stepNoisePh = (granStepCount > 1) ? stepDeltaSum / (granStepCount - 1) : 0;
+          result.phReversals = phReversals;
+          result.granStepCount = granStepCount;
           result.confidence = computeConfidence(granR2, usedGran, nPoints,
                                                  result.stabTimeouts, getProbeHealth(),
                                                  crossValDiff);
@@ -784,7 +818,7 @@ KHResult measureKH() {
     float titV = configStore.getTitrationVolume();
     float samV = configStore.getSampleVolume();
     if (calU > 0 && samV > 0) {
-      hclPart = ((float)(units + FILL_VOLUME) / calU) * titV / samV;
+      hclPart = ((float)(units + prefillUnits) / calU) * titV / samV;
     }
   }
 

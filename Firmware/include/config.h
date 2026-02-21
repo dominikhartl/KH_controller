@@ -22,7 +22,8 @@ static const int MEASUREMENT_DELAY_FAST_MS = 20;
 
 // pH stabilization (adaptive: waits for readings to converge)
 static const int STABILIZATION_TIMEOUT_MS = 4000;
-static const float STABILIZATION_THRESHOLD_MV = 2.0;
+static const float STABILIZATION_THRESHOLD_MV = 3.0;
+static const int STAB_CONSEC_REQUIRED = 3;  // Consecutive reading pairs within threshold before convergence
 
 // pH measurement outlier thresholds
 static const float PH_OUTLIER_THRESHOLD = 0.2f;      // Precise mode: ±0.2 pH from median
@@ -52,10 +53,9 @@ static const float MOTOR_ACCEL_FACTOR = 0.9995;   // Acceleration/deceleration f
 // Titration tuning parameters
 static const int TITRATION_STEP_SIZE = 2;        // Base units per titration step
 static const int MOTOR_STEPS_PER_UNIT = 16;      // Motor steps per titration unit
-static const int TITRATION_MIX_DELAY_MS = 2000;  // Legacy: full mixing delay (used by calibration)
 static const int TITRATION_MIX_DELAY_FAST_MS = 200;  // Mixing delay far from endpoint
 static const int TITRATION_MIX_DELAY_MEDIUM_MS = 1000; // Medium zone mixing (stabilization inside measurePH)
-static const int TITRATION_MIX_DELAY_GRAN_MS = 1000;   // Gran zone mixing (explicit stabilization follows)
+static const int TITRATION_MIX_DELAY_GRAN_MS = 2500;   // Gran zone mixing (explicit stabilization follows)
 static const int MAX_TITRATION_UNITS = 10000;
 static const int FILL_VOLUME = 100;
 static const int STIRRER_SPEED = 230;            // PWM duty cycle (0-255), not RPM
@@ -74,7 +74,7 @@ static const float FAST_TITRATION_PH_DEFAULT = 5.0f; // pH threshold: fast→pre
 static const int MEDIUM_STEP_MULTIPLIER = 24;  // 2 * 24 = 48 units per step
 
 // Gran zone step multiplier — smaller = more data points for regression robustness
-static const int GRAN_STEP_MULTIPLIER = 4;     // 2 * 4 = 8 units per step
+static const int GRAN_STEP_MULTIPLIER = 8;     // 2 * 8 = 16 units per step
 
 // Adaptive fast-phase batch sizing — reduces batch as pH approaches threshold
 static const int FAST_BATCH_MAX = 200;
@@ -133,6 +133,8 @@ static const float PROBE_ASYMMETRY_GOOD = 15.0f;   // % — below this: Good
 static const float PROBE_ASYMMETRY_FAIR = 25.0f;   // % — below this: Fair, above: Replace
 static const unsigned long PROBE_RESPONSE_GOOD_MS  = 500;   // Below: healthy response
 static const unsigned long PROBE_RESPONSE_FAIR_MS  = 1500;  // Below: fair, above: slow
+static const float PROBE_NOISE_GOOD_MV = 5.0f;    // mV StdDev — below: healthy probe
+static const float PROBE_NOISE_FAIR_MV = 8.0f;    // mV StdDev — below: fair, above: noisy
 static const int CALIBRATION_AGE_WARNING_DAYS = 30;
 
 // Minimum valid Unix timestamp (Nov 2023) — used to detect NTP not yet synced

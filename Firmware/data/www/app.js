@@ -179,6 +179,10 @@
       setInput('cfg-endpoint_method', d.config.endpoint_method);
       setInput('cfg-min_start_ph', d.config.min_start_ph);
       setInput('cfg-stab_timeout', d.config.stab_timeout);
+      setInput('cfg-gran_mix_delay', d.config.gran_mix_delay);
+      setInput('cfg-drop_ul', d.config.drop_ul);
+      setInput('cfg-titration_rpm', d.config.titration_rpm);
+      setInput('cfg-prefill_ul', d.config.prefill_ul);
     }
 
     // Schedule
@@ -243,6 +247,18 @@
       var aCls = (p.asymmetry < 15) ? 'good' : (p.asymmetry < 25) ? 'fair' : 'replace';
       asymEl.innerHTML = '<span class="health-dot ' + (isNaN(p.asymmetry) ? '' : aCls) + '"></span>' + aVal + ' <small>%</small>';
     }
+    // Noise
+    var noiseEl = document.getElementById('probe-noise');
+    if (noiseEl && p.noise != null) {
+      var nv = parseFloat(p.noise);
+      if (isNaN(nv) || nv <= 0) {
+        noiseEl.innerHTML = '<span class="health-dot"></span>--';
+      } else {
+        var nCls = (nv < 2) ? 'good' : (nv < 4) ? 'fair' : 'replace';
+        noiseEl.innerHTML = '<span class="health-dot ' + nCls + '"></span>' + nv.toFixed(1) + ' <small>mV</small>';
+      }
+    }
+
     var calEl = document.getElementById('probe-cal-age');
     if (calEl && p.calAge != null) {
       if (p.calAge < 0) {
@@ -252,35 +268,37 @@
       }
     }
 
-    // Efficiency trend sparkline (acid slope over calibrations)
-    var trendEl = document.getElementById('slope-trend');
-    if (p.effHist && p.effHist.length > 1 && trendEl) {
-      renderSparkline(trendEl, p.effHist);
-    } else if (trendEl) {
-      trendEl.innerHTML = '';
+    // Efficiency trend chart (acid slope over calibrations)
+    if (effChart && p.effHist && p.effHist.length > 0) {
+      effChart.data.labels = p.effHist.map(function(e) { return fmtDate(e[0]); });
+      effChart.data.datasets[0].data = p.effHist.map(function(e) { return e[1]; });
+      var lastEff = p.effHist[p.effHist.length - 1][1];
+      var effColor = (lastEff >= 95) ? '#30d158' : (lastEff >= 85) ? '#ff9f0a' : '#ff453a';
+      effChart.data.datasets[0].borderColor = effColor;
+      effChart.data.datasets[0].pointBackgroundColor = effColor;
+      effChart.update();
     }
+
+    // Noise trend chart (from gran history data)
+    renderNoiseTrend();
   }
 
-  function renderSparkline(container, data) {
-    var W = 200, H = 40, PAD = 4;
-    var vals = data.map(function(e) { return e[1]; });
-    var min = Math.min.apply(null, vals) - 2;
-    var max = Math.max.apply(null, vals) + 2;
-    if (max - min < 5) { var mid = (max + min) / 2; min = mid - 5; max = mid + 5; }
-    var n = vals.length;
-    var pts = [];
-    for (var i = 0; i < n; i++) {
-      var x = PAD + (n > 1 ? i / (n - 1) : 0.5) * (W - 2 * PAD);
-      var y = PAD + (1 - (vals[i] - min) / (max - min)) * (H - 2 * PAD);
-      pts.push(x.toFixed(1) + ',' + y.toFixed(1));
+  function renderNoiseTrend() {
+    if (!noiseChart) return;
+    if (!granHistoryData || granHistoryData.length < 1) return;
+    var data = [];
+    for (var i = 0; i < granHistoryData.length; i++) {
+      var nv = granHistoryData[i][7];
+      if (nv > 0) data.push([granHistoryData[i][0], nv]);
     }
-    var last = vals[n - 1];
-    var color = (last >= 95) ? '#30d158' : (last >= 85) ? '#ff9f0a' : '#ff453a';
-    container.innerHTML =
-      '<svg viewBox="0 0 ' + W + ' ' + H + '" class="sparkline-svg">' +
-      '<polyline points="' + pts.join(' ') + '" fill="none" stroke="' + color + '" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>' +
-      '<circle cx="' + pts[n - 1].split(',')[0] + '" cy="' + pts[n - 1].split(',')[1] + '" r="3" fill="' + color + '"/>' +
-      '</svg>';
+    if (data.length === 0) return;
+    noiseChart.data.labels = data.map(function(e) { return fmtDate(e[0]); });
+    noiseChart.data.datasets[0].data = data.map(function(e) { return e[1]; });
+    var last = data[data.length - 1][1];
+    var nColor = (last < 2) ? '#30d158' : (last < 4) ? '#ff9f0a' : '#ff453a';
+    noiseChart.data.datasets[0].borderColor = nColor;
+    noiseChart.data.datasets[0].pointBackgroundColor = nColor;
+    noiseChart.update();
   }
 
   function updateLivePH(d) {
@@ -351,6 +369,7 @@
       granHistoryData = d.data;
       updateGranHistChart();
       renderKHChart(); // gran data may affect KH chart when method filter is active
+      renderNoiseTrend();
       return;
     }
     if (d.sensor === 'kh') {
@@ -447,11 +466,11 @@
   }
 
   // --- Charts ---
-  var khChart, phChart, liveChart, granChart, granHistChart;
+  var khChart, phChart, liveChart, granChart, granHistChart, effChart, noiseChart;
   var granView = 'last'; // 'last' or 'history'
   var khMethod = 'combined'; // 'combined', 'gran', 'endpoint'
   var khHistoryData = null;  // raw kh history [[ts, val], ...]
-  var granHistoryData = null; // raw gran history [[ts, r2, eqML, eph, mth, khG, khE], ...]
+  var granHistoryData = null; // raw gran history [[ts, r2, eqML, eph, mth, khG, khE, noiseMv, reversals], ...]
   var chartOpts = {
     responsive: true,
     maintainAspectRatio: false,
@@ -524,6 +543,29 @@
           yRight: { type: 'linear', position: 'right', ticks: { color: '#ff9f0a', font: { size: 9 } }, grid: { drawOnChartArea: false }, title: { display: true, text: 'pH', color: '#ff9f0a', font: { size: 10 } } }
         }
       }
+    });
+    var probeChartOpts = function(title, yLabel) {
+      return {
+        responsive: true, maintainAspectRatio: false, animation: false,
+        plugins: {
+          legend: { display: false },
+          title: { display: true, text: title, color: '#8e8e93', font: { size: 11, weight: '500' }, padding: { bottom: 4 } }
+        },
+        scales: {
+          x: { ticks: { color: '#8e8e93', maxTicksLimit: 4, font: { size: 9 } }, grid: { color: '#38383a' } },
+          y: { title: { display: true, text: yLabel, color: '#8e8e93', font: { size: 9 } }, ticks: { color: '#8e8e93', font: { size: 9 } }, grid: { color: '#38383a' } }
+        }
+      };
+    };
+    effChart = new Chart(document.getElementById('chart-efficiency'), {
+      type: 'line',
+      data: { labels: [], datasets: [{ data: [], borderColor: '#30d158', borderWidth: 2, pointRadius: 3, pointBackgroundColor: '#30d158', tension: 0.1 }] },
+      options: probeChartOpts('Probe Efficiency', '%')
+    });
+    noiseChart = new Chart(document.getElementById('chart-noise'), {
+      type: 'line',
+      data: { labels: [], datasets: [{ data: [], borderColor: '#30d158', borderWidth: 2, pointRadius: 3, pointBackgroundColor: '#30d158', tension: 0.1 }] },
+      options: probeChartOpts('Probe Noise', 'mV')
     });
   }
 

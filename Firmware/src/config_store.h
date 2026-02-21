@@ -26,6 +26,7 @@ public:
   uint8_t getEndpointMethod();  // 0=Gran, 1=Fixed (default 0)
   float getMinStartPH();        // Minimum acceptable starting pH (default 7.5)
   int getStabilizationTimeout(); // Stabilization timeout in ms (default 2000, max 5000)
+  int getGranMixDelay();         // Gran zone mixing delay in ms (default TITRATION_MIX_DELAY_GRAN_MS)
   void setTitrationVolume(float v);
   void setSampleVolume(float v);
   void setCorrectionFactor(float v);
@@ -36,6 +37,13 @@ public:
   void setEndpointMethod(uint8_t m);
   void setMinStartPH(float v);
   void setStabilizationTimeout(int ms);
+  void setGranMixDelay(int ms);
+  float getDropVolumeUL();       // Gran zone drop volume in µL (default 26.0)
+  void setDropVolumeUL(float ul);
+  float getTitrationRPM();       // Gran zone ejection speed in RPM (default TITRATION_RPM)
+  void setTitrationRPM(float rpm);
+  float getPrefillVolumeUL();    // Prefill volume in µL (default 100.0)
+  void setPrefillVolumeUL(float ul);
 
   // Last measurement results (persistent across reboots)
   float getLastKH();

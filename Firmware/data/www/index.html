@@ -165,6 +165,18 @@
           <label>Stabilization Timeout (ms)
             <input type="number" id="cfg-stab_timeout" step="100" min="500" max="5000">
           </label>
+          <label>Gran Mix Delay (ms)
+            <input type="number" id="cfg-gran_mix_delay" step="100" min="500" max="5000">
+          </label>
+          <label>Drop Volume (µL)
+            <input type="number" id="cfg-drop_ul" step="1" min="5" max="200">
+          </label>
+          <label>Ejection Speed (RPM)
+            <input type="number" id="cfg-titration_rpm" step="1" min="10" max="150">
+          </label>
+          <label>Prefill Volume (µL)
+            <input type="number" id="cfg-prefill_ul" step="10" min="10" max="500">
+          </label>
         </div>
       </details>
     </div>
@@ -234,11 +246,20 @@
           <span class="probe-value" id="probe-asymmetry">-- <small>%</small></span>
         </div>
         <div class="probe-item">
+          <span class="probe-label">Noise</span>
+          <span class="probe-value" id="probe-noise"><span class="health-dot"></span>--</span>
+        </div>
+        <div class="probe-item">
           <span class="probe-label">Cal Age</span>
           <span class="probe-value" id="probe-cal-age">--</span>
         </div>
       </div>
-      <div class="slope-trend" id="slope-trend"></div>
+      <div class="probe-chart-container">
+        <canvas id="chart-efficiency"></canvas>
+      </div>
+      <div class="probe-chart-container">
+        <canvas id="chart-noise"></canvas>
+      </div>
     </div>
   </section>
 

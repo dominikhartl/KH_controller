@@ -42,10 +42,10 @@ void ConfigStore::setVoltage7PH(float v) { prefs.putFloat("v7ph", v); }
 void ConfigStore::setVoltage10PH(float v) { prefs.putFloat("v10ph", v); }
 
 // KH calculation parameters
-float ConfigStore::getTitrationVolume() { return prefs.getFloat("tit_vol", 13.4); }
-float ConfigStore::getSampleVolume() { return prefs.getFloat("sam_vol", 82.0); }
+float ConfigStore::getTitrationVolume() { return prefs.getFloat("tit_vol", 9.8); }
+float ConfigStore::getSampleVolume() { return prefs.getFloat("sam_vol", 77.0); }
 float ConfigStore::getCorrectionFactor() { return prefs.getFloat("corr_f", 1.0); }
-float ConfigStore::getHClMolarity() { return prefs.getFloat("hcl_mol", 0.02); }
+float ConfigStore::getHClMolarity() { return prefs.getFloat("hcl_mol", 0.024); }
 float ConfigStore::getHClVolume() { return prefs.getFloat("hcl_vol", 5000.0); }
 int ConfigStore::getCalUnits() { return prefs.getInt("cal_drops", 6000); }
 float ConfigStore::getFastTitrationPH() { return prefs.getFloat("fast_ph", FAST_TITRATION_PH_DEFAULT); }
@@ -70,6 +70,52 @@ void ConfigStore::setStabilizationTimeout(int ms) {
   if (ms < 500) ms = 500;
   if (ms > 5000) ms = 5000;
   prefs.putInt("stab_ms", ms);
+}
+int ConfigStore::getGranMixDelay() {
+  int ms = prefs.getInt("gran_mix", TITRATION_MIX_DELAY_GRAN_MS);
+  if (ms < 500) ms = 500;
+  if (ms > 5000) ms = 5000;
+  return ms;
+}
+void ConfigStore::setGranMixDelay(int ms) {
+  if (ms < 500) ms = 500;
+  if (ms > 5000) ms = 5000;
+  prefs.putInt("gran_mix", ms);
+}
+
+float ConfigStore::getDropVolumeUL() {
+  float ul = prefs.getFloat("drop_ul", 26.0);
+  if (ul < 5.0) ul = 5.0;
+  if (ul > 200.0) ul = 200.0;
+  return ul;
+}
+void ConfigStore::setDropVolumeUL(float ul) {
+  if (ul < 5.0) ul = 5.0;
+  if (ul > 200.0) ul = 200.0;
+  prefs.putFloat("drop_ul", ul);
+}
+float ConfigStore::getTitrationRPM() {
+  float rpm = prefs.getFloat("tit_rpm", TITRATION_RPM);
+  if (rpm < 10.0) rpm = 10.0;
+  if (rpm > 150.0) rpm = 150.0;
+  return rpm;
+}
+void ConfigStore::setTitrationRPM(float rpm) {
+  if (rpm < 10.0) rpm = 10.0;
+  if (rpm > 150.0) rpm = 150.0;
+  prefs.putFloat("tit_rpm", rpm);
+}
+
+float ConfigStore::getPrefillVolumeUL() {
+  float ul = prefs.getFloat("prefill_ul", 100.0);
+  if (ul < 10.0) ul = 10.0;
+  if (ul > 500.0) ul = 500.0;
+  return ul;
+}
+void ConfigStore::setPrefillVolumeUL(float ul) {
+  if (ul < 10.0) ul = 10.0;
+  if (ul > 500.0) ul = 500.0;
+  prefs.putFloat("prefill_ul", ul);
 }
 
 // Last measurement results
@@ -103,7 +149,7 @@ void ConfigStore::setScheduleTime(uint8_t index, uint16_t minutesFromMidnight) {
 }
 
 // Schedule mode
-uint8_t ConfigStore::getScheduleMode() { return prefs.getUChar("sched_mode", 0); }
+uint8_t ConfigStore::getScheduleMode() { return prefs.getUChar("sched_mode", 1); }
 void ConfigStore::setScheduleMode(uint8_t mode) {
   if (mode > 1) mode = 0;
   prefs.putUChar("sched_mode", mode);
@@ -119,7 +165,7 @@ void ConfigStore::setIntervalHours(uint8_t h) {
   prefs.putUChar("sched_intv", h);
 }
 
-uint16_t ConfigStore::getAnchorTime() { return prefs.getUShort("sched_anch", 360); }
+uint16_t ConfigStore::getAnchorTime() { return prefs.getUShort("sched_anch", 1200); }
 void ConfigStore::setAnchorTime(uint16_t mins) {
   if (mins > 1439) mins = 1439;
   prefs.putUShort("sched_anch", mins);
