@@ -1,5 +1,6 @@
 #include <Arduino.h>
 #include "measurement.h"
+#include "config_store.h"
 #include <pins.h>
 #include <config.h>
 #include <math.h>
@@ -171,7 +172,7 @@ float getAlkalineSlope() {
 // efficiency = |raw_slope| / nernst_at_temp * 100%
 static float slopeToEfficiency(float conditionedSlope) {
   if (isnan(conditionedSlope)) return NAN;
-  float nernst = NERNST_FACTOR * (273.15f + MEASUREMENT_TEMP_C);
+  float nernst = NERNST_FACTOR * (273.15f + configStore.getMeasTempC());
   float rawSlope = fabsf(conditionedSlope) / PH_AMP_GAIN;
   return (rawSlope / nernst) * 100.0f;
 }
@@ -395,14 +396,16 @@ float measureVoltage(int nreadings) {
 
 // --- Gran transformation endpoint detection ---
 
-// Internal: linear regression on Gran function values within a pH window
-// excluded[] marks points to skip; returns false if regression fails
+// Internal: weighted linear regression on Gran function values within a pH window.
+// Uses inverse-variance weighting (w = 1/y²) so that noisier high-value points
+// near the equivalence point don't dominate the fit.
+// excluded[] marks points to skip; returns false if regression fails.
 static bool granRegression(TitrationPoint* points, int nPoints,
                            float sampleVol, float k, bool* excluded,
                            float pHLow, float pHHigh,
                            float* outSlope, float* outIntercept,
                            float* outR2, float* outSsRes, int* outCount) {
-  float sumX = 0, sumY = 0, sumXX = 0, sumXY = 0, sumYY = 0;
+  float sumW = 0, sumWX = 0, sumWY = 0, sumWXX = 0, sumWXY = 0, sumWYY = 0;
   int count = 0;
 
   for (int i = 0; i < nPoints; i++) {
@@ -411,23 +414,29 @@ static bool granRegression(TitrationPoint* points, int nPoints,
       float x = points[i].units;
       float totalVol = sampleVol + x * k;
       float y = totalVol * powf(10.0f, -points[i].pH);
-      sumX += x; sumY += y; sumXX += x * x; sumXY += x * y; sumYY += y * y;
+      float w = 1.0f / (y * y);  // inverse-variance weight
+      sumW += w;
+      sumWX += w * x;
+      sumWY += w * y;
+      sumWXX += w * x * x;
+      sumWXY += w * x * y;
+      sumWYY += w * y * y;
       count++;
     }
   }
 
   if (count < MIN_GRAN_POINTS) return false;
 
-  float denom = (float)count * sumXX - sumX * sumX;
+  float denom = sumW * sumWXX - sumWX * sumWX;
   if (fabsf(denom) < 1e-12f) return false;
 
-  *outSlope = ((float)count * sumXY - sumX * sumY) / denom;
-  *outIntercept = (sumY - *outSlope * sumX) / (float)count;
+  *outSlope = (sumW * sumWXY - sumWX * sumWY) / denom;
+  *outIntercept = (sumWY - *outSlope * sumWX) / sumW;
   *outCount = count;
 
-  // Compute R²
-  float meanY = sumY / (float)count;
-  float ssTot = sumYY - (float)count * meanY * meanY;
+  // Compute weighted R²
+  float meanWY = sumWY / sumW;
+  float ssTot = sumWYY - sumW * meanWY * meanWY;
   float ssRes = 0;
   for (int i = 0; i < nPoints; i++) {
     if (excluded[i]) continue;
@@ -435,9 +444,10 @@ static bool granRegression(TitrationPoint* points, int nPoints,
       float x = points[i].units;
       float totalVol = sampleVol + x * k;
       float y = totalVol * powf(10.0f, -points[i].pH);
+      float w = 1.0f / (y * y);
       float pred = *outSlope * x + *outIntercept;
       float res = y - pred;
-      ssRes += res * res;
+      ssRes += w * res * res;
     }
   }
   *outR2 = (ssTot > 1e-12f) ? 1.0f - ssRes / ssTot : 0.0f;
@@ -462,7 +472,7 @@ static float tryGranWindow(TitrationPoint* points, int nPoints,
                       &slope, &intercept, &r2, &ssRes, &count))
     return NAN;
 
-  // Iterative outlier rejection: up to 2 rounds, remove worst 2σ outlier
+  // Iterative outlier rejection: up to 2 rounds, remove worst 2σ weighted outlier
   for (int round = 0; round < 2; round++) {
     if (count <= MIN_GRAN_POINTS) break;
 
@@ -476,9 +486,10 @@ static float tryGranWindow(TitrationPoint* points, int nPoints,
         float x = points[i].units;
         float totalVol = sampleVol + x * k;
         float y = totalVol * powf(10.0f, -points[i].pH);
-        float res = fabsf(y - (slope * x + intercept));
-        if (res > 2.0f * sigma && res > worstRes) {
-          worstRes = res;
+        float w = 1.0f / (y * y);
+        float wRes = sqrtf(w) * fabsf(y - (slope * x + intercept));
+        if (wRes > 2.0f * sigma && wRes > worstRes) {
+          worstRes = wRes;
           worstIdx = i;
         }
       }
@@ -514,20 +525,68 @@ float granAnalysis(TitrationPoint* points, int nPoints,
 
   float k = titVol / calUnits;
 
-  // Adaptive window selection: try multiple upper pH bounds, keep best R²
-  static const float upperBounds[] = {4.5f, 4.3f, 4.1f};
+  // Adaptive window selection: try multiple pH bounds, keep best R²
+  static const float upperBounds[] = {4.9f, 4.7f, 4.5f, 4.3f, 4.1f, 3.9f};
   static const int nBounds = sizeof(upperBounds) / sizeof(upperBounds[0]);
+
+  // Compute data-adaptive lower bound: 10th percentile pH of Gran-region points
+  // to trim noisy extreme-low-pH points
+  float adaptiveLow = GRAN_STOP_PH;
+  {
+    int granCount = 0;
+    float minPH = 99.0f;
+    for (int i = 0; i < nPoints; i++) {
+      if (points[i].pH < GRAN_REGION_PH && points[i].pH > GRAN_STOP_PH - 0.5f) {
+        granCount++;
+        if (points[i].pH < minPH) minPH = points[i].pH;
+      }
+    }
+    if (granCount >= 10) {
+      // Use 10th percentile: skip lowest 10% of points
+      int skipCount = granCount / 10;
+      if (skipCount > 0) {
+        // Find the (skipCount)-th lowest pH
+        float sorted[MAX_TITRATION_POINTS];
+        int n = 0;
+        for (int i = 0; i < nPoints; i++) {
+          if (points[i].pH < GRAN_REGION_PH && points[i].pH > GRAN_STOP_PH - 0.5f) {
+            sorted[n++] = points[i].pH;
+          }
+        }
+        // Simple insertion sort (small array)
+        for (int i = 1; i < n; i++) {
+          float val = sorted[i];
+          int j = i - 1;
+          while (j >= 0 && sorted[j] > val) { sorted[j+1] = sorted[j]; j--; }
+          sorted[j+1] = val;
+        }
+        adaptiveLow = sorted[skipCount];  // 10th percentile pH
+      }
+    }
+  }
+
+  // Try both fixed and adaptive lower bounds with each upper bound
+  static const int MAX_LOWER = 2;
+  float lowerBounds[MAX_LOWER];
+  int nLower = 1;
+  lowerBounds[0] = GRAN_STOP_PH;
+  if (adaptiveLow > GRAN_STOP_PH + 0.05f) {
+    lowerBounds[nLower++] = adaptiveLow;
+  }
 
   float bestR2 = 0;
   float bestEqUnits = NAN;
 
-  for (int b = 0; b < nBounds; b++) {
-    float r2 = 0;
-    float eq = tryGranWindow(points, nPoints, sampleVol, k,
-                             GRAN_STOP_PH, upperBounds[b], &r2);
-    if (!isnan(eq) && r2 > bestR2) {
-      bestR2 = r2;
-      bestEqUnits = eq;
+  for (int lb = 0; lb < nLower; lb++) {
+    for (int b = 0; b < nBounds; b++) {
+      if (upperBounds[b] <= lowerBounds[lb]) continue;
+      float r2 = 0;
+      float eq = tryGranWindow(points, nPoints, sampleVol, k,
+                               lowerBounds[lb], upperBounds[b], &r2);
+      if (!isnan(eq) && r2 > bestR2) {
+        bestR2 = r2;
+        bestEqUnits = eq;
+      }
     }
   }
 

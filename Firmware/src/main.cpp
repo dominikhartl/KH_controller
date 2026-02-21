@@ -337,18 +337,19 @@ void calibrateTitrationPump() {
 // Combines multiple quality signals into a 0.0-1.0 score
 static float computeConfidence(float granR2, bool usedGran, int nPoints,
                                 int stabTimeouts, const char* probeHealth,
-                                float crossValDiff) {
+                                float crossValDiff, float probeNoiseMv) {
   float score = 1.0f;
-  // Gran R² contribution
+  // Gran R² — continuous: R²=0.99 → -0.20, R²=0.999 → -0.02
   if (usedGran && granR2 > 0) {
-    score -= (1.0f - granR2) * 40.0f;  // R²=0.99 → -0.4, R²=0.999 → -0.04
+    score -= (1.0f - granR2) * 20.0f;
   }
-  // Cross-validation: Gran vs Endpoint disagreement
+  // Cross-validation — continuous linear penalty (0.1 dKH → -0.06, 0.5 dKH → -0.30)
   if (!isnan(crossValDiff)) {
-    if (crossValDiff > 0.5f) score -= 0.3f;
-    else if (crossValDiff > 0.3f) score -= 0.15f;
-    else if (crossValDiff > 0.15f) score -= 0.05f;
+    score -= min(0.3f, crossValDiff * 0.6f);
   }
+  // Probe noise penalty
+  if (probeNoiseMv > 3.0f) score -= 0.05f;
+  if (probeNoiseMv > 5.0f) score -= 0.10f;
   // Data point count
   if (nPoints < 15) score -= 0.1f;
   if (nPoints < 10) score -= 0.1f;
@@ -830,7 +831,7 @@ KHResult measureKH() {
           result.granStepCount = granStepCount;
           result.confidence = computeConfidence(granR2, usedGran, nPoints,
                                                  result.stabTimeouts, getProbeHealth(),
-                                                 crossValDiff);
+                                                 crossValDiff, result.probeNoiseMv);
 
           // KH value deferred to publishKHResult() after validation
         }

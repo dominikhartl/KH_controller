@@ -225,6 +225,7 @@ static void handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
       else if (strcmp(key, "drop_ul") == 0) { configStore.setDropVolumeUL(value); }
       else if (strcmp(key, "titration_rpm") == 0) { configStore.setTitrationRPM(value); }
       else if (strcmp(key, "prefill_ul") == 0) { configStore.setPrefillVolumeUL(value); }
+      else if (strcmp(key, "meas_temp_c") == 0) { configStore.setMeasTempC(value); }
 
       broadcastState(); // Confirm the update
     } else if (strcmp(type, "schedule") == 0) {
@@ -503,6 +504,7 @@ void broadcastState() {
   cfg["drop_ul"] = configStore.getDropVolumeUL();
   cfg["titration_rpm"] = configStore.getTitrationRPM();
   cfg["prefill_ul"] = configStore.getPrefillVolumeUL();
+  cfg["meas_temp_c"] = configStore.getMeasTempC();
 
   // Schedule
   doc["schedMode"] = configStore.getScheduleMode();
@@ -1047,7 +1049,7 @@ void setupWebServer() {
               TITRATION_STEP_SIZE, MEDIUM_STEP_MULTIPLIER,
               GRAN_STEP_MULTIPLIER, FAST_BATCH_MAX,
               FAST_BATCH_MIN, NERNST_FACTOR,
-              MEASUREMENT_TEMP_C, PH_AMP_GAIN);
+              configStore.getMeasTempC(), PH_AMP_GAIN);
             ds = 2;
             break;
           }
@@ -1135,7 +1137,7 @@ void setupWebServer() {
               "\"response_ms\":%lu,\"cal_ts\":%u},",
               health, reason,
               ae, al, ay, as, ls,
-              NERNST_FACTOR * (273.15f + MEASUREMENT_TEMP_C),
+              NERNST_FACTOR * (273.15f + configStore.getMeasTempC()),
               getLastStabilizationMs(),
               configStore.getCalTimestamp());
             ds = 5;

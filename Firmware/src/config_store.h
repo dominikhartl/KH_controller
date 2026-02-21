@@ -44,6 +44,8 @@ public:
   void setTitrationRPM(float rpm);
   float getPrefillVolumeUL();    // Prefill volume in µL (default 100.0)
   void setPrefillVolumeUL(float ul);
+  float getMeasTempC();           // Measurement temperature in °C (default 21.0)
+  void setMeasTempC(float t);
 
   // Last measurement results (persistent across reboots)
   float getLastKH();

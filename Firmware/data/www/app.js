@@ -183,6 +183,7 @@
       setInput('cfg-drop_ul', d.config.drop_ul);
       setInput('cfg-titration_rpm', d.config.titration_rpm);
       setInput('cfg-prefill_ul', d.config.prefill_ul);
+      setInput('cfg-meas_temp_c', d.config.meas_temp_c);
     }
 
     // Schedule

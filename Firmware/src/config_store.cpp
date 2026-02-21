@@ -118,6 +118,19 @@ void ConfigStore::setPrefillVolumeUL(float ul) {
   prefs.putFloat("prefill_ul", ul);
 }
 
+// Measurement temperature
+float ConfigStore::getMeasTempC() {
+  float t = prefs.getFloat("meas_temp", DEFAULT_MEASUREMENT_TEMP_C);
+  if (t < 0.0f) t = 0.0f;
+  if (t > 40.0f) t = 40.0f;
+  return t;
+}
+void ConfigStore::setMeasTempC(float t) {
+  if (t < 0.0f) t = 0.0f;
+  if (t > 40.0f) t = 40.0f;
+  prefs.putFloat("meas_temp", t);
+}
+
 // Last measurement results
 float ConfigStore::getLastKH() { return prefs.getFloat("last_kh", 0); }
 float ConfigStore::getLastStartPH() { return prefs.getFloat("last_sph", 0); }

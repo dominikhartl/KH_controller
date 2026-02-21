@@ -63,15 +63,15 @@ static const int STIRRER_WARMUP_MS = 3000;
 static const int MEASUREMENT_DELAY_MS = 50;
 
 // Measurement defaults
-static const float ENDPOINT_PH = 4.4f;            // Fixed endpoint titration pH
+static const float ENDPOINT_PH = 4.5f;            // Fixed endpoint titration pH
 static const float FIXED_ENDPOINT_STOP_PH = 4.0f; // Stop titrating here in fixed endpoint mode
 static const int SAMPLE_PUMP_VOLUME = 350;
 static const int CALIBRATION_TARGET_UNITS = 6000;
 static const float FAST_TITRATION_PH_DEFAULT = 5.0f; // pH threshold: fast→precise titration
 
 // Medium zone step multiplier (TITRATION_STEP_SIZE * this = units per medium step)
-// Medium zone points aren't used by Gran analysis, so large steps are fine
-static const int MEDIUM_STEP_MULTIPLIER = 24;  // 2 * 24 = 48 units per step
+// Smaller steps yield more data points for Gran regression
+static const int MEDIUM_STEP_MULTIPLIER = 12;  // 2 * 12 = 24 units per step
 
 // Gran zone step multiplier — smaller = more data points for regression robustness
 static const int GRAN_STEP_MULTIPLIER = 8;     // 2 * 8 = 16 units per step
@@ -105,7 +105,7 @@ static const float CARRYOVER_RETRY_PH = 7.0f;      // Below this: hard error; ab
 static const float POST_WASH_PH_THRESHOLD = 6.0f;  // Warn if post-wash pH is below this
 
 // Gran transformation endpoint detection
-static const float GRAN_REGION_PH       = 4.8f;  // Points below this used for Gran regression
+static const float GRAN_REGION_PH       = 5.0f;  // Points below this used for Gran regression
 static const float GRAN_STOP_PH         = 4.0f;   // Stop titrating at this pH
 static const int   MIN_GRAN_POINTS      = 8;       // Minimum points for reliable regression
 static const int   MAX_TITRATION_POINTS = 200;      // Data point buffer size
@@ -119,7 +119,7 @@ static const float BUFFER_PH_10 = 10.07f;
 // Nernst equation: slope(T) = NERNST_FACTOR * T(K) mV/pH
 // R*ln(10)/(n*F) = 8.31446 * 2.30259 / (1 * 96485.3) = 0.19842 mV/(pH·K)
 static const float NERNST_FACTOR = 0.19842f;
-static const float MEASUREMENT_TEMP_C = 21.0f;
+static const float DEFAULT_MEASUREMENT_TEMP_C = 21.0f;
 
 // Signal conditioning amplifier gain (hardware constant)
 // DFRobot SEN0161-V2 board gain = 3.0 (confirmed from DFRobot_PH library:
