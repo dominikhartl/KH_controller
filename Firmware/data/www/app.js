@@ -268,14 +268,14 @@
       }
     }
 
-    // Efficiency trend chart (acid slope over calibrations)
+    // Asymmetry trend chart (over calibrations)
     if (effChart && p.effHist && p.effHist.length > 0) {
       effChart.data.labels = p.effHist.map(function(e) { return fmtDate(e[0]); });
       effChart.data.datasets[0].data = p.effHist.map(function(e) { return e[1]; });
-      var lastEff = p.effHist[p.effHist.length - 1][1];
-      var effColor = (lastEff >= 95) ? '#30d158' : (lastEff >= 85) ? '#ff9f0a' : '#ff453a';
-      effChart.data.datasets[0].borderColor = effColor;
-      effChart.data.datasets[0].pointBackgroundColor = effColor;
+      var lastAsym = p.effHist[p.effHist.length - 1][1];
+      var asymColor = (lastAsym < 15) ? '#30d158' : (lastAsym < 25) ? '#ff9f0a' : '#ff453a';
+      effChart.data.datasets[0].borderColor = asymColor;
+      effChart.data.datasets[0].pointBackgroundColor = asymColor;
       effChart.update();
     }
 
@@ -560,7 +560,7 @@
     effChart = new Chart(document.getElementById('chart-efficiency'), {
       type: 'line',
       data: { labels: [], datasets: [{ data: [], borderColor: '#30d158', borderWidth: 2, pointRadius: 3, pointBackgroundColor: '#30d158', tension: 0.1 }] },
-      options: probeChartOpts('Probe Efficiency', '%')
+      options: probeChartOpts('Probe Asymmetry', '%')
     });
     noiseChart = new Chart(document.getElementById('chart-noise'), {
       type: 'line',

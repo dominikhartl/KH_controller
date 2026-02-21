@@ -192,8 +192,14 @@ int ConfigStore::getSlopeHistory(SlopeEntry* entries, int maxEntries) {
   return toRead;
 }
 
-void ConfigStore::addSlopeEntry(uint32_t timestamp, float slope) {
+void ConfigStore::addSlopeEntry(uint32_t timestamp, float slope, float asymmetry) {
   if (isnan(slope)) return;
+
+  // Struct format changed (added asymmetry field) — detect old format by size mismatch
+  if (!prefs.getBool("sl_v2", false)) {
+    prefs.putUChar("sl_cnt", 0);  // reset history on format upgrade
+    prefs.putBool("sl_v2", true);
+  }
 
   SlopeEntry entries[MAX_SLOPE_HISTORY];
   uint8_t count = prefs.getUChar("sl_cnt", 0);
@@ -207,6 +213,7 @@ void ConfigStore::addSlopeEntry(uint32_t timestamp, float slope) {
   if (count > 0 && timestamp >= entries[count - 1].timestamp
       && (timestamp - entries[count - 1].timestamp) < 3600) {
     entries[count - 1].slope = slope;
+    entries[count - 1].asymmetry = asymmetry;
     entries[count - 1].timestamp = timestamp;
   } else {
     // Shift oldest out if full
@@ -216,6 +223,7 @@ void ConfigStore::addSlopeEntry(uint32_t timestamp, float slope) {
     }
     entries[count].timestamp = timestamp;
     entries[count].slope = slope;
+    entries[count].asymmetry = asymmetry;
     count++;
     prefs.putUChar("sl_cnt", count);
   }

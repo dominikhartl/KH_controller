@@ -76,9 +76,10 @@ public:
   struct SlopeEntry {
     uint32_t timestamp;
     float slope;
+    float asymmetry;
   };
   int getSlopeHistory(SlopeEntry* entries, int maxEntries);
-  void addSlopeEntry(uint32_t timestamp, float slope);
+  void addSlopeEntry(uint32_t timestamp, float slope, float asymmetry);
 
 private:
   Preferences prefs;

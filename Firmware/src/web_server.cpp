@@ -380,7 +380,7 @@ void calibratePH(int bufferPH) {
   uint32_t now = (uint32_t)time(nullptr);
   if (now > MIN_VALID_EPOCH) {
     configStore.setCalTimestamp(now);
-    if (isCalibrationValid()) configStore.addSlopeEntry(now, getAcidSlope());
+    if (isCalibrationValid()) configStore.addSlopeEntry(now, getAcidSlope(), getProbeAsymmetry());
   }
   char msg[32];
   snprintf(msg, sizeof(msg), "Calibrated pH %.2f", actualPH);
@@ -502,17 +502,15 @@ void broadcastState() {
     probe["calAge"] = -1;  // never calibrated
   }
 
-  // Efficiency history (acid slope over time, converted to Nernst %)
+  // Asymmetry history over calibrations
   ConfigStore::SlopeEntry slopeHist[ConfigStore::MAX_SLOPE_HISTORY];
   int slopeCount = configStore.getSlopeHistory(slopeHist, ConfigStore::MAX_SLOPE_HISTORY);
   if (slopeCount > 0) {
-    float nernst = NERNST_FACTOR * (273.15f + MEASUREMENT_TEMP_C);
     JsonArray eh = probe.createNestedArray("effHist");
     for (int i = 0; i < slopeCount; i++) {
       JsonArray entry = eh.createNestedArray();
       entry.add(slopeHist[i].timestamp);
-      float eff = fabsf(slopeHist[i].slope) / PH_AMP_GAIN / nernst * 100.0f;
-      entry.add((int)(eff * 10.0f + 0.5f) / 10.0f);  // 1 decimal
+      entry.add((int)(slopeHist[i].asymmetry * 10.0f + 0.5f) / 10.0f);  // 1 decimal
     }
   }
 
