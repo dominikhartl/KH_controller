@@ -504,11 +504,18 @@
           var x = (p[0] - t0) / 3600;
           return slope * x + intercept;
         });
+        // For gran/endpoint views, show per-method slope (firmware only sends combined)
+        if (khMethod !== 'combined') {
+          var slopePerDay = slope * 24;
+          setText('val-kh-slope', (slopePerDay >= 0 ? '+' : '') + slopePerDay.toFixed(2));
+        }
       } else {
         khChart.data.datasets[1].data = [];
+        if (khMethod !== 'combined') setText('val-kh-slope', '--');
       }
     } else {
       khChart.data.datasets[1].data = [];
+      if (khMethod !== 'combined') setText('val-kh-slope', '--');
     }
     // Enforce minimum 1.5 dKH span on y-axis
     var vals = khChart.data.datasets[0].data.filter(function(v) { return v != null; });
