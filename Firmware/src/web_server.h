@@ -35,6 +35,7 @@ void storeAnalysisPoints(const TitrationPoint* points, int count);
 void setupWebServer();
 void executeCommand(const char* cmd);
 void calibratePH(int bufferPH);
+void processPendingReplay();
 void broadcastState();
 void broadcastTitrationPH(float ph, int units);
 void broadcastTitrationStart();

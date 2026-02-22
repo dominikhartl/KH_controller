@@ -325,12 +325,13 @@
     var pts = d.points.map(function(p) { return { x: p[0], y: p[1] }; });
     granChart.data.datasets[0].data = pts;
 
-    // Fit line from firmware's weighted regression (exact match)
+    // Fit line from firmware's weighted regression — extend across full data range
     if (d.slope && d.intercept !== undefined) {
-      var xMax = pts[pts.length - 1].x;
-      var xStart = d.eqML > 0 ? d.eqML : ((d.slope !== 0) ? -d.intercept / d.slope : pts[0].x);
+      var xMin = Math.min.apply(null, pts.map(function(p) { return p.x; }));
+      var xMax = Math.max.apply(null, pts.map(function(p) { return p.x; }));
+      var xStart = d.eqML > 0 ? Math.min(d.eqML, xMin) : xMin;
       granChart.data.datasets[1].data = [
-        { x: xStart, y: 0 },
+        { x: xStart, y: d.slope * xStart + d.intercept },
         { x: xMax, y: d.slope * xMax + d.intercept }
       ];
     } else {
@@ -373,23 +374,44 @@
     // Find best window (highest R² among valid)
     var bestLow = 0, bestHigh = 0, bestR2 = 0;
     for (var i = 0; i < d.windows.length; i++) {
-      var w = d.windows[i]; // [low, high, r2, valid]
+      var w = d.windows[i]; // [low, high, r2, valid, kh]
       if (w[3] && w[2] > bestR2) { bestR2 = w[2]; bestLow = w[0]; bestHigh = w[1]; }
     }
     // One horizontal line per window: from lower bound to upper bound at R² height
+    // Blue lines semi-transparent so overlaps appear darker; best (red) on top
     var datasets = [];
     for (var i = 0; i < d.windows.length; i++) {
       var w = d.windows[i];
       if (!w[3]) continue; // skip invalid
       var isBest = (w[0] === bestLow && w[1] === bestHigh);
-      datasets.push({
-        data: [{ x: w[0], y: w[2] }, { x: w[1], y: w[2] }],
-        borderColor: isBest ? '#ff453a' : '#0a84ff',
-        borderWidth: isBest ? 3 : 2,
-        pointRadius: 0,
-        showLine: true
-      });
+      var kh = w[4] || 0;
+      if (!isBest) {
+        datasets.push({
+          data: [{ x: w[0], y: w[2] }, { x: w[1], y: w[2] }],
+          borderColor: 'rgba(10,132,255,0.5)',
+          borderWidth: 2,
+          pointRadius: 3,
+          pointBackgroundColor: 'rgba(10,132,255,0.5)',
+          showLine: true,
+          khLabel: kh > 0 ? kh.toFixed(1) : ''
+        });
+      }
     }
+    // Best window last so it renders on top
+    var bestKh = 0;
+    for (var i = 0; i < d.windows.length; i++) {
+      var w = d.windows[i];
+      if (w[3] && w[0] === bestLow && w[1] === bestHigh) bestKh = w[4] || 0;
+    }
+    datasets.push({
+      data: [{ x: bestLow, y: bestR2 }, { x: bestHigh, y: bestR2 }],
+      borderColor: '#ff453a',
+      borderWidth: 3,
+      pointRadius: 4,
+      pointBackgroundColor: '#ff453a',
+      showLine: true,
+      khLabel: bestKh > 0 ? bestKh.toFixed(1) : ''
+    });
     granWinChart.data.datasets = datasets;
     granWinChart.update();
   }
@@ -458,14 +480,18 @@
       khChart.data.datasets[2].data = [];
     }
 
-    // Compute regression trend line
-    if (data.length >= 3) {
-      var n = data.length;
-      var t0 = data[0][0];
+    // Compute regression trend line from last 72h (matching HA/MQTT slope)
+    var now = data[data.length - 1][0];
+    var cutoff = now - 72 * 3600;
+    var recent = data.filter(function(p) { return p[0] >= cutoff; });
+    var span = recent.length >= 2 ? recent[recent.length - 1][0] - recent[0][0] : 0;
+    if (recent.length >= 3 && span >= 48 * 3600) {
+      var n = recent.length;
+      var t0 = recent[0][0];
       var sx = 0, sy = 0, sxx = 0, sxy = 0;
       for (var i = 0; i < n; i++) {
-        var x = (data[i][0] - t0) / 3600;
-        var y = data[i][1];
+        var x = (recent[i][0] - t0) / 3600;
+        var y = recent[i][1];
         sx += x; sy += y; sxx += x * x; sxy += x * y;
       }
       var denom = n * sxx - sx * sx;
@@ -628,7 +654,24 @@
           x: { type: 'linear', title: { display: true, text: 'pH', color: '#8e8e93' }, ticks: { color: '#8e8e93', font: { size: 10 } }, grid: { color: '#38383a' } },
           y: { title: { display: true, text: 'R\u00b2', color: '#8e8e93' }, min: 0.99, max: 1.0, ticks: { color: '#8e8e93', font: { size: 9 } }, grid: { color: '#38383a' } }
         }
-      }
+      },
+      plugins: [{
+        id: 'khLabels',
+        afterDatasetsDraw: function(chart) {
+          var ctx = chart.ctx;
+          ctx.font = '9px sans-serif';
+          ctx.textAlign = 'center';
+          chart.data.datasets.forEach(function(ds, i) {
+            if (!ds.khLabel) return;
+            var meta = chart.getDatasetMeta(i);
+            if (meta.data.length < 2) return;
+            var x0 = meta.data[0].x, x1 = meta.data[1].x;
+            var y = meta.data[0].y;
+            ctx.fillStyle = ds.borderColor;
+            ctx.fillText(ds.khLabel, (x0 + x1) / 2, y - 4);
+          });
+        }
+      }]
     });
     var probeChartOpts = function(title, yLabel) {
       return {

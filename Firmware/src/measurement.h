@@ -66,6 +66,7 @@ struct TitrationPoint {
 struct GranWindowResult {
     float low, high, r2;
     bool valid;
+    float eqUnits;  // equivalence point in stepper units (NAN if invalid)
 };
 
 // Determine equivalence point via Gran function linearization

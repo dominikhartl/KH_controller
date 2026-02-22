@@ -52,6 +52,9 @@ static float granBufSlopeML = 0, granBufIntercept = 0;
 static GranWindowResult granBufWindows[MAX_GRAN_WINDOWS];
 static uint8_t granBufNWindows = 0;
 
+// Cached KH slope — updated after each measurement, avoids filesystem reads in broadcastState()
+static float cachedKHSlope = NAN;
+
 // Last measurement result (for diagnostics download)
 static KHResult lastKHResult = {};
 static bool hasLastKHResult = false;
@@ -179,6 +182,7 @@ static void sendGranData(AsyncWebSocketClient* client) {
       w.add(granBufWindows[i].high);
       w.add(granBufWindows[i].r2);
       w.add(granBufWindows[i].valid ? 1 : 0);
+      w.add(serialized(String(granBufWindows[i].eqUnits, 2)));
     }
   }
 
@@ -191,7 +195,7 @@ void onWebSocketEvent(AsyncWebSocket* server, AsyncWebSocketClient* client,
                       AwsEventType type, void* arg, uint8_t* data, size_t len) {
   switch (type) {
     case WS_EVT_CONNECT:
-      broadcastState();
+      broadcastState();  // lightweight (cached slope, no filesystem I/O)
       sendMesData(client);
       sendLogData(client);
       sendGranData(client);
@@ -456,6 +460,10 @@ void broadcastTitrationStart() {
   ws.textAll("{\"type\":\"mesStart\"}");
 }
 
+void processPendingReplay() {
+  // Replay now happens directly in WS_EVT_CONNECT; kept as no-op for API compat
+}
+
 void broadcastState() {
   if (ws.count() == 0) return;
 
@@ -475,8 +483,7 @@ void broadcastState() {
   doc["nextMeas"] = scheduler.getNextMeasurementTime();
 
   // KH trend slope (dKH/day) and measurement confidence
-  float khSlope = computeKHSlope();
-  if (!isnan(khSlope)) doc["khSlope"] = serialized(String(khSlope, 3));
+  if (!isnan(cachedKHSlope)) doc["khSlope"] = serialized(String(cachedKHSlope, 3));
   if (!isnan(lastConfidence)) doc["confidence"] = lastConfidence;
 
   // Probe health
@@ -664,6 +671,7 @@ void broadcastGranData(float r2, float eqML, bool usedGran,
       w.add(windows[i].high);
       w.add(windows[i].r2);
       w.add(windows[i].valid ? 1 : 0);
+      w.add(serialized(String(windows[i].eqUnits, 2))); // KH value (reused field)
     }
   }
 
@@ -857,7 +865,8 @@ float computeKHSlope() {
   if (fabs(denom) < 1e-12) return NAN;
 
   double slopePerHour = ((double)n * sxy - sx * sy) / denom;
-  return (float)(slopePerHour * 24.0);  // Convert to dKH/day
+  cachedKHSlope = (float)(slopePerHour * 24.0);  // Convert to dKH/day
+  return cachedKHSlope;
 }
 
 // NAN-safe float formatter for JSON diagnostics output

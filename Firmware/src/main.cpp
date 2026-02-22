@@ -733,22 +733,32 @@ KHResult measureKH() {
           float granPtF[MAX_GRAN_DIAG];
           int nGranPts = 0;
 
-          // Collect Gran region points: window points first, then context
-          // Pass 1: points inside the best window (these must all be shown)
+          // Collect Gran region points by proximity to window:
+          // Pass 1: inside the window (must all be shown)
+          // Pass 2: within 0.3 pH of window bounds (transition zone)
+          // Pass 3: remaining Gran region (far context)
+          auto addGranPt = [&](int i) {
+            granPtML[nGranPts] = dataPoints[i].units * k;
+            granPtF[nGranPts] = (samVol + dataPoints[i].units * k) * powf(10.0f, -dataPoints[i].pH);
+            nGranPts++;
+          };
+          float wLo = result.granWinLow, wHi = result.granWinHigh;
+          // Track which points are already added
+          bool added[MAX_TITRATION_POINTS] = {};
           for (int i = 0; i < nPoints && nGranPts < MAX_GRAN_DIAG; i++) {
-            if (dataPoints[i].pH < result.granWinHigh && dataPoints[i].pH > result.granWinLow) {
-              granPtML[nGranPts] = dataPoints[i].units * k;
-              granPtF[nGranPts] = (samVol + dataPoints[i].units * k) * powf(10.0f, -dataPoints[i].pH);
-              nGranPts++;
+            if (dataPoints[i].pH < wHi && dataPoints[i].pH > wLo) {
+              addGranPt(i); added[i] = true;
             }
           }
-          // Pass 2: remaining Gran region points outside the window (context)
           for (int i = 0; i < nPoints && nGranPts < MAX_GRAN_DIAG; i++) {
-            if (dataPoints[i].pH < GRAN_REGION_PH && dataPoints[i].pH > GRAN_STOP_PH &&
-                !(dataPoints[i].pH < result.granWinHigh && dataPoints[i].pH > result.granWinLow)) {
-              granPtML[nGranPts] = dataPoints[i].units * k;
-              granPtF[nGranPts] = (samVol + dataPoints[i].units * k) * powf(10.0f, -dataPoints[i].pH);
-              nGranPts++;
+            if (!added[i] && dataPoints[i].pH < GRAN_REGION_PH && dataPoints[i].pH > GRAN_STOP_PH &&
+                (dataPoints[i].pH >= wHi - 0.3f || dataPoints[i].pH <= wLo + 0.3f)) {
+              addGranPt(i); added[i] = true;
+            }
+          }
+          for (int i = 0; i < nPoints && nGranPts < MAX_GRAN_DIAG; i++) {
+            if (!added[i] && dataPoints[i].pH < GRAN_REGION_PH && dataPoints[i].pH > GRAN_STOP_PH) {
+              addGranPt(i);
             }
           }
           float eqML = isnan(exactUnits) ? 0 : exactUnits * k;
@@ -762,6 +772,15 @@ KHResult measureKH() {
                 if (first) { winLowML = winHighML = ml; first = false; }
                 else { if (ml < winLowML) winLowML = ml; if (ml > winHighML) winHighML = ml; }
               }
+            }
+          }
+          // Compute per-window KH values from each window's equivalence point
+          for (int i = 0; i < nGranWindows; i++) {
+            if (granWindows[i].valid && !isnan(granWindows[i].eqUnits)) {
+              float eqMLw = granWindows[i].eqUnits * k;
+              granWindows[i].eqUnits = (eqMLw / samVol) * 2800.0f * hclMol * corrF; // reuse field as KH
+            } else {
+              granWindows[i].eqUnits = 0;
             }
           }
           // Convert regression from units-space to mL-space: F = (slope/k)*mL + intercept
@@ -1041,6 +1060,7 @@ void setup() {
 
   // Web server + WebSocket dashboard
   setupWebServer();
+  computeKHSlope();  // populate cached slope for broadcastState()
   {
     int reason = esp_reset_reason();
     Serial.printf("Reset reason: %d\n", reason);
@@ -1061,6 +1081,7 @@ void setup() {
 
 void loop() {
   processPendingCommand();
+  processPendingReplay();
   wifiManager.loop();
   mqttManager.loop();
   ArduinoOTA.handle();

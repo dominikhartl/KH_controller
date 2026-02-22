@@ -596,7 +596,7 @@ float granAnalysis(TitrationPoint* points, int nPoints,
       float eq = tryGranWindow(points, nPoints, sampleVol, k,
                                lowerBounds[lb], upperBounds[b], &r2, &s, &ic);
       if (windowResults && winCount < MAX_GRAN_WINDOWS) {
-        windowResults[winCount] = {lowerBounds[lb], upperBounds[b], r2, !isnan(eq)};
+        windowResults[winCount] = {lowerBounds[lb], upperBounds[b], r2, !isnan(eq), eq};
         winCount++;
       }
       if (!isnan(eq) && r2 > bestR2) {
