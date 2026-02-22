@@ -370,51 +370,25 @@
 
   function updateGranWindows(d) {
     if (!granWinChart || !d.windows || d.windows.length === 0) return;
-    // Group windows by lower bound → one line per lower bound
-    var groups = {};
-    for (var i = 0; i < d.windows.length; i++) {
-      var w = d.windows[i]; // [low, high, r2, valid]
-      var key = w[0].toFixed(2);
-      if (!groups[key]) groups[key] = [];
-      groups[key].push({ x: w[1], y: w[3] ? w[2] : null, valid: w[3] });
-    }
-    // Determine selected window bounds from main data
-    var selLow = d.winLowML ? null : null; // window bounds are in pH from the windows array
+    // Find best window (highest R² among valid)
     var bestLow = 0, bestHigh = 0, bestR2 = 0;
     for (var i = 0; i < d.windows.length; i++) {
-      var w = d.windows[i];
+      var w = d.windows[i]; // [low, high, r2, valid]
       if (w[3] && w[2] > bestR2) { bestR2 = w[2]; bestLow = w[0]; bestHigh = w[1]; }
     }
-    var colors = ['#0a84ff', '#ff9f0a', '#30d158', '#ff453a'];
+    // One horizontal line per window: from lower bound to upper bound at R² height
     var datasets = [];
-    var ci = 0;
-    var keys = Object.keys(groups).sort();
-    for (var k = 0; k < keys.length; k++) {
-      var key = keys[k];
-      var pts = groups[key].sort(function(a, b) { return a.x - b.x; });
-      var pointRadii = pts.map(function(p) {
-        return (p.x === bestHigh && parseFloat(key) === bestLow) ? 8 : 4;
-      });
-      var pointStyles = pts.map(function(p) {
-        return (p.x === bestHigh && parseFloat(key) === bestLow) ? 'crossRot' : 'circle';
-      });
-      var pointColors = pts.map(function(p) {
-        return (p.x === bestHigh && parseFloat(key) === bestLow) ? '#30d158' : colors[ci % colors.length];
-      });
+    for (var i = 0; i < d.windows.length; i++) {
+      var w = d.windows[i];
+      if (!w[3]) continue; // skip invalid
+      var isBest = (w[0] === bestLow && w[1] === bestHigh);
       datasets.push({
-        label: 'Low: ' + key,
-        data: pts.map(function(p) { return { x: p.x, y: p.y }; }),
-        borderColor: colors[ci % colors.length],
-        backgroundColor: colors[ci % colors.length],
-        borderWidth: 2,
-        pointRadius: pointRadii,
-        pointStyle: pointStyles,
-        pointBackgroundColor: pointColors,
-        pointBorderColor: pointColors,
-        tension: 0.1,
-        spanGaps: false
+        data: [{ x: w[0], y: w[2] }, { x: w[1], y: w[2] }],
+        borderColor: isBest ? '#ff453a' : '#0a84ff',
+        borderWidth: isBest ? 3 : 2,
+        pointRadius: 0,
+        showLine: true
       });
-      ci++;
     }
     granWinChart.data.datasets = datasets;
     granWinChart.update();
@@ -649,10 +623,10 @@
       data: { labels: [], datasets: [] },
       options: {
         responsive: true, maintainAspectRatio: false, animation: false,
-        plugins: { legend: { display: true, labels: { color: '#8e8e93', font: { size: 10 }, boxWidth: 12 } } },
+        plugins: { legend: { display: false } },
         scales: {
-          x: { title: { display: true, text: 'Upper bound (pH)', color: '#8e8e93' }, ticks: { color: '#8e8e93', font: { size: 10 } }, grid: { color: '#38383a' } },
-          y: { title: { display: true, text: 'R\u00b2', color: '#8e8e93' }, suggestedMin: 0.95, suggestedMax: 1.0, ticks: { color: '#8e8e93', font: { size: 9 } }, grid: { color: '#38383a' } }
+          x: { type: 'linear', title: { display: true, text: 'pH', color: '#8e8e93' }, ticks: { color: '#8e8e93', font: { size: 10 } }, grid: { color: '#38383a' } },
+          y: { title: { display: true, text: 'R\u00b2', color: '#8e8e93' }, min: 0.99, max: 1.0, ticks: { color: '#8e8e93', font: { size: 9 } }, grid: { color: '#38383a' } }
         }
       }
     });

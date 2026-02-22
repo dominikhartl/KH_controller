@@ -573,14 +573,14 @@ float granAnalysis(TitrationPoint* points, int nPoints,
     }
   }
 
-  // Try both fixed and adaptive lower bounds with each upper bound
-  static const int MAX_LOWER = 2;
+  // Try lower bounds in 0.1 pH steps from GRAN_STOP_PH up to adaptive low
+  static const int MAX_LOWER = 6;
   float lowerBounds[MAX_LOWER];
-  int nLower = 1;
-  lowerBounds[0] = GRAN_STOP_PH;
-  if (adaptiveLow > GRAN_STOP_PH + 0.05f) {
-    lowerBounds[nLower++] = adaptiveLow;
+  int nLower = 0;
+  for (float lb = GRAN_STOP_PH; lb <= adaptiveLow + 0.01f && nLower < MAX_LOWER; lb += 0.1f) {
+    lowerBounds[nLower++] = lb;
   }
+  if (nLower == 0) lowerBounds[nLower++] = GRAN_STOP_PH;
 
   float bestR2 = 0;
   float bestEqUnits = NAN;

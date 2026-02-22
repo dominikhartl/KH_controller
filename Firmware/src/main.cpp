@@ -733,9 +733,19 @@ KHResult measureKH() {
           float granPtF[MAX_GRAN_DIAG];
           int nGranPts = 0;
 
-          // Collect all Gran region points sequentially
+          // Collect Gran region points: window points first, then context
+          // Pass 1: points inside the best window (these must all be shown)
           for (int i = 0; i < nPoints && nGranPts < MAX_GRAN_DIAG; i++) {
-            if (dataPoints[i].pH < GRAN_REGION_PH && dataPoints[i].pH > GRAN_STOP_PH) {
+            if (dataPoints[i].pH < result.granWinHigh && dataPoints[i].pH > result.granWinLow) {
+              granPtML[nGranPts] = dataPoints[i].units * k;
+              granPtF[nGranPts] = (samVol + dataPoints[i].units * k) * powf(10.0f, -dataPoints[i].pH);
+              nGranPts++;
+            }
+          }
+          // Pass 2: remaining Gran region points outside the window (context)
+          for (int i = 0; i < nPoints && nGranPts < MAX_GRAN_DIAG; i++) {
+            if (dataPoints[i].pH < GRAN_REGION_PH && dataPoints[i].pH > GRAN_STOP_PH &&
+                !(dataPoints[i].pH < result.granWinHigh && dataPoints[i].pH > result.granWinLow)) {
               granPtML[nGranPts] = dataPoints[i].units * k;
               granPtF[nGranPts] = (samVol + dataPoints[i].units * k) * powf(10.0f, -dataPoints[i].pH);
               nGranPts++;

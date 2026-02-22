@@ -49,6 +49,8 @@ static float granBufEqML = 0;
 static bool granBufUsed = false;
 static float granBufWinLowML = 0, granBufWinHighML = 0;
 static float granBufSlopeML = 0, granBufIntercept = 0;
+static GranWindowResult granBufWindows[MAX_GRAN_WINDOWS];
+static uint8_t granBufNWindows = 0;
 
 // Last measurement result (for diagnostics download)
 static KHResult lastKHResult = {};
@@ -167,6 +169,17 @@ static void sendGranData(AsyncWebSocketClient* client) {
     JsonArray pt = pts.add<JsonArray>();
     pt.add(granBuffer[i].ml);
     pt.add(granBuffer[i].f);
+  }
+
+  if (granBufNWindows > 0) {
+    JsonArray wins = doc["windows"].to<JsonArray>();
+    for (uint8_t i = 0; i < granBufNWindows; i++) {
+      JsonArray w = wins.add<JsonArray>();
+      w.add(granBufWindows[i].low);
+      w.add(granBufWindows[i].high);
+      w.add(granBufWindows[i].r2);
+      w.add(granBufWindows[i].valid ? 1 : 0);
+    }
   }
 
   static char buf[2048];
@@ -616,6 +629,12 @@ void broadcastGranData(float r2, float eqML, bool usedGran,
   granBufCount = (uint8_t)min(nPts, (int)GRAN_BUF_MAX);
   for (uint8_t i = 0; i < granBufCount; i++) {
     granBuffer[i] = { pointsML[i], pointsF[i] };
+  }
+  granBufNWindows = (uint8_t)min(nWindows, (int)MAX_GRAN_WINDOWS);
+  if (windows) {
+    for (uint8_t i = 0; i < granBufNWindows; i++) granBufWindows[i] = windows[i];
+  } else {
+    granBufNWindows = 0;
   }
 
   if (ws.count() == 0 || nPts == 0) return;
