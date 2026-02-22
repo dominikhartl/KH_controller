@@ -250,6 +250,10 @@ static void handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
       else if (strcmp(key, "titration_rpm") == 0) { configStore.setTitrationRPM(value); }
       else if (strcmp(key, "prefill_ul") == 0) { configStore.setPrefillVolumeUL(value); }
       else if (strcmp(key, "meas_temp_c") == 0) { configStore.setMeasTempC(value); }
+      else if (strcmp(key, "slope_hours") == 0) {
+        configStore.setSlopeWindowHours((int)value);
+        computeKHSlope();  // refresh cached slope with new window
+      }
 
       broadcastState(); // Confirm the update
     } else if (strcmp(type, "schedule") == 0) {
@@ -532,6 +536,7 @@ void broadcastState() {
   cfg["titration_rpm"] = configStore.getTitrationRPM();
   cfg["prefill_ul"] = configStore.getPrefillVolumeUL();
   cfg["meas_temp_c"] = configStore.getMeasTempC();
+  cfg["slope_hours"] = configStore.getSlopeWindowHours();
 
   // Schedule
   doc["schedMode"] = configStore.getScheduleMode();
@@ -813,7 +818,7 @@ int getRecentKHValues(float* outValues, int maxCount) {
   return count;
 }
 
-// Compute KH trend slope (dKH/day) from last 72 hours of history using linear regression.
+// Compute KH trend slope (dKH/day) from configurable lookback window using linear regression.
 // Returns NAN if insufficient data (< 3 points).
 float computeKHSlope() {
   const char* filename = "/history/kh.csv";
@@ -821,7 +826,8 @@ float computeKHSlope() {
 
   uint32_t now = (uint32_t)time(nullptr);
   if (now < MIN_VALID_EPOCH) return NAN;
-  uint32_t cutoff = now - (72 * 3600);  // 72 hours
+  int slopeHours = configStore.getSlopeWindowHours();
+  uint32_t cutoff = now - ((uint32_t)slopeHours * 3600);
 
   // Read recent KH values with timestamps
   static const int MAX_PTS = 200;
@@ -847,10 +853,6 @@ float computeKHSlope() {
   f.close();
 
   if (n < 3) return NAN;
-
-  // Require data spanning at least 48h to avoid diurnal cycle bias
-  uint32_t span = ts[n - 1] - ts[0];
-  if (span < 48 * 3600) return NAN;
 
   // Linear regression: kh = slope * t + intercept
   // Normalize timestamps to hours from first point to avoid overflow

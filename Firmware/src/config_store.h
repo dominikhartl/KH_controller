@@ -46,6 +46,8 @@ public:
   void setPrefillVolumeUL(float ul);
   float getMeasTempC();           // Measurement temperature in °C (default 21.0)
   void setMeasTempC(float t);
+  int getSlopeWindowHours();      // KH slope lookback window in hours (default 72, range 24-168)
+  void setSlopeWindowHours(int h);
 
   // Last measurement results (persistent across reboots)
   float getLastKH();

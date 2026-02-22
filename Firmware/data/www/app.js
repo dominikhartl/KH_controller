@@ -184,6 +184,7 @@
       setInput('cfg-titration_rpm', d.config.titration_rpm);
       setInput('cfg-prefill_ul', d.config.prefill_ul);
       setInput('cfg-meas_temp_c', d.config.meas_temp_c);
+      setInput('cfg-slope_hours', d.config.slope_hours);
     }
 
     // Schedule
@@ -480,12 +481,13 @@
       khChart.data.datasets[2].data = [];
     }
 
-    // Compute regression trend line from last 72h (matching HA/MQTT slope)
+    // Compute regression trend line from configured slope window (matching HA/MQTT slope)
+    var slopeHoursEl = document.getElementById('cfg-slope_hours');
+    var slopeHours = slopeHoursEl ? (parseInt(slopeHoursEl.value) || 72) : 72;
     var now = data[data.length - 1][0];
-    var cutoff = now - 72 * 3600;
+    var cutoff = now - slopeHours * 3600;
     var recent = data.filter(function(p) { return p[0] >= cutoff; });
-    var span = recent.length >= 2 ? recent[recent.length - 1][0] - recent[0][0] : 0;
-    if (recent.length >= 3 && span >= 48 * 3600) {
+    if (recent.length >= 3) {
       var n = recent.length;
       var t0 = recent[0][0];
       var sx = 0, sy = 0, sxx = 0, sxy = 0;
@@ -652,7 +654,7 @@
         plugins: { legend: { display: false } },
         scales: {
           x: { type: 'linear', title: { display: true, text: 'pH', color: '#8e8e93' }, ticks: { color: '#8e8e93', font: { size: 10 } }, grid: { color: '#38383a' } },
-          y: { title: { display: true, text: 'R\u00b2', color: '#8e8e93' }, min: 0.99, max: 1.0, ticks: { color: '#8e8e93', font: { size: 9 } }, grid: { color: '#38383a' } }
+          y: { title: { display: true, text: 'R\u00b2', color: '#8e8e93' }, min: 0.98, max: 1.0, ticks: { color: '#8e8e93', font: { size: 9 } }, grid: { color: '#38383a' } }
         }
       },
       plugins: [{

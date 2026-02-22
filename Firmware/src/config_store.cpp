@@ -131,6 +131,19 @@ void ConfigStore::setMeasTempC(float t) {
   prefs.putFloat("meas_temp", t);
 }
 
+// KH slope lookback window
+int ConfigStore::getSlopeWindowHours() {
+  int h = prefs.getInt("slope_hrs", 72);
+  if (h < 24) h = 24;
+  if (h > 168) h = 168;
+  return h;
+}
+void ConfigStore::setSlopeWindowHours(int h) {
+  if (h < 24) h = 24;
+  if (h > 168) h = 168;
+  prefs.putInt("slope_hrs", h);
+}
+
 // Last measurement results
 float ConfigStore::getLastKH() { return prefs.getFloat("last_kh", 0); }
 float ConfigStore::getLastStartPH() { return prefs.getFloat("last_sph", 0); }
