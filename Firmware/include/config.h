@@ -44,7 +44,7 @@ static const int STEPS_PER_REVOLUTION = 1600;
 inline float rpmToHalfPeriodUs(float rpm) { return 18750.0f / rpm; }
 
 // Motor speeds (RPM) — all stepper speeds defined here, converted to us internally
-static const float MOTOR_TARGET_RPM   = 94.0f;   // Sample pump cruising speed (~200 us)
+static const float MOTOR_TARGET_RPM   = 75.0f;   // Sample pump cruising speed
 static const float MOTOR_START_RPM    = 9.4f;     // Acceleration ramp start speed (~2000 us)
 static const float TITRATION_RPM      = 47.0f;    // Titration pump speed (~400 us)
 static const float PREFILL_RPM        = 63.0f;    // Prefill/fill pump speed (~300 us)

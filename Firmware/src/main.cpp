@@ -1,4 +1,5 @@
 #include <Arduino.h>
+#include <esp_system.h>
 #include <FS.h>
 #include <ArduinoOTA.h>
 #include <config.h>
@@ -22,6 +23,7 @@ float startPH = 0;
 bool discoveryPublished = false;
 unsigned long lastDiagnosticsTime = 0;
 unsigned long lastBroadcastTime = 0;
+uint32_t heapMin = UINT32_MAX;
 
 // Deferred command queue: WebSocket/MQTT sets the command, loop() executes it
 // This prevents long operations from blocking the AsyncTCP task
@@ -343,13 +345,12 @@ static float computeConfidence(float granR2, bool usedGran, int nPoints,
   if (usedGran && granR2 > 0) {
     score -= (1.0f - granR2) * 20.0f;
   }
-  // Cross-validation — continuous linear penalty (0.1 dKH → -0.06, 0.5 dKH → -0.30)
+  // Cross-validation penalty
   if (!isnan(crossValDiff)) {
     score -= min(0.3f, crossValDiff * 0.6f);
   }
-  // Probe noise penalty
-  if (probeNoiseMv > 3.0f) score -= 0.05f;
-  if (probeNoiseMv > 5.0f) score -= 0.10f;
+  // Probe noise — continuous penalty starting at 2 mV
+  score -= min(0.15f, max(0.0f, (probeNoiseMv - 2.0f) * 0.03f));
   // Data point count
   if (nPoints < 15) score -= 0.1f;
   if (nPoints < 10) score -= 0.1f;
@@ -418,6 +419,7 @@ KHResult measureKH() {
 
   if (!titrate(prefillUnits, configStore.getTitrationRPM(), true)) {
     publishError("Error: titration pump timeout during prefill");
+    digitalWrite(EN_PIN2, HIGH);
     measuring = false;
     return result;
   }
@@ -682,6 +684,9 @@ KHResult measureKH() {
       } else {
         // Determine equivalence point
         float granR2 = 0;
+        float granSlope = 0, granIntercept = 0;
+        GranWindowResult granWindows[MAX_GRAN_WINDOWS];
+        int nGranWindows = 0;
         float exactUnits;
         bool usedGran = false;
 
@@ -689,7 +694,7 @@ KHResult measureKH() {
           // Gran mode: try Gran analysis, fall back to endpoint if it fails
           if (granCount >= MIN_GRAN_POINTS) {
             char granReason[64] = "";
-            exactUnits = granAnalysis(dataPoints, nPoints, samVol, titVol, calUnits, &granR2, &result.granWinLow, &result.granWinHigh, granReason, sizeof(granReason));
+            exactUnits = granAnalysis(dataPoints, nPoints, samVol, titVol, calUnits, &granR2, &result.granWinLow, &result.granWinHigh, granReason, sizeof(granReason), &granSlope, &granIntercept, granWindows, &nGranWindows);
             if (!isnan(exactUnits)) {
               usedGran = true;
             } else {
@@ -727,6 +732,8 @@ KHResult measureKH() {
           float granPtML[MAX_GRAN_DIAG];
           float granPtF[MAX_GRAN_DIAG];
           int nGranPts = 0;
+
+          // Collect all Gran region points sequentially
           for (int i = 0; i < nPoints && nGranPts < MAX_GRAN_DIAG; i++) {
             if (dataPoints[i].pH < GRAN_REGION_PH && dataPoints[i].pH > GRAN_STOP_PH) {
               granPtML[nGranPts] = dataPoints[i].units * k;
@@ -735,7 +742,22 @@ KHResult measureKH() {
             }
           }
           float eqML = isnan(exactUnits) ? 0 : exactUnits * k;
-          broadcastGranData(granR2, eqML, usedGran, granPtML, granPtF, nGranPts);
+          // Compute Gran window mL bounds from pH bounds (iterate all points, not just buffer)
+          float winLowML = 0, winHighML = 0;
+          if (result.granWinHigh > 0) {
+            bool first = true;
+            for (int i = 0; i < nPoints; i++) {
+              if (dataPoints[i].pH < result.granWinHigh && dataPoints[i].pH > result.granWinLow) {
+                float ml = dataPoints[i].units * k;
+                if (first) { winLowML = winHighML = ml; first = false; }
+                else { if (ml < winLowML) winLowML = ml; if (ml > winHighML) winHighML = ml; }
+              }
+            }
+          }
+          // Convert regression from units-space to mL-space: F = (slope/k)*mL + intercept
+          float slopeML = usedGran ? granSlope / k : 0;
+          float interceptF = usedGran ? granIntercept : 0;
+          broadcastGranData(granR2, eqML, usedGran, granPtML, granPtF, nGranPts, winLowML, winHighML, slopeML, interceptF, granWindows, nGranWindows);
         }
 
         if (isnan(exactUnits)) {
@@ -1009,7 +1031,13 @@ void setup() {
 
   // Web server + WebSocket dashboard
   setupWebServer();
-  publishMessage("BOOT");
+  {
+    int reason = esp_reset_reason();
+    Serial.printf("Reset reason: %d\n", reason);
+    char bootBuf[64];
+    snprintf(bootBuf, sizeof(bootBuf), "BOOT (reason=%d, heap=%u)", reason, ESP.getFreeHeap());
+    publishMessage(bootBuf);
+  }
 
   // Scheduler with NTP
   scheduler.begin();
@@ -1050,6 +1078,10 @@ void loop() {
     lastBroadcastTime = millis();
     broadcastState();
   }
+
+  // Track heap watermark
+  uint32_t h = ESP.getFreeHeap();
+  if (h < heapMin) heapMin = h;
 
   // Publish diagnostics every 60s
   if (mqttManager.isConnected() && millis() - lastDiagnosticsTime > 60000) {

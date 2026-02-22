@@ -61,6 +61,13 @@ struct TitrationPoint {
   uint8_t flags;      // bit 0: stabTimedOut
 };
 
+// Gran window search result for R² distribution plot
+#define MAX_GRAN_WINDOWS 12
+struct GranWindowResult {
+    float low, high, r2;
+    bool valid;
+};
+
 // Determine equivalence point via Gran function linearization
 // Returns equivalence units, or NAN on failure. outR2 receives R² of fit.
 // outWinLow/outWinHigh receive the selected pH window bounds.
@@ -69,7 +76,9 @@ float granAnalysis(TitrationPoint* points, int nPoints,
                    float sampleVol, float titVol, float calUnits,
                    float* outR2,
                    float* outWinLow = nullptr, float* outWinHigh = nullptr,
-                   char* reasonBuf = nullptr, size_t reasonLen = 0);
+                   char* reasonBuf = nullptr, size_t reasonLen = 0,
+                   float* outSlope = nullptr, float* outIntercept = nullptr,
+                   GranWindowResult* windowResults = nullptr, int* nWindowResults = nullptr);
 
 // Fallback: linear interpolation to find where pH crosses targetPH
 float interpolateAtPH(TitrationPoint* points, int nPoints, float targetPH);

@@ -47,6 +47,8 @@ static uint8_t granBufCount = 0;
 static float granBufR2 = 0;
 static float granBufEqML = 0;
 static bool granBufUsed = false;
+static float granBufWinLowML = 0, granBufWinHighML = 0;
+static float granBufSlopeML = 0, granBufIntercept = 0;
 
 // Last measurement result (for diagnostics download)
 static KHResult lastKHResult = {};
@@ -71,6 +73,7 @@ void storeAnalysisPoints(const TitrationPoint* points, int count) {
 // Forward declarations for command/config handlers from main
 extern int units;
 extern float startPH;
+extern uint32_t heapMin;
 extern void calibrateTitrationPump();
 extern void subtractHCl(int unitsUsed);
 extern void publishMessage(const char* message);
@@ -154,6 +157,10 @@ static void sendGranData(AsyncWebSocketClient* client) {
   doc["r2"] = granBufR2;
   doc["eqML"] = granBufEqML;
   doc["used"] = granBufUsed;
+  if (granBufWinLowML > 0) doc["winLowML"] = granBufWinLowML;
+  if (granBufWinHighML > 0) doc["winHighML"] = granBufWinHighML;
+  if (granBufSlopeML != 0) doc["slope"] = granBufSlopeML;
+  if (granBufIntercept != 0) doc["intercept"] = granBufIntercept;
 
   JsonArray pts = doc["points"].to<JsonArray>();
   for (uint8_t i = 0; i < granBufCount; i++) {
@@ -594,11 +601,18 @@ void broadcastProgress(int percent) {
 }
 
 void broadcastGranData(float r2, float eqML, bool usedGran,
-                       float* pointsML, float* pointsF, int nPts) {
+                       float* pointsML, float* pointsF, int nPts,
+                       float winLowML, float winHighML,
+                       float slopeML, float intercept,
+                       GranWindowResult* windows, int nWindows) {
   // Cache for replay to new WebSocket clients
   granBufR2 = r2;
   granBufEqML = eqML;
   granBufUsed = usedGran;
+  granBufWinLowML = winLowML;
+  granBufWinHighML = winHighML;
+  granBufSlopeML = slopeML;
+  granBufIntercept = intercept;
   granBufCount = (uint8_t)min(nPts, (int)GRAN_BUF_MAX);
   for (uint8_t i = 0; i < granBufCount; i++) {
     granBuffer[i] = { pointsML[i], pointsF[i] };
@@ -611,6 +625,10 @@ void broadcastGranData(float r2, float eqML, bool usedGran,
   doc["r2"] = r2;
   doc["eqML"] = eqML;
   doc["used"] = usedGran;
+  if (winLowML > 0) doc["winLowML"] = winLowML;
+  if (winHighML > 0) doc["winHighML"] = winHighML;
+  if (slopeML != 0) doc["slope"] = slopeML;
+  if (intercept != 0) doc["intercept"] = intercept;
 
   JsonArray pts = doc["points"].to<JsonArray>();
   for (int i = 0; i < nPts; i++) {
@@ -619,7 +637,18 @@ void broadcastGranData(float r2, float eqML, bool usedGran,
     pt.add(pointsF[i]);
   }
 
-  char buf[2048];
+  if (nWindows > 0 && windows) {
+    JsonArray wins = doc["windows"].to<JsonArray>();
+    for (int i = 0; i < nWindows; i++) {
+      JsonArray w = wins.add<JsonArray>();
+      w.add(windows[i].low);
+      w.add(windows[i].high);
+      w.add(windows[i].r2);
+      w.add(windows[i].valid ? 1 : 0);
+    }
+  }
+
+  char buf[3072];
   size_t written = serializeJson(doc, buf, sizeof(buf));
   if (written > 0) ws.textAll(buf);
 }
@@ -1005,7 +1034,7 @@ void setupWebServer() {
           case 0: { // Header + config
             n = snprintf(b, maxLen,
               "{\"device\":\"%s\",\"firmware\":\"%s\","
-              "\"timestamp\":%u,\"uptime\":%lu,\"freeHeap\":%u,"
+              "\"timestamp\":%u,\"uptime\":%lu,\"freeHeap\":%u,\"heapMin\":%u,"
               "\"config\":{"
               "\"titration_vol\":%.2f,\"sample_vol\":%.1f,"
               "\"correction_factor\":%.3f,\"hcl_molarity\":%.4f,"
@@ -1017,7 +1046,7 @@ void setupWebServer() {
               "\"schedule_mode\":%d,\"interval_hours\":%d,\"anchor_time\":%d"
               "},",
               DEVICE_NAME, FW_VERSION,
-              (uint32_t)time(nullptr), millis() / 1000, ESP.getFreeHeap(),
+              (uint32_t)time(nullptr), millis() / 1000, ESP.getFreeHeap(), heapMin,
               configStore.getTitrationVolume(), configStore.getSampleVolume(),
               configStore.getCorrectionFactor(), configStore.getHClMolarity(),
               configStore.getHClVolume(), configStore.getCalUnits(),

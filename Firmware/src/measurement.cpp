@@ -460,7 +460,9 @@ static bool granRegression(TitrationPoint* points, int nPoints,
 static float tryGranWindow(TitrationPoint* points, int nPoints,
                            float sampleVol, float k,
                            float pHLow, float pHHigh,
-                           float* outR2) {
+                           float* outR2,
+                           float* outSlope = nullptr,
+                           float* outIntercept = nullptr) {
   bool excluded[MAX_TITRATION_POINTS];
   for (int i = 0; i < nPoints; i++) excluded[i] = false;
 
@@ -509,6 +511,8 @@ static float tryGranWindow(TitrationPoint* points, int nPoints,
   if (eqUnits < 0 || eqUnits > points[nPoints - 1].units) return NAN;
 
   *outR2 = r2;
+  if (outSlope) *outSlope = slope;
+  if (outIntercept) *outIntercept = intercept;
   return eqUnits;
 }
 
@@ -516,7 +520,9 @@ float granAnalysis(TitrationPoint* points, int nPoints,
                    float sampleVol, float titVol, float calUnits,
                    float* outR2,
                    float* outWinLow, float* outWinHigh,
-                   char* reasonBuf, size_t reasonLen) {
+                   char* reasonBuf, size_t reasonLen,
+                   float* outSlope, float* outIntercept,
+                   GranWindowResult* windowResults, int* nWindowResults) {
   auto fail = [&](const char* reason) -> float {
     if (reasonBuf && reasonLen > 0) snprintf(reasonBuf, reasonLen, "%s", reason);
     return NAN;
@@ -528,7 +534,7 @@ float granAnalysis(TitrationPoint* points, int nPoints,
   float k = titVol / calUnits;
 
   // Adaptive window selection: try multiple pH bounds, keep best R²
-  static const float upperBounds[] = {4.9f, 4.7f, 4.5f, 4.3f, 4.1f, 3.9f};
+  static const float upperBounds[] = {4.5f, 4.4f, 4.3f, 4.2f, 4.1f};
   static const int nBounds = sizeof(upperBounds) / sizeof(upperBounds[0]);
 
   // Compute data-adaptive lower bound: 10th percentile pH of Gran-region points
@@ -579,26 +585,38 @@ float granAnalysis(TitrationPoint* points, int nPoints,
   float bestR2 = 0;
   float bestEqUnits = NAN;
   float bestLow = GRAN_STOP_PH, bestHigh = 0;
+  float bestSlope = 0, bestIntercept = 0;
+  int winCount = 0;
 
   for (int lb = 0; lb < nLower; lb++) {
     for (int b = 0; b < nBounds; b++) {
       if (upperBounds[b] <= lowerBounds[lb]) continue;
-      float r2 = 0;
+      if (upperBounds[b] - lowerBounds[lb] < 0.15f) continue;
+      float r2 = 0, s = 0, ic = 0;
       float eq = tryGranWindow(points, nPoints, sampleVol, k,
-                               lowerBounds[lb], upperBounds[b], &r2);
+                               lowerBounds[lb], upperBounds[b], &r2, &s, &ic);
+      if (windowResults && winCount < MAX_GRAN_WINDOWS) {
+        windowResults[winCount] = {lowerBounds[lb], upperBounds[b], r2, !isnan(eq)};
+        winCount++;
+      }
       if (!isnan(eq) && r2 > bestR2) {
         bestR2 = r2;
         bestEqUnits = eq;
         bestLow = lowerBounds[lb];
         bestHigh = upperBounds[b];
+        bestSlope = s;
+        bestIntercept = ic;
       }
     }
   }
+  if (nWindowResults) *nWindowResults = winCount;
 
   if (isnan(bestEqUnits)) return fail("No valid Gran window found");
 
   if (outWinLow) *outWinLow = bestLow;
   if (outWinHigh) *outWinHigh = bestHigh;
+  if (outSlope) *outSlope = bestSlope;
+  if (outIntercept) *outIntercept = bestIntercept;
 
   if (outR2) {
     *outR2 = bestR2;

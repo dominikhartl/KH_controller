@@ -461,6 +461,8 @@ void publishDiagnostics() {
   doc["rssi"] = wifiManager.getRSSI();
   doc["uptime"] = millis() / 1000;
   doc["heap"] = ESP.getFreeHeap();
+  extern uint32_t heapMin;
+  doc["heap_min"] = heapMin;
 
   // Probe health metrics — Nernst efficiency per segment
   float acidEff = getAcidEfficiency();

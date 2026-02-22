@@ -3,6 +3,8 @@
 
 #include <ESPAsyncWebServer.h>
 
+struct GranWindowResult;
+
 struct KHResult {
   float khValue;       // NAN on error (selected method's result)
   float khGran;        // Gran KH (NAN if unavailable)
@@ -40,7 +42,10 @@ void broadcastMessage(const char* msg);
 void broadcastError(const char* msg);
 void broadcastProgress(int percent);
 void broadcastGranData(float r2, float eqML, bool usedGran,
-                       float* pointsML, float* pointsF, int nPts);
+                       float* pointsML, float* pointsF, int nPts,
+                       float winLowML = 0, float winHighML = 0,
+                       float slopeML = 0, float intercept = 0,
+                       GranWindowResult* windows = nullptr, int nWindows = 0);
 void appendHistory(const char* sensor, float value, uint32_t ts);
 void appendGranHistory(float r2, float eqML, float endpointPH, bool usedGran, float confidence, float khGran, float khEndpoint, float probeNoiseMv, int phReversals, float dropUL, float titrationRPM, uint32_t ts);
 int getRecentKHValues(float* outValues, int maxCount);
