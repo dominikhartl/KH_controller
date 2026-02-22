@@ -88,7 +88,7 @@ static void publishKHResult(const KHResult& r) {
   { char mqBuf[16]; snprintf(mqBuf, sizeof(mqBuf), "%lu", r.elapsedSec);
     mqttManager.publish(MQmeasTime, mqBuf, true); }
 
-  // Compute and publish KH trend slope (dKH/day) from 72h history
+  // Compute and publish KH trend slope (dKH/day) from configured window
   float slope = computeKHSlope();
   if (!isnan(slope)) {
     char mqBuf[16]; snprintf(mqBuf, sizeof(mqBuf), "%.3f", slope);

@@ -504,16 +504,11 @@
           var x = (p[0] - t0) / 3600;
           return slope * x + intercept;
         });
-        // Update trend display (slope is dKH/hour, convert to dKH/day)
-        var slopePerDay = slope * 24;
-        setText('val-kh-slope', (slopePerDay >= 0 ? '+' : '') + slopePerDay.toFixed(2));
       } else {
         khChart.data.datasets[1].data = [];
-        setText('val-kh-slope', '--');
       }
     } else {
       khChart.data.datasets[1].data = [];
-      setText('val-kh-slope', '--');
     }
     // Enforce minimum 1.5 dKH span on y-axis
     var vals = khChart.data.datasets[0].data.filter(function(v) { return v != null; });
