@@ -460,30 +460,45 @@
       khChart.data.datasets[0].data = [];
       khChart.data.datasets[1].data = [];
       khChart.data.datasets[2].data = [];
+      khChart.data.datasets[3].data = [];
       khChart.update();
       setText('val-kh-slope', '--');
       return;
     }
     khChart.data.labels = data.map(function(p) { return fmtDate(p[0]); });
+    // Dataset 0: scatter points
     khChart.data.datasets[0].data = data.map(function(p) { return p[1]; });
 
-    // Confidence line from gran history (index 9), matched by timestamp
+    // Dataset 1: moving-average smooth line (window of 5 points)
+    var raw = data.map(function(p) { return p[1]; });
+    var smooth = [];
+    var w = Math.min(5, Math.floor(raw.length / 2)) || 1;
+    var half = Math.floor(w / 2);
+    for (var i = 0; i < raw.length; i++) {
+      var lo = Math.max(0, i - half), hi = Math.min(raw.length - 1, i + half);
+      var sum = 0, cnt = 0;
+      for (var j = lo; j <= hi; j++) { sum += raw[j]; cnt++; }
+      smooth.push(sum / cnt);
+    }
+    khChart.data.datasets[1].data = smooth;
+
+    // Dataset 3: confidence bars from gran history (index 9), matched by timestamp
     if (granHistoryData) {
       var confByTs = {};
       for (var i = 0; i < granHistoryData.length; i++) confByTs[granHistoryData[i][0]] = granHistoryData[i][9];
       var confData = data.map(function(p) { return confByTs[p[0]] || null; });
-      khChart.data.datasets[2].data = confData;
-      khChart.data.datasets[2].backgroundColor = confData.map(function(v) {
+      khChart.data.datasets[3].data = confData;
+      khChart.data.datasets[3].backgroundColor = confData.map(function(v) {
         return (v !== null && v < 0.8) ? 'rgba(255,59,48,0.18)' : 'rgba(48,209,88,0.13)';
       });
-      khChart.data.datasets[2].borderColor = confData.map(function(v) {
+      khChart.data.datasets[3].borderColor = confData.map(function(v) {
         return (v !== null && v < 0.8) ? 'rgba(255,59,48,0.4)' : 'rgba(48,209,88,0.3)';
       });
     } else {
-      khChart.data.datasets[2].data = [];
+      khChart.data.datasets[3].data = [];
     }
 
-    // Compute regression trend line from configured slope window (matching HA/MQTT slope)
+    // Dataset 2: regression trend line from configured slope window
     var slopeHoursEl = document.getElementById('cfg-slope_hours');
     var slopeHours = slopeHoursEl ? (parseInt(slopeHoursEl.value) || 72) : 72;
     var now = data[data.length - 1][0];
@@ -502,7 +517,8 @@
       if (Math.abs(denom) > 1e-12) {
         var slope = (n * sxy - sx * sy) / denom;
         var intercept = (sy - slope * sx) / n;
-        khChart.data.datasets[1].data = data.map(function(p) {
+        khChart.data.datasets[2].data = data.map(function(p) {
+          if (p[0] < cutoff) return null;
           var x = (p[0] - t0) / 3600;
           return slope * x + intercept;
         });
@@ -512,11 +528,11 @@
           setText('val-kh-slope', (slopePerDay >= 0 ? '+' : '') + slopePerDay.toFixed(2));
         }
       } else {
-        khChart.data.datasets[1].data = [];
+        khChart.data.datasets[2].data = [];
         if (khMethod !== 'combined') setText('val-kh-slope', '--');
       }
     } else {
-      khChart.data.datasets[1].data = [];
+      khChart.data.datasets[2].data = [];
       if (khMethod !== 'combined') setText('val-kh-slope', '--');
     }
     // Enforce minimum 1.5 dKH span on y-axis
@@ -580,13 +596,14 @@
     khChart = new Chart(document.getElementById('chart-kh'), {
       type: 'line',
       data: { labels: [], datasets: [
-        { label: 'KH', data: [], borderColor: '#0a84ff', borderWidth: 2, pointRadius: 3, tension: 0.1, yAxisID: 'y', order: 1 },
+        { label: 'KH', data: [], borderColor: 'transparent', borderWidth: 0, pointRadius: 3, pointBackgroundColor: '#0a84ff', pointBorderColor: '#0a84ff', showLine: false, yAxisID: 'y', order: 1 },
+        { label: 'Smooth', data: [], borderColor: '#0a84ff', borderWidth: 3, pointRadius: 0, cubicInterpolationMode: 'monotone', tension: 0.4, yAxisID: 'y', order: 2 },
         { label: 'Trend', data: [], borderColor: 'rgba(255,159,10,0.6)', borderWidth: 2, borderDash: [6,3], pointRadius: 0, tension: 0, yAxisID: 'y', order: 0 },
-        { label: 'Conf', type: 'bar', data: [], backgroundColor: 'rgba(48,209,88,0.13)', borderColor: 'rgba(48,209,88,0.3)', borderWidth: 1, yAxisID: 'yConf', order: 2 }
+        { label: 'Conf', type: 'bar', data: [], backgroundColor: 'rgba(48,209,88,0.13)', borderColor: 'rgba(48,209,88,0.3)', borderWidth: 1, yAxisID: 'yConf', order: 3 }
       ] },
       options: {
         responsive: true, maintainAspectRatio: false, animation: false,
-        plugins: { legend: { display: true, labels: { color: '#8e8e93', font: { size: 10 }, boxWidth: 12 } } },
+        plugins: { legend: { display: true, labels: { color: '#8e8e93', font: { size: 10 }, boxWidth: 12, filter: function(item) { return item.text !== 'Smooth'; } } } },
         scales: {
           x: { ticks: { color: '#8e8e93', maxTicksLimit: 6, font: { size: 10 } }, grid: { color: '#38383a' } },
           y: { ticks: { color: '#8e8e93', font: { size: 10 } }, grid: { color: '#38383a' } },
@@ -596,7 +613,7 @@
     });
     phChart = new Chart(document.getElementById('chart-ph'), {
       type: 'line',
-      data: { labels: [], datasets: [{ data: [], borderColor: '#30d158', borderWidth: 2, pointRadius: 3, tension: 0.1 }] },
+      data: { labels: [], datasets: [{ data: [], borderColor: '#30d158', borderWidth: 2, pointRadius: 3, pointBackgroundColor: '#30d158', cubicInterpolationMode: 'monotone', tension: 0.4 }] },
       options: chartOpts
     });
     liveChart = new Chart(document.getElementById('chart-live'), {

@@ -544,7 +544,9 @@ KHResult measureKH() {
         break;
       }
       units += batch;
-      delay(TITRATION_MIX_DELAY_FAST_MS);
+      int mixDelay = TITRATION_MIX_DELAY_FAST_MS +
+          (FAST_BATCH_MAX - batch) * 600 / FAST_BATCH_MAX;
+      delay(mixDelay);
       measurePHFast(5);
       broadcastTitrationPH(pH, units);
       mqttManager.loop();
