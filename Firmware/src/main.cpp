@@ -547,7 +547,8 @@ KHResult measureKH() {
       int mixDelay = TITRATION_MIX_DELAY_FAST_MS +
           (FAST_BATCH_MAX - batch) * 600 / FAST_BATCH_MAX;
       delay(mixDelay);
-      measurePHFast(5);
+      int nReadings = 5 + (FAST_BATCH_MAX - batch) * 15 / FAST_BATCH_MAX;
+      measurePHFast(nReadings);
       broadcastTitrationPH(pH, units);
       mqttManager.loop();
       ArduinoOTA.handle();
