@@ -248,11 +248,15 @@ static void handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
       }
       else if (strcmp(key, "drop_ul") == 0) { configStore.setDropVolumeUL(value); }
       else if (strcmp(key, "titration_rpm") == 0) { configStore.setTitrationRPM(value); }
+      else if (strcmp(key, "sample_pump_rpm") == 0) { configStore.setSamplePumpRPM(value); }
       else if (strcmp(key, "prefill_ul") == 0) { configStore.setPrefillVolumeUL(value); }
       else if (strcmp(key, "meas_temp_c") == 0) { configStore.setMeasTempC(value); }
       else if (strcmp(key, "slope_hours") == 0) {
         configStore.setSlopeWindowHours((int)value);
         computeKHSlope();  // refresh cached slope with new window
+      }
+      else if (strcmp(key, "stirrer_speed") == 0 && (int)value >= 10 && (int)value <= 100) {
+        configStore.setStirrerSpeed((int)value);
       }
 
       broadcastState(); // Confirm the update
@@ -441,11 +445,13 @@ void executeCommand(const char* cmd) {
     queueCommand(cmd[0]);
     return;
   } else if (strcmp(cmd, "m") == 0) {
-    startStirrer();
-    publishMessage("Stirrer started");
+    // Defer to loopTask — startStirrer() has a 1s kick delay
+    queueCommand('m');
+    return;
   } else if (strcmp(cmd, "e") == 0) {
-    stopStirrer();
-    publishMessage("Stirrer stopped");
+    // Defer to loopTask — keep AsyncTCP task free
+    queueCommand('e');
+    return;
   } else if (strcmp(cmd, "o") == 0) {
     publishMessage("Restarting...");
     delay(100);
@@ -534,9 +540,11 @@ void broadcastState() {
   cfg["gran_mix_delay"] = configStore.getGranMixDelay();
   cfg["drop_ul"] = configStore.getDropVolumeUL();
   cfg["titration_rpm"] = configStore.getTitrationRPM();
+  cfg["sample_pump_rpm"] = configStore.getSamplePumpRPM();
   cfg["prefill_ul"] = configStore.getPrefillVolumeUL();
   cfg["meas_temp_c"] = configStore.getMeasTempC();
   cfg["slope_hours"] = configStore.getSlopeWindowHours();
+  cfg["stirrer_speed"] = configStore.getStirrerSpeed();
 
   // Schedule
   doc["schedMode"] = configStore.getScheduleMode();
@@ -1162,16 +1170,19 @@ void setupWebServer() {
                 pumpNoise = sqrtf(r.stepNoisePh * r.stepNoisePh
                                   - probeNoisePh * probeNoisePh);
               }
-              char pn[16], sn[16], pmp[16];
+              char pn[16], sn[16], pmp[16], mn[16];
               diagFloat(pn, 16, r.probeNoiseMv, 2);
               diagFloat(sn, 16, r.stepNoisePh, 4);
               diagFloat(pmp, 16, pumpNoise, 4);
+              diagFloat(mn, 16, r.maxNoiseMv, 2);
               n = snprintf(b, maxLen,
-                "\"noise\":{\"probe_noise_mv\":%s,\"step_noise_ph\":%s,"
+                "\"noise\":{\"probe_noise_mv\":%s,\"max_noise_mv\":%s,"
+                "\"high_noise_count\":%d,"
+                "\"step_noise_ph\":%s,"
                 "\"ph_reversals\":%d,\"gran_steps\":%d,"
                 "\"reversal_rate_pct\":%.1f,"
                 "\"estimated_pump_noise_ph\":%s},",
-                pn, sn, r.phReversals, r.granStepCount,
+                pn, mn, r.highNoiseCount, sn, r.phReversals, r.granStepCount,
                 reversalPct, pmp);
             } else {
               n = 0;  // No noise data without measurement

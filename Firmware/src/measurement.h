@@ -39,6 +39,8 @@ bool getLastStabilizationTimedOut();      // Whether last stabilization call tim
 void resetNoiseStats();
 float getLastStabNoiseMv();              // StdDev of mV readings during last stabilization
 float getAvgStabNoiseMv();               // Average noise StdDev across all stabilizations
+float getMaxStabNoiseMv();               // Peak noise StdDev across all stabilizations
+int getHighNoiseCount();                 // Count of stabilizations with noise > PROBE_NOISE_GOOD_MV
 
 // Probe health metrics
 unsigned long getLastStabilizationMs();  // Last stabilization time in ms

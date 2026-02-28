@@ -182,9 +182,11 @@
       setInput('cfg-gran_mix_delay', d.config.gran_mix_delay);
       setInput('cfg-drop_ul', d.config.drop_ul);
       setInput('cfg-titration_rpm', d.config.titration_rpm);
+      setInput('cfg-sample_pump_rpm', d.config.sample_pump_rpm);
       setInput('cfg-prefill_ul', d.config.prefill_ul);
       setInput('cfg-meas_temp_c', d.config.meas_temp_c);
       setInput('cfg-slope_hours', d.config.slope_hours);
+      setInput('cfg-stirrer_speed', d.config.stirrer_speed);
     }
 
     // Schedule
@@ -806,6 +808,23 @@
     });
   }
 
+  // --- Stirrer toggle ---
+  var stirrerOn = false;
+  function initStirrerButton() {
+    var btn = document.getElementById('btn-stirrer');
+    if (!btn) return;
+    btn.addEventListener('click', function() {
+      if (stirrerOn) {
+        send({ type: 'cmd', cmd: 'e' });
+        btn.textContent = 'Start Stirrer';
+      } else {
+        send({ type: 'cmd', cmd: 'm' });
+        btn.textContent = 'Stop Stirrer';
+      }
+      stirrerOn = !stirrerOn;
+    });
+  }
+
   // --- Config inputs ---
   function initConfigInputs() {
     document.querySelectorAll('.config-grid input').forEach(function(inp) {
@@ -1032,6 +1051,7 @@
     initTabs();
     initCollapsible();
     initButtons();
+    initStirrerButton();
     initConfigInputs();
     initSchedule();
     initKHMethodToggle();

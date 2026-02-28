@@ -48,6 +48,10 @@ public:
   void setMeasTempC(float t);
   int getSlopeWindowHours();      // KH slope lookback window in hours (default 72, range 24-168)
   void setSlopeWindowHours(int h);
+  int getStirrerSpeed();           // Stirrer speed in percent (default 90, range 10-100)
+  void setStirrerSpeed(int pct);
+  float getSamplePumpRPM();        // Sample pump speed in RPM (default MOTOR_TARGET_RPM, range 20-150)
+  void setSamplePumpRPM(float rpm);
 
   // Last measurement results (persistent across reboots)
   float getLastKH();

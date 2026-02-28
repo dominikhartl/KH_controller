@@ -133,8 +133,8 @@ static const float PROBE_ASYMMETRY_GOOD = 15.0f;   // % — below this: Good
 static const float PROBE_ASYMMETRY_FAIR = 25.0f;   // % — below this: Fair, above: Replace
 static const unsigned long PROBE_RESPONSE_GOOD_MS  = 500;   // Below: healthy response
 static const unsigned long PROBE_RESPONSE_FAIR_MS  = 1500;  // Below: fair, above: slow
-static const float PROBE_NOISE_GOOD_MV = 5.0f;    // mV StdDev — below: healthy probe
-static const float PROBE_NOISE_FAIR_MV = 8.0f;    // mV StdDev — below: fair, above: noisy
+static const float PROBE_NOISE_GOOD_MV = 3.0f;    // mV StdDev — below: healthy probe
+static const float PROBE_NOISE_FAIR_MV = 5.0f;    // mV StdDev — below: fair, above: noisy
 static const int CALIBRATION_AGE_WARNING_DAYS = 30;
 
 // Minimum valid Unix timestamp (Nov 2023) — used to detect NTP not yet synced

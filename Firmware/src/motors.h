@@ -16,9 +16,9 @@ void setMultiWashContext(int numWashes);
 void clearMultiWashContext();
 
 // All motor functions return true on success, false on timeout
-bool removeSample(int volume);
-bool takeSample(int volume);
-bool washSample(float remPart, float fillPart);
+bool removeSample(int volume, float speedRpm);
+bool takeSample(int volume, float speedRpm);
+bool washSample(float remPart, float fillPart, float speedRpm);
 bool titrate(int volume, float speedRpm, bool noAccel = false);
 
 #endif // MOTORS_H

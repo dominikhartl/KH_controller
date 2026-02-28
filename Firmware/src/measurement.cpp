@@ -42,15 +42,19 @@ static bool lastStabTimedOut = false;
 static float lastStabNoiseMv = 0;      // StdDev of mV readings during last stabilization
 static float stabNoiseMvSum = 0;       // Running sum of noise StdDevs
 static int stabNoiseMvCount = 0;       // Number of stabilizations measured
+static float stabNoiseMvMax = 0;       // Peak noise across all stabilizations
+static int stabNoiseMvHighCount = 0;   // Count of stabilizations with noise > PROBE_NOISE_GOOD_MV
 
 void setStabilizationTimeoutMs(int ms) { stabilizationTimeoutMs = ms; }
 void resetStabilizationStats() { stabTimeoutCount = 0; stabTotalMs = 0; lastStabTimedOut = false; }
-void resetNoiseStats() { lastStabNoiseMv = 0; stabNoiseMvSum = 0; stabNoiseMvCount = 0; }
+void resetNoiseStats() { lastStabNoiseMv = 0; stabNoiseMvSum = 0; stabNoiseMvCount = 0; stabNoiseMvMax = 0; stabNoiseMvHighCount = 0; }
 int getStabilizationTimeoutCount() { return stabTimeoutCount; }
 unsigned long getTotalStabilizationMs() { return stabTotalMs; }
 bool getLastStabilizationTimedOut() { return lastStabTimedOut; }
 float getLastStabNoiseMv() { return lastStabNoiseMv; }
 float getAvgStabNoiseMv() { return (stabNoiseMvCount > 0) ? stabNoiseMvSum / stabNoiseMvCount : 0; }
+float getMaxStabNoiseMv() { return stabNoiseMvMax; }
+int getHighNoiseCount() { return stabNoiseMvHighCount; }
 
 // Sort an array of floats in ascending order (bubble sort — sufficient for small N)
 static void sortFloats(float* arr, int count) {
@@ -287,19 +291,28 @@ static void waitForStabilization() {
     lastStabTimedOut = true;
   }
 
-  // Compute noise StdDev from collected readings
-  if (nReadings >= 2) {
+  // Compute noise StdDev from post-convergence readings only (excludes mixing drift).
+  // On timeout, fall back to all readings (best effort).
+  int noiseStart = 0;
+  if (converged) {
+    noiseStart = nReadings - (STAB_CONSEC_REQUIRED + 1);
+    if (noiseStart < 0) noiseStart = 0;
+  }
+  int noiseCount = nReadings - noiseStart;
+  if (noiseCount >= 2) {
     float sum = 0;
-    for (int i = 0; i < nReadings; i++) sum += stabReadings[i];
-    float mean = sum / nReadings;
+    for (int i = noiseStart; i < nReadings; i++) sum += stabReadings[i];
+    float mean = sum / noiseCount;
     float sumSq = 0;
-    for (int i = 0; i < nReadings; i++) {
+    for (int i = noiseStart; i < nReadings; i++) {
       float d = stabReadings[i] - mean;
       sumSq += d * d;
     }
-    lastStabNoiseMv = sqrtf(sumSq / (nReadings - 1));
+    lastStabNoiseMv = sqrtf(sumSq / (noiseCount - 1));
     stabNoiseMvSum += lastStabNoiseMv;
     stabNoiseMvCount++;
+    if (lastStabNoiseMv > stabNoiseMvMax) stabNoiseMvMax = lastStabNoiseMv;
+    if (lastStabNoiseMv > PROBE_NOISE_GOOD_MV) stabNoiseMvHighCount++;
   }
 }
 

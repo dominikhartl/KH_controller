@@ -176,6 +176,9 @@
           <label>Ejection Speed (RPM)
             <input type="number" id="cfg-titration_rpm" step="1" min="10" max="200">
           </label>
+          <label>Sample Pump Speed (RPM)
+            <input type="number" id="cfg-sample_pump_rpm" step="5" min="20" max="150">
+          </label>
           <label>Prefill Volume (uL)
             <input type="number" id="cfg-prefill_ul" step="10" min="10" max="500">
           </label>
@@ -184,6 +187,12 @@
           </label>
           <label>Slope Window (h)
             <input type="number" id="cfg-slope_hours" step="1" min="24" max="168">
+          </label>
+          <label>Stirrer Speed (%)
+            <input type="number" id="cfg-stirrer_speed" step="5" min="10" max="100">
+          </label>
+          <label>Stirrer
+            <button class="cmd-btn" id="btn-stirrer" type="button">Start Stirrer</button>
           </label>
         </div>
       </details>

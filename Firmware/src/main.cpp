@@ -250,8 +250,9 @@ void processPendingCommand() {
       break;
     }
     case 's':
+      stopStirrer();
       publishMessage("Washing sample");
-      if (!washSample(1.2, 1.0)) {
+      if (!washSample(1.2, 1.0, configStore.getSamplePumpRPM())) {
         publishError("Error: sample pump timeout during wash");
       } else {
         publishMessage("Wash done");
@@ -259,8 +260,9 @@ void processPendingCommand() {
       broadcastState();
       break;
     case 'r':
+      stopStirrer();
       publishMessage("Removing sample");
-      if (!removeSample(SAMPLE_PUMP_VOLUME)) {
+      if (!removeSample(SAMPLE_PUMP_VOLUME, configStore.getSamplePumpRPM())) {
         publishError("Error: sample pump timeout during remove");
       } else {
         publishMessage("Sample removed");
@@ -275,6 +277,16 @@ void processPendingCommand() {
       broadcastState();
       break;
     }
+    case 'm':
+      startStirrer();
+      publishMessage("Stirrer started");
+      broadcastState();
+      break;
+    case 'e':
+      stopStirrer();
+      publishMessage("Stirrer stopped");
+      broadcastState();
+      break;
   }
 }
 
@@ -350,7 +362,7 @@ static float computeConfidence(float granR2, bool usedGran, int nPoints,
     score -= min(0.3f, crossValDiff * 0.6f);
   }
   // Probe noise — continuous penalty starting at 2 mV
-  score -= min(0.15f, max(0.0f, (probeNoiseMv - 2.0f) * 0.03f));
+  score -= min(0.25f, max(0.0f, (probeNoiseMv - 2.0f) * 0.05f));
   // Data point count
   if (nPoints < 15) score -= 0.1f;
   if (nPoints < 10) score -= 0.1f;
@@ -427,14 +439,15 @@ KHResult measureKH() {
   publishMessage("Taking sample");
   // Double wash: first rinse cleans the chamber, second takes the actual sample
   setMultiWashContext(2);
-  if (!washSample(1.2, 1.0)) {
+  float sampRpm = configStore.getSamplePumpRPM();
+  if (!washSample(1.2, 1.0, sampRpm)) {
     clearMultiWashContext();
     publishError("Error: sample pump timeout during wash (1st rinse)");
     measuring = false;
     return result;
   }
   delay(1000);
-  if (!washSample(1.2, 1.0)) {
+  if (!washSample(1.2, 1.0, sampRpm)) {
     clearMultiWashContext();
     publishError("Error: sample pump timeout during wash (2nd rinse)");
     measuring = false;
@@ -464,9 +477,9 @@ KHResult measureKH() {
     publishMessage(retryBuf);
     stopStirrer();
     setMultiWashContext(2);
-    washSample(1.5, 1.0);
+    washSample(1.5, 1.0, sampRpm);
     delay(2000);
-    washSample(1.2, 1.0);
+    washSample(1.2, 1.0, sampRpm);
     clearMultiWashContext();
     delay(100);
     startStirrer();
@@ -877,6 +890,8 @@ KHResult measureKH() {
           result.rssiMin = rssiMin;
           result.rssiMax = rssiMax;
           result.probeNoiseMv = getAvgStabNoiseMv();
+          result.maxNoiseMv = getMaxStabNoiseMv();
+          result.highNoiseCount = getHighNoiseCount();
           result.stepNoisePh = (granStepCount > 1) ? stepDeltaSum / (granStepCount - 1) : 0;
           result.phReversals = phReversals;
           result.granStepCount = granStepCount;
@@ -918,7 +933,7 @@ KHResult measureKH() {
   }
 
   // Single post-wash rinse (pre-measurement double wash handles carryover)
-  if (!washSample(1.5f + hclPart, 1.0)) {
+  if (!washSample(1.5f + hclPart, 1.0, configStore.getSamplePumpRPM())) {
     publishError("Warning: sample pump timeout during post-wash");
   }
 
@@ -980,7 +995,7 @@ void setup() {
   pinMode(EN_PIN2, OUTPUT);
   pinMode(STEP_PIN2, OUTPUT);
   pinMode(DIR_PIN2, OUTPUT);
-  pinMode(STIRRER_PIN, OUTPUT);
+  initStirrer();  // LEDC 25 kHz PWM + 1s startup kick
   pinMode(PH_PIN, INPUT);
   Serial.begin(115200);
 

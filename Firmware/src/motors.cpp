@@ -3,9 +3,8 @@
 #include <pins.h>
 #include <config.h>
 
-// Pre-computed half-period values (us) from RPM config — used in tight step loops
+// Pre-computed half-period for acceleration start speed
 static const float startUs  = rpmToHalfPeriodUs(MOTOR_START_RPM);
-static const float targetUs = rpmToHalfPeriodUs(MOTOR_TARGET_RPM);
 
 static MotorYieldCallback yieldCb = nullptr;
 static MotorProgressCallback progressCb = nullptr;
@@ -36,16 +35,20 @@ void clearMultiWashContext() {
   multiWashIndex = 0;
 }
 
-// Single step helper
+// Single step helper with spread-spectrum jitter to reduce audible tone
 static inline void stepPulse(uint8_t pin, float halfPeriodUs) {
+  int jitter = (int)(halfPeriodUs * 0.1f);
+  int d = (jitter > 0) ? random(-jitter, jitter + 1) : 0;
+  unsigned int hpHigh = (unsigned int)halfPeriodUs + d;
+  unsigned int hpLow  = (unsigned int)halfPeriodUs - d;
   digitalWrite(pin, HIGH);
-  delayMicroseconds((unsigned int)halfPeriodUs);
+  delayMicroseconds(hpHigh);
   digitalWrite(pin, LOW);
-  delayMicroseconds((unsigned int)halfPeriodUs);
+  delayMicroseconds(hpLow);
 }
 
 // Count how many steps the acceleration/deceleration ramp takes
-static int rampStepCount() {
+static int rampStepCount(float targetUs) {
   int count = 0;
   float acc = startUs;
   while (acc > targetUs) {
@@ -60,7 +63,8 @@ static bool lastSampleDirection = true;
 
 // Shared sample pump logic — direction is the only difference between remove and fill
 // Returns false on timeout
-static bool runSamplePump(int volume, bool forward) {
+static bool runSamplePump(int volume, bool forward, float speedRpm) {
+  float targetUs = rpmToHalfPeriodUs(speedRpm);
   digitalWrite(EN_PIN1, LOW);
   delay(MOTOR_ENABLE_DELAY_MS);
   digitalWrite(DIR_PIN1, forward ? HIGH : LOW);
@@ -75,7 +79,7 @@ static bool runSamplePump(int volume, bool forward) {
   unsigned long startTime = millis();
 
   int totalSteps = volume * STEPS_PER_REVOLUTION;
-  int rampLen = rampStepCount();
+  int rampLen = rampStepCount(targetUs);
 
   // Ensure we have room for both accel and decel within totalSteps
   int decelStart = totalSteps - rampLen;
@@ -133,15 +137,15 @@ static bool runSamplePump(int volume, bool forward) {
   return !timedOut;
 }
 
-bool removeSample(int volume) {
-  return runSamplePump(volume, false);
+bool removeSample(int volume, float speedRpm) {
+  return runSamplePump(volume, false, speedRpm);
 }
 
-bool takeSample(int volume) {
-  return runSamplePump(volume, true);
+bool takeSample(int volume, float speedRpm) {
+  return runSamplePump(volume, true, speedRpm);
 }
 
-bool washSample(float remPart, float fillPart) {
+bool washSample(float remPart, float fillPart, float speedRpm) {
   int removeVol = (int)(SAMPLE_PUMP_VOLUME * remPart);
   int fillVol = (int)(SAMPLE_PUMP_VOLUME * fillPart);
   washTotalVol = removeVol + fillVol;
@@ -155,11 +159,11 @@ bool washSample(float remPart, float fillPart) {
     }
   }
 
-  bool ok = removeSample(removeVol);
+  bool ok = removeSample(removeVol, speedRpm);
 
   if (ok) {
     washBaseVol = removeVol;
-    ok = takeSample(fillVol);
+    ok = takeSample(fillVol, speedRpm);
   }
 
   washTotalVol = 0;
@@ -236,14 +240,16 @@ bool titrate(int volume, float speedRpm, bool noAccel) {
     }
   } else {
     // Small volume: absolute-time stepping immune to interrupt jitter.
-    // If an interrupt delays one step, the next fires sooner to compensate.
+    // Spread-spectrum dither: ±10% per half-period, compensated per full step.
     unsigned int halfPeriod = (unsigned int)speedUs;
+    int jitter = (int)(speedUs * 0.1f);
     unsigned long t = micros();
     for (int i = 0; i < totalSteps; i++) {
-      t += halfPeriod;
+      int d = (jitter > 0) ? random(-jitter, jitter + 1) : 0;
+      t += halfPeriod + d;
       digitalWrite(STEP_PIN2, HIGH);
-      while ((long)(micros() - t) < 0) {}  // busy-wait to target time
-      t += halfPeriod;
+      while ((long)(micros() - t) < 0) {}
+      t += halfPeriod - d;  // compensate: total period unchanged
       digitalWrite(STEP_PIN2, LOW);
       while ((long)(micros() - t) < 0) {}
     }

@@ -27,6 +27,8 @@ struct KHResult {
   int granStepCount;   // Total Gran zone steps
   float granWinLow;    // Selected Gran window lower pH bound
   float granWinHigh;   // Selected Gran window upper pH bound
+  float maxNoiseMv;    // Peak noise StdDev across all stabilizations
+  int highNoiseCount;  // Count of stabilizations with noise > PROBE_NOISE_GOOD_MV
 };
 
 void storeLastKHResult(const KHResult& r);

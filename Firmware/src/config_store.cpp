@@ -144,6 +144,32 @@ void ConfigStore::setSlopeWindowHours(int h) {
   prefs.putInt("slope_hrs", h);
 }
 
+// Stirrer speed (percent)
+int ConfigStore::getStirrerSpeed() {
+  int pct = prefs.getInt("stir_spd", 90);
+  if (pct < 10) pct = 10;
+  if (pct > 100) pct = 100;
+  return pct;
+}
+void ConfigStore::setStirrerSpeed(int pct) {
+  if (pct < 10) pct = 10;
+  if (pct > 100) pct = 100;
+  prefs.putInt("stir_spd", pct);
+}
+
+// Sample pump speed
+float ConfigStore::getSamplePumpRPM() {
+  float rpm = prefs.getFloat("samp_rpm", MOTOR_TARGET_RPM);
+  if (rpm < 20.0) rpm = 20.0;
+  if (rpm > 150.0) rpm = 150.0;
+  return rpm;
+}
+void ConfigStore::setSamplePumpRPM(float rpm) {
+  if (rpm < 20.0) rpm = 20.0;
+  if (rpm > 150.0) rpm = 150.0;
+  prefs.putFloat("samp_rpm", rpm);
+}
+
 // Last measurement results
 float ConfigStore::getLastKH() { return prefs.getFloat("last_kh", 0); }
 float ConfigStore::getLastStartPH() { return prefs.getFloat("last_sph", 0); }
