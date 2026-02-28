@@ -694,6 +694,7 @@ void broadcastGranData(float r2, float eqML, bool usedGran,
 }
 
 void appendHistory(const char* sensor, float value, uint32_t ts) {
+  if (!sensor || strlen(sensor) > 10) return;
   char filename[32];
   snprintf(filename, sizeof(filename), "/history/%s.csv", sensor);
 
@@ -1037,14 +1038,15 @@ void setupWebServer() {
   });
 
   // Raw history file download (used by backup script before uploadfs)
+  // Captures filename at registration time to prevent path traversal via URL parsing
   const char* historyFiles[] = {"kh", "ph", "gran"};
   for (int i = 0; i < 3; i++) {
+    const char* name = historyFiles[i];
     server.on(
-      (String("/api/history/") + historyFiles[i]).c_str(), HTTP_GET,
-      [](AsyncWebServerRequest* request) {
-        String path = request->url();
-        String name = path.substring(path.lastIndexOf('/') + 1);
-        String filePath = "/history/" + name + ".csv";
+      (String("/api/history/") + name).c_str(), HTTP_GET,
+      [name](AsyncWebServerRequest* request) {
+        char filePath[32];
+        snprintf(filePath, sizeof(filePath), "/history/%s.csv", name);
         if (LittleFS.exists(filePath)) {
           request->send(LittleFS, filePath, "text/csv");
         } else {

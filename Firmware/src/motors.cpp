@@ -35,8 +35,19 @@ void clearMultiWashContext() {
   multiWashIndex = 0;
 }
 
-// Single step helper with spread-spectrum jitter to reduce audible tone
+// Precise step helper — used by titration motor where volume accuracy matters
 static inline void stepPulse(uint8_t pin, float halfPeriodUs) {
+  unsigned int hp = (unsigned int)halfPeriodUs;
+  digitalWrite(pin, HIGH);
+  delayMicroseconds(hp);
+  digitalWrite(pin, LOW);
+  delayMicroseconds(hp);
+}
+
+// Spread-spectrum step helper — ±10% jitter to smear stepping tone into broadband noise.
+// Used only by sample pump where audible noise matters more than sub-step timing precision.
+// Jitter is compensated per full step (+d HIGH, -d LOW) so average period is unchanged.
+static inline void stepPulseJittered(uint8_t pin, float halfPeriodUs) {
   int jitter = (int)(halfPeriodUs * 0.1f);
   int d = (jitter > 0) ? random(-jitter, jitter + 1) : 0;
   unsigned int hpHigh = (unsigned int)halfPeriodUs + d;
@@ -91,14 +102,14 @@ static bool runSamplePump(int volume, bool forward, float speedRpm) {
   // Acceleration phase
   float acc = startUs;
   while (acc > targetUs && stepsDone < decelStart) {
-    stepPulse(STEP_PIN1, acc);
+    stepPulseJittered(STEP_PIN1, acc);
     acc *= MOTOR_ACCEL_FACTOR;
     stepsDone++;
   }
 
   // Constant speed phase
   while (stepsDone < decelStart) {
-    stepPulse(STEP_PIN1, targetUs);
+    stepPulseJittered(STEP_PIN1, targetUs);
     stepsDone++;
     if (stepsDone % (STEPS_PER_REVOLUTION * MOTOR_YIELD_INTERVAL) == 0) {
       if (yieldCb) yieldCb();
@@ -125,7 +136,7 @@ static bool runSamplePump(int volume, bool forward, float speedRpm) {
   if (!timedOut) {
     acc = targetUs;
     while (stepsDone < totalSteps) {
-      stepPulse(STEP_PIN1, acc);
+      stepPulseJittered(STEP_PIN1, acc);
       acc /= MOTOR_ACCEL_FACTOR;
       if (acc > startUs) acc = startUs;
       stepsDone++;
@@ -240,16 +251,14 @@ bool titrate(int volume, float speedRpm, bool noAccel) {
     }
   } else {
     // Small volume: absolute-time stepping immune to interrupt jitter.
-    // Spread-spectrum dither: ±10% per half-period, compensated per full step.
+    // No spread-spectrum here — titration motor needs precise timing for volume accuracy.
     unsigned int halfPeriod = (unsigned int)speedUs;
-    int jitter = (int)(speedUs * 0.1f);
     unsigned long t = micros();
     for (int i = 0; i < totalSteps; i++) {
-      int d = (jitter > 0) ? random(-jitter, jitter + 1) : 0;
-      t += halfPeriod + d;
+      t += halfPeriod;
       digitalWrite(STEP_PIN2, HIGH);
       while ((long)(micros() - t) < 0) {}
-      t += halfPeriod - d;  // compensate: total period unchanged
+      t += halfPeriod;
       digitalWrite(STEP_PIN2, LOW);
       while ((long)(micros() - t) < 0) {}
     }

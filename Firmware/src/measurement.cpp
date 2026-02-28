@@ -92,6 +92,7 @@ static float medianFilteredMean(float* sorted, int count, float outlierThreshold
 // Oversampled ADC read with trimmed mean to reject WiFi-induced noise spikes.
 // Sorts raw samples and discards top/bottom 25% before averaging.
 static float readADCTrimmed(int nSamples, int interSampleDelayMs) {
+  if (nSamples <= 0) return 0;
   static float adcBuf[ADC_OVERSAMPLING];
   if (nSamples > ADC_OVERSAMPLING) nSamples = ADC_OVERSAMPLING;
   for (int i = 0; i < nSamples; i++) {

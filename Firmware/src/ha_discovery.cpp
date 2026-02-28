@@ -103,7 +103,7 @@ static void addDeviceBlock(JsonObject& doc) {
   dev["name"] = "KH Controller V3";
   dev["mf"] = "DIY";
   dev["mdl"] = "KHcontrollerV3";
-  dev["sw"] = "2.0.0";
+  dev["sw"] = FW_VERSION;
   dev["cu"] = "http://khcontrollerv3.local/";
 }
 
