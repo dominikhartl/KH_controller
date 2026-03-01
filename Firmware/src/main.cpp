@@ -357,9 +357,9 @@ static float computeConfidence(float granR2, bool usedGran, int nPoints,
   if (usedGran && granR2 > 0) {
     score -= (1.0f - granR2) * 20.0f;
   }
-  // Cross-validation penalty
-  if (!isnan(crossValDiff)) {
-    score -= min(0.3f, crossValDiff * 0.6f);
+  // Cross-validation penalty — only penalize large Gran/endpoint disagreements
+  if (!isnan(crossValDiff) && crossValDiff > 0.3f) {
+    score -= min(0.15f, (crossValDiff - 0.3f) * 0.3f);
   }
   // Probe noise — continuous penalty starting at 2 mV
   score -= min(0.25f, max(0.0f, (probeNoiseMv - 2.0f) * 0.05f));
