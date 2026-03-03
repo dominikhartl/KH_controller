@@ -435,7 +435,7 @@ KHResult measureKH() {
     measuring = false;
     return result;
   }
-  digitalWrite(EN_PIN2, HIGH);
+  // Keep titration motor enabled after prefill to prevent suckback
   publishMessage("Taking sample");
   // Double wash: first rinse cleans the chamber, second takes the actual sample
   setMultiWashContext(2);
