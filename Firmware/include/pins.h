@@ -22,4 +22,7 @@
 #define I2C_SCL_PIN  33
 #define ADS_ALRT_PIN 34
 
+// DS18B20 temperature sensor (OneWire)
+#define TEMP_SENSOR_PIN 5
+
 #endif // PINS_H

@@ -4,6 +4,7 @@
 #include "wifi_manager.h"
 #include "web_server.h"
 #include "measurement.h"
+#include "temperature.h"
 #include <config.h>
 #include <ArduinoJson.h>
 #include <time.h>
@@ -99,12 +100,12 @@ static uint16_t timeStrToMins(const char* str) {
 static void addDeviceBlock(JsonObject& doc) {
   JsonObject dev = doc["dev"].to<JsonObject>();
   JsonArray ids = dev["ids"].to<JsonArray>();
-  ids.add("khcontrollerv3");
-  dev["name"] = "KH Controller V3";
+  ids.add("khpro");
+  dev["name"] = "KH Pro";
   dev["mf"] = "DIY";
-  dev["mdl"] = "KHcontrollerV3";
+  dev["mdl"] = "KHpro";
   dev["sw"] = FW_VERSION;
-  dev["cu"] = "http://khcontrollerv3.local/";
+  dev["cu"] = "http://khpro.local/";
 }
 
 static void publishDiscoveryPayload(const char* discoveryTopic, JsonDocument& doc) {
@@ -132,7 +133,7 @@ static void publishSensorDiscovery(const char* id, const char* name, const char*
   addDeviceBlock(root);
 
   char discTopic[128];
-  snprintf(discTopic, sizeof(discTopic), "homeassistant/sensor/khcontrollerv3/%s/config", id);
+  snprintf(discTopic, sizeof(discTopic), "homeassistant/sensor/khpro/%s/config", id);
   publishDiscoveryPayload(discTopic, doc);
 }
 
@@ -156,7 +157,7 @@ static void publishNumberDiscovery(const char* id, const char* name,
   addDeviceBlock(root);
 
   char discTopic[128];
-  snprintf(discTopic, sizeof(discTopic), "homeassistant/number/khcontrollerv3/%s/config", id);
+  snprintf(discTopic, sizeof(discTopic), "homeassistant/number/khpro/%s/config", id);
   publishDiscoveryPayload(discTopic, doc);
 }
 
@@ -174,7 +175,7 @@ static void publishButtonDiscovery(const char* id, const char* name,
   addDeviceBlock(root);
 
   char discTopic[128];
-  snprintf(discTopic, sizeof(discTopic), "homeassistant/button/khcontrollerv3/%s/config", id);
+  snprintf(discTopic, sizeof(discTopic), "homeassistant/button/khpro/%s/config", id);
   publishDiscoveryPayload(discTopic, doc);
 }
 
@@ -194,7 +195,7 @@ static void publishSelectDiscovery(const char* id, const char* name,
   addDeviceBlock(root);
 
   char discTopic[128];
-  snprintf(discTopic, sizeof(discTopic), "homeassistant/select/khcontrollerv3/%s/config", id);
+  snprintf(discTopic, sizeof(discTopic), "homeassistant/select/khpro/%s/config", id);
   publishDiscoveryPayload(discTopic, doc);
 }
 
@@ -252,6 +253,8 @@ void publishAllDiscovery() {
                           "{{ value_json.probe_response }}", "diagnostic");
   publishSensorDiscovery("khv3_cal_age", "Calibration Age", topicDiagnostics, "d", nullptr,
                           "{{ value_json.cal_age }}", "diagnostic");
+  publishSensorDiscovery("khv3_water_temp", "Water Temperature", topicDiagnostics, "°C", "temperature",
+                          "{{ value_json.water_temp }}", nullptr);
 
   // Probe health text sensor (no unit, no state_class)
   {
@@ -265,7 +268,7 @@ void publishAllDiscovery() {
     JsonObject root = doc.as<JsonObject>();
     addDeviceBlock(root);
     publishDiscoveryPayload(
-      "homeassistant/sensor/khcontrollerv3/khv3_probe_health/config", doc);
+      "homeassistant/sensor/khpro/khv3_probe_health/config", doc);
   }
 
   // Text sensors (no unit, no state_class)
@@ -279,7 +282,7 @@ void publishAllDiscovery() {
     JsonObject root = doc.as<JsonObject>();
     addDeviceBlock(root);
     char dt[128];
-    snprintf(dt, sizeof(dt), "homeassistant/sensor/khcontrollerv3/khv3_error/config");
+    snprintf(dt, sizeof(dt), "homeassistant/sensor/khpro/khv3_error/config");
     publishDiscoveryPayload(dt, doc);
   }
   {
@@ -292,7 +295,7 @@ void publishAllDiscovery() {
     JsonObject root = doc.as<JsonObject>();
     addDeviceBlock(root);
     char dt[128];
-    snprintf(dt, sizeof(dt), "homeassistant/sensor/khcontrollerv3/khv3_message/config");
+    snprintf(dt, sizeof(dt), "homeassistant/sensor/khpro/khv3_message/config");
     publishDiscoveryPayload(dt, doc);
   }
 
@@ -308,7 +311,7 @@ void publishAllDiscovery() {
     doc["ent_cat"] = "diagnostic";
     JsonObject root = doc.as<JsonObject>();
     addDeviceBlock(root);
-    publishDiscoveryPayload("homeassistant/binary_sensor/khcontrollerv3/connectivity/config", doc);
+    publishDiscoveryPayload("homeassistant/binary_sensor/khpro/connectivity/config", doc);
   }
 
   // Number inputs
@@ -356,7 +359,7 @@ void publishAllDiscovery() {
     addDeviceBlock(root);
 
     char discTopic[128];
-    snprintf(discTopic, sizeof(discTopic), "homeassistant/text/khcontrollerv3/%s/config", id);
+    snprintf(discTopic, sizeof(discTopic), "homeassistant/text/khpro/%s/config", id);
     publishDiscoveryPayload(discTopic, doc);
   }
 
@@ -389,7 +392,7 @@ void publishAllDiscovery() {
     JsonObject root = doc.as<JsonObject>();
     addDeviceBlock(root);
     publishDiscoveryPayload(
-      "homeassistant/text/khcontrollerv3/khv3_anchor_time/config", doc);
+      "homeassistant/text/khpro/khv3_anchor_time/config", doc);
   }
 
   // Buttons
@@ -473,6 +476,8 @@ void publishDiagnostics() {
   doc["probe_asymmetry"] = isnan(asym) ? 0 : asym;
   doc["probe_response"] = getLastStabilizationMs();
   doc["probe_health"] = getProbeHealth();
+
+  doc["water_temp"] = getWaterTemperatureC();
 
   // Calibration age in days
   uint32_t calTs = configStore.getCalTimestamp();

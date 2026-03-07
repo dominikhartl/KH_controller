@@ -7,6 +7,7 @@
 #include "mqtt_manager.h"
 #include "scheduler.h"
 #include "stirrer.h"
+#include "temperature.h"
 #include <ArduinoJson.h>
 #include <LittleFS.h>
 #include <config.h>
@@ -511,6 +512,8 @@ void broadcastState() {
   doc["wifiOk"] = wifiManager.isConnected();
   doc["ntpOk"] = scheduler.isTimeSynced();
   doc["nextMeas"] = scheduler.getNextMeasurementTime();
+  doc["water_temp"] = getWaterTemperatureC();
+  doc["temp_sensor"] = hasTemperatureSensor();
 
   // KH trend slope (dKH/day) and measurement confidence
   if (!isnan(cachedKHSlope)) doc["khSlope"] = serialized(String(cachedKHSlope, 3));
@@ -1137,7 +1140,8 @@ void setupWebServer() {
               "\"titration_step_size\":%d,\"medium_step_mult\":%d,"
               "\"gran_step_mult\":%d,\"fast_batch_max\":%d,"
               "\"fast_batch_min\":%d,\"nernst_factor\":%.5f,"
-              "\"meas_temp_c\":%.1f,\"ph_amp_gain\":%.1f},",
+              "\"meas_temp_c\":%.1f,\"ph_amp_gain\":%.1f,"
+              "\"water_temp\":%.1f,\"temp_sensor\":%s},",
               GRAN_REGION_PH, GRAN_STOP_PH,
               ENDPOINT_PH, FIXED_ENDPOINT_STOP_PH,
               MIN_GRAN_POINTS, GRAN_MIN_R2,
@@ -1145,7 +1149,9 @@ void setupWebServer() {
               TITRATION_STEP_SIZE, MEDIUM_STEP_MULTIPLIER,
               GRAN_STEP_MULTIPLIER, FAST_BATCH_MAX,
               FAST_BATCH_MIN, NERNST_FACTOR,
-              configStore.getMeasTempC(), PH_AMP_GAIN);
+              configStore.getMeasTempC(), PH_AMP_GAIN,
+              getWaterTemperatureC(),
+              hasTemperatureSensor() ? "true" : "false");
             ds = 2;
             break;
           }

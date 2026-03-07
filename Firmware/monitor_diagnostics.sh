@@ -1,6 +1,6 @@
 #!/bin/bash
 # Monitor KH controller for new diagnostics and download with timestamp
-DEVICE="http://khcontrollerv3.local"
+DEVICE="http://khpro.local"
 INTERVAL=900  # 15 minutes
 OUTDIR="$(cd "$(dirname "$0")" && pwd)/diagnostics"
 mkdir -p "$OUTDIR"

@@ -9,7 +9,7 @@
   var ws, wsOk = false, reconnTimer;
 
   function connect() {
-    var host = location.hostname || 'khcontrollerv3.local';
+    var host = location.hostname || 'khpro.local';
     ws = new WebSocket('ws://' + host + '/ws');
     ws.onopen = function() {
       if (reconnTimer) { clearTimeout(reconnTimer); reconnTimer = null; }

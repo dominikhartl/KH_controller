@@ -27,7 +27,7 @@ void WifiManager::loop() {
         Serial.print("WiFi connected. IP: ");
         Serial.println(WiFi.localIP());
 
-        // Start mDNS so device is reachable at khcontrollerv3.local
+        // Start mDNS so device is reachable at khpro.local
         String hostname = String(DEVICE_NAME);
         hostname.toLowerCase();
         if (MDNS.begin(hostname.c_str())) {

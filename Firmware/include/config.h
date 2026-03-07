@@ -8,7 +8,7 @@ static const char* mqtt_server = "homeassistant.local";
 static const int mqtt_port = 1883;
 
 // Device name used as MQTT topic prefix / hostname
-static const char DEVICE_NAME[] = "KHcontrollerV3";
+static const char DEVICE_NAME[] = "KHpro";
 static const char FW_VERSION[] = "0.4";
 
 // ADC configuration (full-precision mode)

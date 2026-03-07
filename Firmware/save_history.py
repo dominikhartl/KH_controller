@@ -16,7 +16,7 @@ Import("env")
 
 HISTORY_FILES = ["kh", "ph", "gran"]
 DATA_DIR = os.path.join(env.subst("$PROJECT_DIR"), "data", "history")
-DEVICE_HOST = "khcontrollerv3.local"
+DEVICE_HOST = "khpro.local"
 
 
 def cleanup_history(source, target, env):

@@ -45,7 +45,7 @@ For hardware details (bill of materials, PCB layout, pin configuration, HCl prep
 
 5. **OTA updates** (after initial USB upload)
 
-   The device advertises itself as `khcontrollerv3.local`. Use the `[env:ota]` environment in `platformio.ini`:
+   The device advertises itself as `khpro.local`. Use the `[env:ota]` environment in `platformio.ini`:
 
    ```bash
    pio run -e ota -t upload
@@ -71,7 +71,7 @@ All parameters can be configured via the web interface or Home Assistant. They a
 
 ## Web Interface
 
-Access the dashboard at `http://khcontrollerv3.local` (or the device's IP address).
+Access the dashboard at `http://khpro.local` (or the device's IP address).
 
 The web interface provides:
 
@@ -112,7 +112,7 @@ The device uses MQTT auto-discovery, so entities appear automatically in Home As
 
 ## MQTT Topics
 
-All topics are prefixed with `KHcontrollerV3/`:
+All topics are prefixed with `KHpro/`:
 
 | Topic | Direction | Description |
 |-------|-----------|-------------|
@@ -135,7 +135,7 @@ All topics are prefixed with `KHcontrollerV3/`:
 
 ## Commands
 
-Commands can be sent via MQTT (`KHcontrollerV3/cmd`), the web interface, or Home Assistant buttons.
+Commands can be sent via MQTT (`KHpro/cmd`), the web interface, or Home Assistant buttons.
 
 | Command | Code | Description |
 |---------|------|-------------|

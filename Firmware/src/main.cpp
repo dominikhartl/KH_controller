@@ -16,6 +16,7 @@
 #include "scheduler.h"
 #include "ha_discovery.h"
 #include "web_server.h"
+#include "temperature.h"
 
 // --- Global state ---
 int units = 0;
@@ -217,7 +218,11 @@ void processPendingCommand() {
       calibratePH(10);
       broadcastState();
       break;
-    case 'p':
+    case 'p': {
+      float pTemp = getWaterTemperatureC();
+      configStore.setMeasTempC(pTemp);
+      Serial.printf("Water temperature: %.1f °C%s\n", pTemp,
+                    hasTemperatureSensor() ? "" : " (default, no sensor)");
       startStirrer();
       delay(STIRRER_WARMUP_MS);
       measurePH(isExternalADCActive() ? 20 : 100);
@@ -233,6 +238,7 @@ void processPendingCommand() {
       }
       broadcastState();
       break;
+    }
     case 'f': {
       publishMessage("Filling");
       float pfUL = configStore.getPrefillVolumeUL();
@@ -410,6 +416,12 @@ KHResult measureKH() {
     return result;
   }
   measuring = true;
+
+  // Read water temperature from sensor (or use default if no sensor)
+  float waterTemp = getWaterTemperatureC();
+  configStore.setMeasTempC(waterTemp);
+  Serial.printf("Water temperature: %.1f °C%s\n", waterTemp,
+                hasTemperatureSensor() ? "" : " (default, no sensor)");
 
   // Configure stabilization from NVS and reset per-measurement stats
   setStabilizationTimeoutMs(configStore.getStabilizationTimeout());
@@ -1115,6 +1127,7 @@ void setup() {
     } else if (isExternalADCFallback()) {
       publishError("ADS1115 configured but not detected — using internal ADC");
     }
+    initTemperature();
   }
 
   // Scheduler with NTP
