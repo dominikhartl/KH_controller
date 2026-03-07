@@ -258,6 +258,10 @@ static void handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
       else if (strcmp(key, "stirrer_speed") == 0 && (int)value >= 10 && (int)value <= 100) {
         configStore.setStirrerSpeed((int)value);
       }
+      else if (strcmp(key, "use_ads1115") == 0) {
+        configStore.setUseADS1115((int)value == 1);
+        publishMessage("ADS1115 setting changed. Reboot to apply.");
+      }
 
       broadcastState(); // Confirm the update
     } else if (strcmp(type, "schedule") == 0) {
@@ -399,15 +403,31 @@ static void handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
 }
 
 void calibratePH(int bufferPH) {
+  char calMsg[32];
+  snprintf(calMsg, sizeof(calMsg), "Calibrating pH %d...", bufferPH);
+  publishMessage(calMsg);
   startStirrer();
   delay(STIRRER_WARMUP_MS);
-  float v = measureVoltage(100);
+  float v = measureVoltage(isExternalADCActive() ? 20 : 100);
   stopStirrer();
   float actualPH;
+  bool ext = isExternalADCActive();
   switch (bufferPH) {
-    case 4:  voltage_4PH = v;  configStore.setVoltage4PH(v);  actualPH = BUFFER_PH_4;  break;
-    case 7:  voltage_7PH = v;  configStore.setVoltage7PH(v);  actualPH = BUFFER_PH_7;  break;
-    case 10: voltage_10PH = v; configStore.setVoltage10PH(v); actualPH = BUFFER_PH_10; break;
+    case 4:
+      voltage_4PH = v;
+      if (ext) configStore.setVoltage4PHExt(v); else configStore.setVoltage4PH(v);
+      actualPH = BUFFER_PH_4;
+      break;
+    case 7:
+      voltage_7PH = v;
+      if (ext) configStore.setVoltage7PHExt(v); else configStore.setVoltage7PH(v);
+      actualPH = BUFFER_PH_7;
+      break;
+    case 10:
+      voltage_10PH = v;
+      if (ext) configStore.setVoltage10PHExt(v); else configStore.setVoltage10PH(v);
+      actualPH = BUFFER_PH_10;
+      break;
     default: return;
   }
   updateCalibrationFit();
@@ -502,6 +522,10 @@ void broadcastState() {
   probe["alkEff"] = getAlkalineEfficiency();
   probe["asymmetry"] = getProbeAsymmetry();
   probe["response"] = getLastStabilizationMs();
+  probe["mV"] = voltage;
+  probe["v4"] = voltage_4PH;
+  probe["v7"] = voltage_7PH;
+  probe["v10"] = voltage_10PH;
   float avgNoise = getAvgStabNoiseMv();
   if (avgNoise > 0) probe["noise"] = serialized(String(avgNoise, 1));
   probe["health"] = getProbeHealth();
@@ -545,6 +569,9 @@ void broadcastState() {
   cfg["meas_temp_c"] = configStore.getMeasTempC();
   cfg["slope_hours"] = configStore.getSlopeWindowHours();
   cfg["stirrer_speed"] = configStore.getStirrerSpeed();
+  cfg["use_ads1115"] = configStore.getUseADS1115();
+  cfg["ads_active"] = isExternalADCActive();
+  cfg["ads_fallback"] = isExternalADCFallback();
 
   // Schedule
   doc["schedMode"] = configStore.getScheduleMode();
@@ -557,7 +584,7 @@ void broadcastState() {
     sched.add(configStore.getScheduleTime(i));
   }
 
-  static char buf[1536];
+  static char buf[1280];
   serializeJson(doc, buf, sizeof(buf));
   ws.textAll(buf);
 }

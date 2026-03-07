@@ -9,7 +9,7 @@ static const int mqtt_port = 1883;
 
 // Device name used as MQTT topic prefix / hostname
 static const char DEVICE_NAME[] = "KHcontrollerV3";
-static const char FW_VERSION[] = "0.3";
+static const char FW_VERSION[] = "0.4";
 
 // ADC configuration (full-precision mode)
 #define ADC_OVERSAMPLING 64
@@ -133,12 +133,20 @@ static const float PROBE_ASYMMETRY_GOOD = 15.0f;   // % — below this: Good
 static const float PROBE_ASYMMETRY_FAIR = 25.0f;   // % — below this: Fair, above: Replace
 static const unsigned long PROBE_RESPONSE_GOOD_MS  = 500;   // Below: healthy response
 static const unsigned long PROBE_RESPONSE_FAIR_MS  = 1500;  // Below: fair, above: slow
-static const float PROBE_NOISE_GOOD_MV = 3.0f;    // mV StdDev — below: healthy probe
-static const float PROBE_NOISE_FAIR_MV = 5.0f;    // mV StdDev — below: fair, above: noisy
+static const float PROBE_NOISE_GOOD_MV = 6.0f;    // mV StdDev — below: healthy probe
+static const float PROBE_NOISE_FAIR_MV = 10.0f;   // mV StdDev — below: fair, above: noisy
 static const int CALIBRATION_AGE_WARNING_DAYS = 30;
 
 // Minimum valid Unix timestamp (Nov 2023) — used to detect NTP not yet synced
 static const uint32_t MIN_VALID_EPOCH = 1700000000;
+
+// ADS1115 external ADC configuration
+#define ADS1115_I2C_ADDR               0x48
+#define ADS_OVERSAMPLING               16       // 16 samples × 75ms = 1.2s; trimmed mean keeps middle 8
+#define ADS_OVERSAMPLING_FAST          4
+#define ADS_STAB_SAMPLES               8        // 8 samples × 75ms = 600ms per stab iteration (~6 in 4s timeout)
+static const float ADS_STABILIZATION_THRESHOLD_MV = 4.0f;  // Matches effective threshold from pre-fix ADS1115 reporting
+static const float ADS_MV_PER_BIT = 0.125f;    // GAIN_ONE: ±4.096V / 32768 = 0.125 mV/bit
 
 // MQTT_MAX_PACKET_SIZE and MQTT_KEEPALIVE are set via build_flags in platformio.ini
 

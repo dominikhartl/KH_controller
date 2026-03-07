@@ -1,4 +1,5 @@
 #include <Arduino.h>
+#include <Wire.h>
 #include "measurement.h"
 #include "config_store.h"
 #include <pins.h>
@@ -12,6 +13,23 @@ float pH = 0;
 float voltage_4PH = 0;
 float voltage_7PH = 0;
 float voltage_10PH = 0;
+
+// ADS1115 external ADC state (direct I2C, no library needed)
+static bool useExternalADC = false;
+static bool adsAvailable = false;
+static bool adsFallback = false;
+
+// ADS1115 register addresses
+static const uint8_t ADS_REG_CONVERSION = 0x00;
+static const uint8_t ADS_REG_CONFIG     = 0x01;
+// Config register bits for single-shot, AIN0 vs GND, GAIN_TWO (±2.048V), 16 SPS
+// [15]    OS=1 (start single conversion)
+// [14:12] MUX=100 (AIN0 vs GND)
+// [11:9]  PGA=001 (±4.096V, GAIN_ONE — 2061 mV headroom at pH 4)
+// [8]     MODE=1 (single-shot)
+// [7:5]   DR=001 (16 SPS → 62.5ms conversion)
+// [4:0]   COMP disabled (00011)
+static const uint16_t ADS_CONFIG_SINGLE_A0 = 0xC323;
 
 // Piecewise linear coefficients: pH = slope * voltage + offset
 // Acid segment (pH 4→7, voltage >= voltage_7PH) and base segment (pH 7→10)
@@ -89,23 +107,68 @@ static float medianFilteredMean(float* sorted, int count, float outlierThreshold
   return (inlierCount > 0) ? sum / inlierCount : median;
 }
 
-// Oversampled ADC read with trimmed mean to reject WiFi-induced noise spikes.
+// ADS1115 helpers (must precede readADCTrimmed)
+static bool adsActive() { return useExternalADC && adsAvailable; }
+static int effectiveOversampling() { return adsActive() ? ADS_OVERSAMPLING : ADC_OVERSAMPLING; }
+static int effectiveOversamplingFast() { return adsActive() ? ADS_OVERSAMPLING_FAST : ADC_OVERSAMPLING_FAST; }
+static int effectiveStabSamples() { return adsActive() ? ADS_STAB_SAMPLES : 16; }
+static float effectiveStabThreshold() { return adsActive() ? ADS_STABILIZATION_THRESHOLD_MV : STABILIZATION_THRESHOLD_MV; }
+
+static float readADS1115MilliVolts() {
+  // Start single-shot conversion
+  Wire.beginTransmission(ADS1115_I2C_ADDR);
+  Wire.write(ADS_REG_CONFIG);
+  Wire.write((uint8_t)(ADS_CONFIG_SINGLE_A0 >> 8));
+  Wire.write((uint8_t)(ADS_CONFIG_SINGLE_A0 & 0xFF));
+  if (Wire.endTransmission() != 0) return NAN;
+
+  // Wait for conversion (16 SPS = 62.5ms, add margin)
+  delay(75);
+
+  // Read conversion result
+  Wire.beginTransmission(ADS1115_I2C_ADDR);
+  Wire.write(ADS_REG_CONVERSION);
+  if (Wire.endTransmission() != 0) return NAN;
+
+  if (Wire.requestFrom((uint8_t)ADS1115_I2C_ADDR, (uint8_t)2) != 2) return NAN;
+  int16_t raw = ((int16_t)Wire.read() << 8) | Wire.read();
+
+  if (raw < 0 || raw >= 32767) return NAN;
+  return (float)raw * ADS_MV_PER_BIT;
+}
+
+// Oversampled ADC read with trimmed mean to reject noise spikes.
 // Sorts raw samples and discards top/bottom 25% before averaging.
 static float readADCTrimmed(int nSamples, int interSampleDelayMs) {
   if (nSamples <= 0) return 0;
-  static float adcBuf[ADC_OVERSAMPLING];
-  if (nSamples > ADC_OVERSAMPLING) nSamples = ADC_OVERSAMPLING;
+  static float adcBuf[ADC_OVERSAMPLING];  // 64 elements — always large enough
+  int maxSamples = adsActive() ? ADS_OVERSAMPLING : ADC_OVERSAMPLING;
+  if (nSamples > maxSamples) nSamples = maxSamples;
+
+  int valid = 0;
   for (int i = 0; i < nSamples; i++) {
-    adcBuf[i] = (float)analogReadMilliVolts(PH_PIN);
-    delay(interSampleDelayMs);
+    float sample;
+    if (adsActive()) {
+      sample = readADS1115MilliVolts();
+      // ADS1115 conversion time (~62ms at 16 SPS) provides inherent filtering
+    } else {
+      sample = (float)analogReadMilliVolts(PH_PIN);
+      delay(interSampleDelayMs);
+    }
+    if (!isnan(sample)) {
+      adcBuf[valid++] = sample;
+    }
   }
-  sortFloats(adcBuf, nSamples);
-  int trim = nSamples / 4;
+
+  if (valid == 0) return 0;
+  sortFloats(adcBuf, valid);
+  int trim = valid / 4;
   float sum = 0;
-  for (int i = trim; i < nSamples - trim; i++) {
+  for (int i = trim; i < valid - trim; i++) {
     sum += adcBuf[i];
   }
-  return sum / (nSamples - 2 * trim);
+  int count = valid - 2 * trim;
+  return (count > 0) ? sum / count : adcBuf[valid / 2];
 }
 
 void initADC() {
@@ -113,6 +176,37 @@ void initADC() {
   adc_power_acquire();  // Keep ADC powered to prevent hall sensor glitches on GPIO35
   analogReadMilliVolts(PH_PIN);  // Dummy read to prime SAR ADC
 }
+
+void initExternalADC() {
+  useExternalADC = configStore.getUseADS1115();
+  if (!useExternalADC) return;
+
+  Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN);
+  Wire.setClock(100000);  // 100 kHz standard mode
+
+  // Probe ADS1115: read config register
+  Wire.beginTransmission(ADS1115_I2C_ADDR);
+  Wire.write(ADS_REG_CONFIG);
+  if (Wire.endTransmission() != 0) {
+    adsFallback = true;
+    Serial.println("ADS1115 not found at 0x48 — falling back to internal ADC");
+    return;
+  }
+
+  // Verify with a test conversion
+  float testMv = readADS1115MilliVolts();
+  if (!isnan(testMv)) {
+    adsAvailable = true;
+    adsFallback = false;
+    Serial.printf("ADS1115 initialized (test read: %.2f mV)\n", testMv);
+  } else {
+    adsFallback = true;
+    Serial.println("ADS1115 test read failed — falling back to internal ADC");
+  }
+}
+
+bool isExternalADCActive() { return adsActive(); }
+bool isExternalADCFallback() { return adsFallback; }
 
 void updateCalibrationFit() {
   // Piecewise linear: two segments that pass exactly through calibration points
@@ -172,13 +266,15 @@ float getAlkalineSlope() {
   return (voltage_10PH - voltage_7PH) / (BUFFER_PH_10 - BUFFER_PH_7);
 }
 
-// Nernst efficiency: raw probe slope vs theoretical at measurement temperature
-// raw_slope = conditioned_slope / amplifier_gain
-// efficiency = |raw_slope| / nernst_at_temp * 100%
+// Nernst efficiency: probe slope vs theoretical at measurement temperature
+// For internal ADC: raw_slope = conditioned_slope / PH_AMP_GAIN (board amplifier)
+// For ADS1115: the effective gain differs from the nominal 3x due to ESP32 ADC
+//   nonlinearity, so we use a separate empirical gain factor.
 static float slopeToEfficiency(float conditionedSlope) {
   if (isnan(conditionedSlope)) return NAN;
   float nernst = NERNST_FACTOR * (273.15f + configStore.getMeasTempC());
-  float rawSlope = fabsf(conditionedSlope) / PH_AMP_GAIN;
+  float gain = PH_AMP_GAIN;
+  float rawSlope = fabsf(conditionedSlope) / gain;
   return (rawSlope / nernst) * 100.0f;
 }
 
@@ -253,24 +349,28 @@ const char* getProbeHealthDetail(char* reasonBuf, size_t reasonLen) {
 // to avoid false instability from ADC/WiFi noise spikes.
 static void waitForStabilization() {
   lastStabTimedOut = false;
-  analogReadMilliVolts(PH_PIN);  // Dummy read to prime ADC after idle
-  delayMicroseconds(100);
+  if (!adsActive()) {
+    analogReadMilliVolts(PH_PIN);  // Dummy read to prime ADC after idle
+    delayMicroseconds(100);
+  }
 
   // Collect readings for both convergence check and noise computation
   static const int MAX_STAB_READINGS = 80;  // 4s / 50ms = 80 max
   float stabReadings[MAX_STAB_READINGS];
   int nReadings = 0;
+  int stabSamples = effectiveStabSamples();
+  float stabThresh = effectiveStabThreshold();
 
-  float prev = readADCTrimmed(16, ADC_INTER_SAMPLE_DELAY_MS);
+  float prev = readADCTrimmed(stabSamples, ADC_INTER_SAMPLE_DELAY_MS);
   stabReadings[nReadings++] = prev;
-  delay(50);
+  if (!adsActive()) delay(50);  // ADS1115 conversion time (75ms/sample) provides spacing
   unsigned long start = millis();
   bool converged = false;
   int consecCount = 0;
   while (millis() - start < (unsigned long)stabilizationTimeoutMs) {
-    float curr = readADCTrimmed(16, ADC_INTER_SAMPLE_DELAY_MS);
+    float curr = readADCTrimmed(stabSamples, ADC_INTER_SAMPLE_DELAY_MS);
     if (nReadings < MAX_STAB_READINGS) stabReadings[nReadings++] = curr;
-    if (fabs(curr - prev) < STABILIZATION_THRESHOLD_MV) {
+    if (fabs(curr - prev) < stabThresh) {
       consecCount++;
       if (consecCount >= STAB_CONSEC_REQUIRED) {
         unsigned long elapsed = millis() - start;
@@ -283,7 +383,7 @@ static void waitForStabilization() {
       consecCount = 0;
     }
     prev = curr;
-    delay(50);
+    if (!adsActive()) delay(50);
   }
   if (!converged) {
     lastStabilizationMs = stabilizationTimeoutMs;
@@ -327,8 +427,9 @@ static void measurePHCore(int nreadings) {
   const int maxReadings = (nreadings > 100) ? 100 : nreadings;
   int validReadings = 0;
 
+  int oversample = effectiveOversampling();
   for (int t = 0; t < maxReadings; t++) {
-    voltage = readADCTrimmed(ADC_OVERSAMPLING, ADC_INTER_SAMPLE_DELAY_MS);
+    voltage = readADCTrimmed(oversample, ADC_INTER_SAMPLE_DELAY_MS);
 
     float calculatedPH = voltageToPH(voltage);
 
@@ -368,8 +469,9 @@ void measurePHFast(int nreadings) {
   const int maxReadings = (nreadings > 100) ? 100 : nreadings;
   int validReadings = 0;
 
+  int oversampleFast = effectiveOversamplingFast();
   for (int t = 0; t < maxReadings; t++) {
-    voltage = readADCTrimmed(ADC_OVERSAMPLING_FAST, ADC_INTER_SAMPLE_DELAY_FAST_MS);
+    voltage = readADCTrimmed(oversampleFast, ADC_INTER_SAMPLE_DELAY_FAST_MS);
 
     float calculatedPH = voltageToPH(voltage);
 
@@ -397,8 +499,9 @@ float measureVoltage(int nreadings) {
   static float voltageReadings[100];
   const int maxReadings = (nreadings > 100) ? 100 : nreadings;
 
+  int oversample = effectiveOversampling();
   for (int t = 0; t < maxReadings; t++) {
-    voltageReadings[t] = readADCTrimmed(ADC_OVERSAMPLING, ADC_INTER_SAMPLE_DELAY_MS);
+    voltageReadings[t] = readADCTrimmed(oversample, ADC_INTER_SAMPLE_DELAY_MS);
     delay(MEASUREMENT_DELAY_MS);
   }
 

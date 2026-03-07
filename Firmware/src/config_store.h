@@ -53,6 +53,16 @@ public:
   float getSamplePumpRPM();        // Sample pump speed in RPM (default MOTOR_TARGET_RPM, range 20-150)
   void setSamplePumpRPM(float rpm);
 
+  // ADS1115 external ADC
+  bool getUseADS1115();             // Use external ADC for pH (default false)
+  void setUseADS1115(bool v);
+  float getVoltage4PHExt();         // External ADC calibration voltages
+  float getVoltage7PHExt();
+  float getVoltage10PHExt();
+  void setVoltage4PHExt(float v);
+  void setVoltage7PHExt(float v);
+  void setVoltage10PHExt(float v);
+
   // Last measurement results (persistent across reboots)
   float getLastKH();
   float getLastStartPH();

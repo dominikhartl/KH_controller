@@ -272,6 +272,17 @@
       }
     }
 
+    var mvEl = document.getElementById('probe-mv');
+    if (mvEl && p.mV != null) {
+      mvEl.innerHTML = (isNaN(p.mV) || p.mV === 0) ? '--' : p.mV.toFixed(1) + ' <small>mV</small>';
+    }
+
+    var calVEl = document.getElementById('probe-cal-v');
+    if (calVEl && p.v4 != null) {
+      var fmt = function(v) { return (isNaN(v) || v === 0) ? '--' : v.toFixed(0); };
+      calVEl.innerHTML = fmt(p.v4) + ' / ' + fmt(p.v7) + ' / ' + fmt(p.v10) + ' <small>mV</small>';
+    }
+
     // Asymmetry trend chart (over calibrations)
     if (effChart && p.effHist && p.effHist.length > 0) {
       effChart.data.labels = p.effHist.map(function(e) { return fmtDate(e[0]); });
@@ -701,7 +712,8 @@
         responsive: true, maintainAspectRatio: false, animation: false,
         plugins: {
           legend: { display: false },
-          title: { display: true, text: title, color: '#8e8e93', font: { size: 11, weight: '500' }, padding: { bottom: 4 } }
+          title: { display: true, text: title, color: '#8e8e93', font: { size: 11, weight: '500' }, padding: { bottom: 4 } },
+          tooltip: { callbacks: { title: function(items) { if (!items.length) return ''; return items[0].chart.data.labels[items[0].dataIndex] || ''; } } }
         },
         scales: {
           x: { ticks: { color: '#8e8e93', maxTicksLimit: 4, font: { size: 9 } }, grid: { color: '#38383a' } },

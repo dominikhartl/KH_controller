@@ -220,7 +220,7 @@ void processPendingCommand() {
     case 'p':
       startStirrer();
       delay(STIRRER_WARMUP_MS);
-      measurePH(100);
+      measurePH(isExternalADCActive() ? 20 : 100);
       stopStirrer();
       if (isnan(pH)) {
         publishError("Error: pH probe not working");
@@ -351,7 +351,8 @@ void calibrateTitrationPump() {
 // Combines multiple quality signals into a 0.0-1.0 score
 static float computeConfidence(float granR2, bool usedGran, int nPoints,
                                 int stabTimeouts, const char* probeHealth,
-                                float crossValDiff, float probeNoiseMv) {
+                                float crossValDiff, float probeNoiseMv,
+                                int phReversals, int granStepCount) {
   float score = 1.0f;
   // Gran R² — continuous: R²=0.99 → -0.20, R²=0.999 → -0.02
   if (usedGran && granR2 > 0) {
@@ -362,13 +363,22 @@ static float computeConfidence(float granR2, bool usedGran, int nPoints,
     score -= min(0.15f, (crossValDiff - 0.3f) * 0.3f);
   }
   // Probe noise — continuous penalty starting at 2 mV
-  score -= min(0.25f, max(0.0f, (probeNoiseMv - 2.0f) * 0.05f));
+  score -= min(0.25f, max(0.0f, (probeNoiseMv - 4.0f) * 0.05f));
   // Data point count
   if (nPoints < 15) score -= 0.1f;
   if (nPoints < 10) score -= 0.1f;
   // Stabilization timeout penalty
-  if (stabTimeouts > 0) score -= 0.1f;
-  if (stabTimeouts > 3) score -= 0.1f;
+  // ADS1115 detects sub-mV drift invisible to internal ADC; timeouts are expected and
+  // don't indicate poor measurement quality (R², reversals, cross-val are unaffected)
+  if (!isExternalADCActive()) {
+    float timeoutRate = (nPoints > 0) ? (float)stabTimeouts / nPoints : 0;
+    if (timeoutRate > 0.1f) score -= 0.1f;
+    if (timeoutRate > 0.3f) score -= 0.1f;
+  }
+  // pH reversal penalty — reversals indicate probe drift or incomplete mixing
+  float reversalRate = (granStepCount > 0) ? (float)phReversals / granStepCount : 0;
+  if (reversalRate > 0.05f) score -= 0.1f;
+  if (reversalRate > 0.10f) score -= 0.1f;
   // Probe health penalty
   if (strcmp(probeHealth, "Fair") == 0) score -= 0.1f;
   else if (strcmp(probeHealth, "Replace") == 0) score -= 0.2f;
@@ -457,7 +467,7 @@ KHResult measureKH() {
   delay(100);
   startStirrer();
   delay(STIRRER_WARMUP_MS);  // Wait for solution to homogenize
-  measurePH(100);
+  measurePH(isExternalADCActive() ? 20 : 100);
   float minStartPH = configStore.getMinStartPH();
   if (isnan(pH)) {
     errorMessage = "Error: pH probe not working";
@@ -484,7 +494,7 @@ KHResult measureKH() {
     delay(100);
     startStirrer();
     delay(STIRRER_WARMUP_MS);
-    measurePH(100);
+    measurePH(isExternalADCActive() ? 20 : 100);
     if (isnan(pH) || pH < minStartPH) {
       startPH = isnan(pH) ? 0 : pH;
       snprintf(retryBuf, sizeof(retryBuf), "Error: Starting pH still %.2f after rinse", pH);
@@ -547,7 +557,9 @@ KHResult measureKH() {
       int mixDelay = TITRATION_MIX_DELAY_FAST_MS +
           (FAST_BATCH_MAX - batch) * 600 / FAST_BATCH_MAX;
       delay(mixDelay);
-      int nReadings = 5 + (FAST_BATCH_MAX - batch) * 15 / FAST_BATCH_MAX;
+      int nReadings = isExternalADCActive()
+          ? 3 + (FAST_BATCH_MAX - batch) * 5 / FAST_BATCH_MAX
+          : 5 + (FAST_BATCH_MAX - batch) * 15 / FAST_BATCH_MAX;
       measurePHFast(nReadings);
       broadcastTitrationPH(pH, units);
       mqttManager.loop();
@@ -590,6 +602,9 @@ KHResult measureKH() {
     float lastPrecisePH = pH;
     int preciseStall = 0;
 
+    // Reset noise stats so only Gran zone stabilization noise is counted
+    resetNoiseStats();
+
     // Gran zone noise tracking
     float prevGranPH = NAN;
     int phReversals = 0;
@@ -616,7 +631,7 @@ KHResult measureKH() {
           break;
         }
         delay(TITRATION_MIX_DELAY_MEDIUM_MS);
-        measurePHStabilized(8);
+        measurePHStabilized(isExternalADCActive() ? 3 : 8);
       } else {
         // Gran zone (pH below GRAN_REGION_PH): smaller steps, stabilization, accurate readings
         curPhase = 2;
@@ -634,7 +649,7 @@ KHResult measureKH() {
         }
         delay(configStore.getGranMixDelay());
         waitForPHStabilization();
-        measurePHStabilized(20);
+        measurePHStabilized(isExternalADCActive() ? 5 : 20);
       }
       units += stepVol;
 
@@ -900,7 +915,8 @@ KHResult measureKH() {
           result.granStepCount = granStepCount;
           result.confidence = computeConfidence(granR2, usedGran, nPoints,
                                                  result.stabTimeouts, getProbeHealth(),
-                                                 crossValDiff, result.probeNoiseMv);
+                                                 crossValDiff, result.probeNoiseMv,
+                                                 phReversals, granStepCount);
 
           // KH value deferred to publishKHResult() after validation
         }
@@ -1008,6 +1024,9 @@ void setup() {
   // Initialize config store (NVS) and migrate from EEPROM if needed
   configStore.begin();
 
+  // Initialize ADS1115 external ADC if configured (must be after configStore.begin())
+  initExternalADC();
+
   // Keep MQTT/OTA alive during long motor operations (washSample takes ~16 min)
   setMotorYieldCallback([]() {
     mqttManager.loop();
@@ -1068,10 +1087,16 @@ void setup() {
   });
   ArduinoOTA.begin();
 
-  // Load pH calibration from NVS
-  voltage_4PH = configStore.getVoltage4PH();
-  voltage_7PH = configStore.getVoltage7PH();
-  voltage_10PH = configStore.getVoltage10PH();
+  // Load pH calibration from NVS (use external ADC calibration if ADS1115 is active)
+  if (isExternalADCActive()) {
+    voltage_4PH = configStore.getVoltage4PHExt();
+    voltage_7PH = configStore.getVoltage7PHExt();
+    voltage_10PH = configStore.getVoltage10PHExt();
+  } else {
+    voltage_4PH = configStore.getVoltage4PH();
+    voltage_7PH = configStore.getVoltage7PH();
+    voltage_10PH = configStore.getVoltage10PH();
+  }
 
   // Compute linear fit from calibration values
   updateCalibrationFit();
@@ -1085,6 +1110,11 @@ void setup() {
     char bootBuf[64];
     snprintf(bootBuf, sizeof(bootBuf), "BOOT (reason=%d, heap=%u)", reason, ESP.getFreeHeap());
     publishMessage(bootBuf);
+    if (isExternalADCActive()) {
+      publishMessage("ADS1115 external ADC active");
+    } else if (isExternalADCFallback()) {
+      publishError("ADS1115 configured but not detected — using internal ADC");
+    }
   }
 
   // Scheduler with NTP

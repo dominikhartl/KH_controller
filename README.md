@@ -51,6 +51,7 @@ The device takes a water sample from the aquarium and titrates it with dilute hy
 | NEMA 17 stepper motor (42Ncm, 1.5A) | 2 | For peristaltic pumps |
 | TMC2208 stepper driver | 2 | Silent stepper drivers |
 | NEMA 17 peristaltic pump | 2 | Sample and titration pumps |
+| ADS1115 ADC module | 1 | Optional: 16-bit external ADC for higher pH resolution |
 | LM2596S buck converter | 1 | Set to 5V output |
 | TIP120 transistor | 1 | Stirrer motor driver |
 | 2.2k resistor | 1 | TIP120 base resistor |
@@ -87,6 +88,9 @@ The PCB connects the ESP32, pH meter, stepper drivers, stirrer, and all peripher
 | Titration pump STEP | 4 | Stepper motor 2 |
 | Stirrer motor | 16 | PWM via TIP120 |
 | pH sensor (ADC) | 35 | Analog input |
+| ADS1115 SDA (I2C) | 26 | Optional external ADC |
+| ADS1115 SCL (I2C) | 33 | Optional external ADC |
+| ADS1115 ALRT | 34 | Optional external ADC |
 
 ### 3D Printed Parts
 

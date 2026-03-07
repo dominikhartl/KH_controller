@@ -17,4 +17,9 @@
 // pH sensor (ADC)
 #define PH_PIN 35
 
+// ADS1115 external ADC (I2C)
+#define I2C_SDA_PIN  26
+#define I2C_SCL_PIN  33
+#define ADS_ALRT_PIN 34
+
 #endif // PINS_H

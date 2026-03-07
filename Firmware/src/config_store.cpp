@@ -170,6 +170,16 @@ void ConfigStore::setSamplePumpRPM(float rpm) {
   prefs.putFloat("samp_rpm", rpm);
 }
 
+// ADS1115 external ADC
+bool ConfigStore::getUseADS1115() { return prefs.getBool("use_ads", true); }
+void ConfigStore::setUseADS1115(bool v) { prefs.putBool("use_ads", v); }
+float ConfigStore::getVoltage4PHExt() { return prefs.getFloat("v4ph_ext", NAN); }
+float ConfigStore::getVoltage7PHExt() { return prefs.getFloat("v7ph_ext", NAN); }
+float ConfigStore::getVoltage10PHExt() { return prefs.getFloat("v10ph_ext", NAN); }
+void ConfigStore::setVoltage4PHExt(float v) { prefs.putFloat("v4ph_ext", v); }
+void ConfigStore::setVoltage7PHExt(float v) { prefs.putFloat("v7ph_ext", v); }
+void ConfigStore::setVoltage10PHExt(float v) { prefs.putFloat("v10ph_ext", v); }
+
 // Last measurement results
 float ConfigStore::getLastKH() { return prefs.getFloat("last_kh", 0); }
 float ConfigStore::getLastStartPH() { return prefs.getFloat("last_sph", 0); }

@@ -11,6 +11,11 @@ extern float voltage_10PH;
 // Initialize ADC with calibrated attenuation
 void initADC();
 
+// Initialize ADS1115 external ADC (call after configStore.begin())
+void initExternalADC();
+bool isExternalADCActive();    // True if ADS1115 is being used for readings
+bool isExternalADCFallback();  // True if configured for ADS1115 but fell back to internal
+
 // Recompute linear fit coefficients from current calibration voltages
 void updateCalibrationFit();
 
