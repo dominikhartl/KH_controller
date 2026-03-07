@@ -1014,7 +1014,7 @@ void setup() {
   pinMode(EN_PIN2, OUTPUT);
   pinMode(STEP_PIN2, OUTPUT);
   pinMode(DIR_PIN2, OUTPUT);
-  initStirrer();  // LEDC 25 kHz PWM + 1s startup kick
+  initStirrer();
   pinMode(PH_PIN, INPUT);
   Serial.begin(115200);
 

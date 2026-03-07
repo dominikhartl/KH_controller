@@ -251,10 +251,15 @@
       var aCls = (p.asymmetry < 15) ? 'good' : (p.asymmetry < 25) ? 'fair' : 'replace';
       asymEl.innerHTML = '<span class="health-dot ' + (isNaN(p.asymmetry) ? '' : aCls) + '"></span>' + aVal + ' <small>%</small>';
     }
-    // Noise
+    // Noise — use last gran history entry (same source as noise chart)
     var noiseEl = document.getElementById('probe-noise');
-    if (noiseEl && p.noise != null) {
-      var nv = parseFloat(p.noise);
+    if (noiseEl) {
+      var nv = NaN;
+      if (granHistoryData && granHistoryData.length > 0) {
+        for (var i = granHistoryData.length - 1; i >= 0; i--) {
+          if (granHistoryData[i][7] > 0) { nv = granHistoryData[i][7]; break; }
+        }
+      }
       if (isNaN(nv) || nv <= 0) {
         noiseEl.innerHTML = '<span class="health-dot"></span>--';
       } else {
