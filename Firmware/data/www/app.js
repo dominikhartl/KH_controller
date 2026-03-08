@@ -9,7 +9,7 @@
   var ws, wsOk = false, reconnTimer;
 
   function connect() {
-    var host = location.hostname || 'khpro.local';
+    var host = location.hostname;
     ws = new WebSocket('ws://' + host + '/ws');
     ws.onopen = function() {
       if (reconnTimer) { clearTimeout(reconnTimer); reconnTimer = null; }
@@ -18,6 +18,7 @@
       ws.send(JSON.stringify({type:'getHistory', sensor:'kh'}));
       ws.send(JSON.stringify({type:'getHistory', sensor:'ph'}));
       ws.send(JSON.stringify({type:'getHistory', sensor:'gran'}));
+      ws.send(JSON.stringify({type:'getHistory', sensor:'motor'}));
     };
     ws.onclose = function() {
       wsOk = false;
@@ -96,6 +97,7 @@
     else if (d.type === 'logData') loadLogData(d.entries);
     else if (d.type === 'granData') updateGranChart(d);
     else if (d.type === 'progress') updateProgress(d.pct);
+    else if (d.type === 'motorDiag') showMotorDiag(d);
   }
 
   function clearLiveChart() {
@@ -124,6 +126,13 @@
   }
 
   function updateState(d) {
+    // Device name and version
+    if (d.deviceName) {
+      var title = d.deviceName + (d.fwVersion ? ' v' + d.fwVersion : '');
+      setText('device-title', title);
+      document.title = title;
+    }
+
     // KH gauge
     var khVal = (d.kh > 0) ? d.kh : 0;
     setGaugeArc('gauge-kh-arc', khVal, 0, 15);
@@ -167,6 +176,20 @@
     // Next measurement (server sends formatted string)
     if (d.nextMeas) setText('next-meas', d.nextMeas);
 
+    // Tube health header indicator + section status
+    var th = d.tubeHealth || '';
+    var tubeInd = document.getElementById('ind-tube');
+    if (tubeInd) {
+      tubeInd.className = 'si' + ((th === 'Good') ? ' on' : (th === 'Aging') ? ' warn' : (th === 'Replace') ? ' err' : '');
+    }
+    var tubeStatus = document.getElementById('tube-health-status');
+    if (tubeStatus) {
+      var dot = tubeStatus.querySelector('.health-dot');
+      var cls = (th === 'Good') ? 'good' : (th === 'Aging') ? 'warn' : (th === 'Replace') ? 'replace' : '';
+      if (dot) dot.className = 'health-dot' + (cls ? ' ' + cls : '');
+      if (tubeStatus.lastChild) tubeStatus.lastChild.textContent = th || '--';
+    }
+
     // Config values
     if (d.config) {
       setInput('cfg-titration_vol', d.config.titration_vol);
@@ -187,6 +210,29 @@
       setInput('cfg-meas_temp_c', d.config.meas_temp_c);
       setInput('cfg-slope_hours', d.config.slope_hours);
       setInput('cfg-stirrer_speed', d.config.stirrer_speed);
+
+      // Tube baseline info
+      var sbl = d.config.sample_sg_baseline || 0;
+      var tbl = d.config.titrate_sg_baseline || 0;
+      motorBaselines.sample = sbl;
+      motorBaselines.titrate = tbl;
+      var blInfo = document.getElementById('tube-baseline-info');
+      if (blInfo) {
+        if (sbl > 0 || tbl > 0) {
+          var parts = [];
+          if (sbl > 0) parts.push('S:' + sbl);
+          if (tbl > 0) parts.push('T:' + tbl);
+          blInfo.textContent = parts.join(' / ');
+        } else {
+          blInfo.textContent = 'Not set';
+        }
+      }
+      // Update SG values in tube health grid
+      var thSample = document.getElementById('tube-health-sample');
+      if (thSample && lastSGValues.sample > 0) thSample.textContent = 'SG ' + lastSGValues.sample;
+      var thTitrate = document.getElementById('tube-health-titrate');
+      if (thTitrate && lastSGValues.titrate > 0) thTitrate.textContent = 'SG ' + lastSGValues.titrate;
+      renderMotorCharts();
     }
 
     // Schedule
@@ -444,6 +490,16 @@
       renderNoiseTrend();
       return;
     }
+    if (d.sensor === 'motor') {
+      motorHistoryData = d.data;
+      if (d.data && d.data.length > 0) {
+        var last = d.data[d.data.length - 1];
+        lastSGValues.sample = last[1];
+        lastSGValues.titrate = last[3];
+      }
+      renderMotorCharts();
+      return;
+    }
     if (d.sensor === 'kh') {
       khHistoryData = d.data;
       renderKHChart();
@@ -593,10 +649,13 @@
 
   // --- Charts ---
   var khChart, phChart, liveChart, granChart, granHistChart, granWinChart, effChart, noiseChart;
+  var sgSampleChart, sgTitrateChart;
   var granView = 'last'; // 'last' or 'history'
   var khMethod = 'combined'; // 'combined', 'gran', 'endpoint'
   var khHistoryData = null;  // raw kh history [[ts, val], ...]
   var granHistoryData = null; // raw gran history [[ts, r2, eqML, eph, mth, khG, khE, noiseMv, reversals, conf], ...]
+  var motorHistoryData = null; // raw motor history [[ts, sAvg, sMin, tAvg, tMin], ...]
+  var lastSGValues = { sample: 0, titrate: 0 };
   var chartOpts = {
     responsive: true,
     maintainAspectRatio: false,
@@ -1080,6 +1139,122 @@
     });
   }
 
+  // --- Motor Diagnostics ---
+  var lastDiagResult = null;
+
+  function fmtSG(obj) {
+    if (!obj) return '--';
+    return 'SG ' + obj.sgMin + '-' + obj.sgMax + ' (avg ' + obj.sgAvg + ')';
+  }
+
+  function showMotorDiag(d) {
+    lastDiagResult = d;
+    var prog = document.getElementById('motor-diag-progress');
+    var results = document.getElementById('motor-diag-results');
+    var btn = document.getElementById('btn-motor-diag');
+    if (prog) prog.style.display = 'none';
+    if (btn) btn.disabled = false;
+    if (!results) return;
+
+    setText('diag-sample-sc', fmtSG(d.sample.stealthchop));
+    setText('diag-sample-sp', fmtSG(d.sample.spreadcycle));
+    setText('diag-sample-rec', d.sample.recommended + ' (SG\u2265' + d.sample.suggestedThreshold + ')');
+    setText('diag-titrate-sc', fmtSG(d.titrate.stealthchop));
+    setText('diag-titrate-sp', fmtSG(d.titrate.spreadcycle));
+    setText('diag-titrate-rec', d.titrate.recommended + ' (SG\u2265' + d.titrate.suggestedThreshold + ')');
+    results.style.display = 'block';
+  }
+
+  function initMotorCharts() {
+    var sgChartOpts = function(title) {
+      return {
+        responsive: true, maintainAspectRatio: false, animation: false,
+        plugins: {
+          legend: { display: false },
+          title: { display: true, text: title, color: '#8e8e93', font: { size: 10, weight: '500' }, padding: { bottom: 4 } }
+        },
+        scales: {
+          x: { ticks: { color: '#8e8e93', maxTicksLimit: 4, font: { size: 9 } }, grid: { color: '#38383a' } },
+          y: { ticks: { color: '#8e8e93', font: { size: 9 } }, grid: { color: '#38383a' }, title: { display: true, text: 'SG', color: '#8e8e93', font: { size: 9 } } }
+        }
+      };
+    };
+    var el1 = document.getElementById('chart-sg-sample');
+    var el2 = document.getElementById('chart-sg-titrate');
+    if (el1) sgSampleChart = new Chart(el1, {
+      type: 'line',
+      data: { labels: [], datasets: [
+        { data: [], borderColor: '#0a84ff', borderWidth: 2, pointRadius: 2, pointBackgroundColor: '#0a84ff', tension: 0.1 },
+        { data: [], borderColor: 'rgba(255,159,10,0.5)', borderWidth: 1, borderDash: [4,4], pointRadius: 0 }
+      ] },
+      options: sgChartOpts('Sample Pump SG')
+    });
+    if (el2) sgTitrateChart = new Chart(el2, {
+      type: 'line',
+      data: { labels: [], datasets: [
+        { data: [], borderColor: '#30d158', borderWidth: 2, pointRadius: 2, pointBackgroundColor: '#30d158', tension: 0.1 },
+        { data: [], borderColor: 'rgba(255,159,10,0.5)', borderWidth: 1, borderDash: [4,4], pointRadius: 0 }
+      ] },
+      options: sgChartOpts('Titration Pump SG')
+    });
+  }
+
+  function renderMotorCharts() {
+    if (!motorHistoryData || motorHistoryData.length === 0) return;
+    // data: [[ts, sAvg, sMin, tAvg, tMin], ...]
+    var labels = motorHistoryData.map(function(p) { return fmtDate(p[0]); });
+
+    if (sgSampleChart) {
+      sgSampleChart.data.labels = labels;
+      sgSampleChart.data.datasets[0].data = motorHistoryData.map(function(p) { return p[1]; });
+      if (motorBaselines.sample > 0) {
+        sgSampleChart.data.datasets[1].data = labels.map(function() { return motorBaselines.sample; });
+      }
+      sgSampleChart.update();
+    }
+    if (sgTitrateChart) {
+      sgTitrateChart.data.labels = labels;
+      sgTitrateChart.data.datasets[0].data = motorHistoryData.map(function(p) { return p[3]; }); // avg
+      if (motorBaselines.titrate > 0) {
+        sgTitrateChart.data.datasets[1].data = labels.map(function() { return motorBaselines.titrate; });
+      }
+      sgTitrateChart.update();
+    }
+  }
+
+  var motorBaselines = { sample: 0, titrate: 0 };
+
+  function initMotorDiag() {
+    var btn = document.getElementById('btn-motor-diag');
+    if (btn) {
+      btn.addEventListener('click', function() {
+        var prog = document.getElementById('motor-diag-progress');
+        var results = document.getElementById('motor-diag-results');
+        if (prog) prog.style.display = 'block';
+        if (results) results.style.display = 'none';
+        btn.disabled = true;
+      });
+    }
+    var applyBtn = document.getElementById('btn-apply-diag');
+    if (applyBtn) {
+      applyBtn.addEventListener('click', function() {
+        if (!lastDiagResult) return;
+        var s = lastDiagResult.sample;
+        var t = lastDiagResult.titrate;
+        send({ type: 'config', key: 'sample_spreadcycle', value: s.recommended === 'spreadcycle' ? 1 : 0 });
+        send({ type: 'config', key: 'sample_stall_sg', value: s.suggestedThreshold });
+        send({ type: 'config', key: 'titrate_spreadcycle', value: t.recommended === 'spreadcycle' ? 1 : 0 });
+        send({ type: 'config', key: 'titrate_stall_sg', value: t.suggestedThreshold });
+        // Store SG baselines for tube wear tracking
+        var sMode = s.recommended === 'spreadcycle' ? s.spreadcycle : s.stealthchop;
+        var tMode = t.recommended === 'spreadcycle' ? t.spreadcycle : t.stealthchop;
+        if (sMode) send({ type: 'config', key: 'sample_sg_baseline', value: sMode.sgAvg });
+        if (tMode) send({ type: 'config', key: 'titrate_sg_baseline', value: tMode.sgAvg });
+        addLogEntry('msg', 'Motor diagnostic settings and tube baseline applied');
+      });
+    }
+  }
+
   function init() {
     initCharts();
     initTabs();
@@ -1089,6 +1264,8 @@
     initConfigInputs();
     initSchedule();
     initKHMethodToggle();
+    initMotorDiag();
+    initMotorCharts();
     connect();
   }
 

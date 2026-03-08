@@ -42,8 +42,18 @@ void ConfigStore::setVoltage7PH(float v) { prefs.putFloat("v7ph", v); }
 void ConfigStore::setVoltage10PH(float v) { prefs.putFloat("v10ph", v); }
 
 // KH calculation parameters
-float ConfigStore::getTitrationVolume() { return prefs.getFloat("tit_vol", 9.8); }
-float ConfigStore::getSampleVolume() { return prefs.getFloat("sam_vol", 77.0); }
+float ConfigStore::getTitrationVolume() {
+  float v = prefs.getFloat("tit_vol", 9.8);
+  if (v < 1.0) v = 1.0;
+  if (v > 100.0) v = 100.0;
+  return v;
+}
+float ConfigStore::getSampleVolume() {
+  float v = prefs.getFloat("sam_vol", 77.0);
+  if (v < 10.0) v = 10.0;
+  if (v > 500.0) v = 500.0;
+  return v;
+}
 float ConfigStore::getCorrectionFactor() { return prefs.getFloat("corr_f", 1.0); }
 float ConfigStore::getHClMolarity() { return prefs.getFloat("hcl_mol", 0.024); }
 float ConfigStore::getHClVolume() { return prefs.getFloat("hcl_vol", 5000.0); }
@@ -179,6 +189,40 @@ float ConfigStore::getVoltage10PHExt() { return prefs.getFloat("v10ph_ext", NAN)
 void ConfigStore::setVoltage4PHExt(float v) { prefs.putFloat("v4ph_ext", v); }
 void ConfigStore::setVoltage7PHExt(float v) { prefs.putFloat("v7ph_ext", v); }
 void ConfigStore::setVoltage10PHExt(float v) { prefs.putFloat("v10ph_ext", v); }
+
+// TMC2209 per-motor stall detection settings
+bool ConfigStore::getSampleSpreadCycle() { return prefs.getBool("samp_sc", false); }
+void ConfigStore::setSampleSpreadCycle(bool v) { prefs.putBool("samp_sc", v); }
+int ConfigStore::getSampleStallSG() {
+  int v = prefs.getInt("samp_sg", 30);
+  if (v < 0) v = 0;
+  if (v > 500) v = 500;
+  return v;
+}
+void ConfigStore::setSampleStallSG(int v) {
+  if (v < 0) v = 0;
+  if (v > 500) v = 500;
+  prefs.putInt("samp_sg", v);
+}
+bool ConfigStore::getTitrateSpreadCycle() { return prefs.getBool("titr_sc", false); }
+void ConfigStore::setTitrateSpreadCycle(bool v) { prefs.putBool("titr_sc", v); }
+int ConfigStore::getTitrateStallSG() {
+  int v = prefs.getInt("titr_sg", 100);
+  if (v < 0) v = 0;
+  if (v > 500) v = 500;
+  return v;
+}
+void ConfigStore::setTitrateStallSG(int v) {
+  if (v < 0) v = 0;
+  if (v > 500) v = 500;
+  prefs.putInt("titr_sg", v);
+}
+
+// SG baselines (new-tube reference for wear detection)
+int ConfigStore::getSampleSGBaseline() { return prefs.getInt("samp_sg_bl", 0); }
+void ConfigStore::setSampleSGBaseline(int v) { prefs.putInt("samp_sg_bl", v); }
+int ConfigStore::getTitrateSGBaseline() { return prefs.getInt("titr_sg_bl", 0); }
+void ConfigStore::setTitrateSGBaseline(int v) { prefs.putInt("titr_sg_bl", v); }
 
 // Last measurement results
 float ConfigStore::getLastKH() { return prefs.getFloat("last_kh", 0); }

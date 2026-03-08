@@ -21,4 +21,14 @@ bool takeSample(int volume, float speedRpm);
 bool washSample(float remPart, float fillPart, float speedRpm);
 bool titrate(int volume, float speedRpm, bool noAccel = false);
 
+// Per-operation SG stats for tube wear tracking
+void getLastSampleSGStats(uint16_t* avg, uint16_t* min);
+void getLastTitrateSGStats(uint16_t* avg, uint16_t* min);
+
+// Motor diagnostic: run revolutions and collect SG samples
+// Returns number of samples collected (0 if TMC not detected)
+struct SGSample { uint16_t sg; bool diag; };
+int diagStepSample(int revolutions, float rpm, SGSample* samples, int maxSamples);
+int diagStepTitrate(int revolutions, float rpm, SGSample* samples, int maxSamples);
+
 #endif // MOTORS_H

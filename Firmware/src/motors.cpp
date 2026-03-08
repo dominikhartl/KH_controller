@@ -1,5 +1,7 @@
 #include <Arduino.h>
 #include "motors.h"
+#include "tmc_driver.h"
+#include "config_store.h"
 #include <pins.h>
 #include <config.h>
 
@@ -16,6 +18,12 @@ static int washBaseVol = 0;  // volume completed before current phase
 // Multi-wash context: spans progress across sequential washSample() calls
 static int multiWashTotal = 0;   // total number of washes in sequence (0 = disabled)
 static int multiWashIndex = 0;   // current wash index (0-based)
+
+// Per-operation SG stats for tube wear tracking
+static uint32_t sampleSGSum = 0, sampleSGCount = 0;
+static uint16_t sampleSGMin = 65535;
+static uint32_t titrateSGSum = 0, titrateSGCount = 0;
+static uint16_t titrateSGMin = 65535;
 
 void setMotorYieldCallback(MotorYieldCallback cb) {
   yieldCb = cb;
@@ -37,7 +45,7 @@ void clearMultiWashContext() {
 
 // Precise step helper — used by titration motor where volume accuracy matters
 static inline void stepPulse(uint8_t pin, float halfPeriodUs) {
-  unsigned int hp = (unsigned int)halfPeriodUs;
+  unsigned int hp = (unsigned int)(halfPeriodUs + 0.5f);
   digitalWrite(pin, HIGH);
   delayMicroseconds(hp);
   digitalWrite(pin, LOW);
@@ -50,8 +58,8 @@ static inline void stepPulse(uint8_t pin, float halfPeriodUs) {
 static inline void stepPulseJittered(uint8_t pin, float halfPeriodUs) {
   int jitter = (int)(halfPeriodUs * 0.1f);
   int d = (jitter > 0) ? random(-jitter, jitter + 1) : 0;
-  unsigned int hpHigh = (unsigned int)halfPeriodUs + d;
-  unsigned int hpLow  = (unsigned int)halfPeriodUs - d;
+  unsigned int hpHigh = (unsigned int)(halfPeriodUs + 0.5f) + d;
+  unsigned int hpLow  = (unsigned int)(halfPeriodUs + 0.5f) - d;
   digitalWrite(pin, HIGH);
   delayMicroseconds(hpHigh);
   digitalWrite(pin, LOW);
@@ -75,6 +83,8 @@ static bool lastSampleDirection = true;
 // Shared sample pump logic — direction is the only difference between remove and fill
 // Returns false on timeout
 static bool runSamplePump(int volume, bool forward, float speedRpm) {
+  clearStallFlag();
+  sampleSGSum = 0; sampleSGCount = 0; sampleSGMin = 65535;
   float targetUs = rpmToHalfPeriodUs(speedRpm);
   digitalWrite(EN_PIN1, LOW);
   delay(MOTOR_ENABLE_DELAY_MS);
@@ -113,6 +123,16 @@ static bool runSamplePump(int volume, bool forward, float speedRpm) {
     stepsDone++;
     if (stepsDone % (STEPS_PER_REVOLUTION * MOTOR_YIELD_INTERVAL) == 0) {
       if (yieldCb) yieldCb();
+      { uint16_t sg = getSampleSG();
+        sampleSGSum += sg; sampleSGCount++;
+        if (sg < sampleSGMin) sampleSGMin = sg;
+        if (sg < (uint16_t)configStore.getSampleStallSG()) {
+          Serial.printf("ERROR: Sample pump stall (SG=%d)\n", sg);
+          setStallFlag();
+          timedOut = true;
+          break;
+        }
+      }
       if (washTotalVol > 0 && progressCb) {
         int revsDone = stepsDone / STEPS_PER_REVOLUTION;
         int done = washBaseVol + revsDone;
@@ -180,15 +200,17 @@ bool washSample(float remPart, float fillPart, float speedRpm) {
   washTotalVol = 0;
 
   if (multiWashTotal > 0) {
-    multiWashIndex++;
+    if (ok) multiWashIndex++;
     if (progressCb) progressCb((multiWashIndex * 100) / multiWashTotal);
   } else {
-    if (progressCb) progressCb(100);
+    if (progressCb) progressCb(ok ? 100 : 0);
   }
   return ok;
 }
 
 bool titrate(int volume, float speedRpm, bool noAccel) {
+  clearStallFlag();
+  titrateSGSum = 0; titrateSGCount = 0; titrateSGMin = 65535;
   float speedUs = rpmToHalfPeriodUs(speedRpm);
 
   // Only add enable settle delay if motor wasn't already on
@@ -234,6 +256,20 @@ bool titrate(int volume, float speedRpm, bool noAccel) {
       speedReached = speedUs;
       if (stepsDone % (MOTOR_STEPS_PER_UNIT * MOTOR_YIELD_INTERVAL * 50) == 0) {
         if (yieldCb) yieldCb();
+        if (isTitrateStalled()) {
+          Serial.println("ERROR: Titration pump stall detected (DIAG)!");
+          setStallFlag();
+          return false;
+        }
+        { uint16_t sg = getTitrateSG();
+          titrateSGSum += sg; titrateSGCount++;
+          if (sg < titrateSGMin) titrateSGMin = sg;
+          if (sg < (uint16_t)configStore.getTitrateStallSG()) {
+            Serial.printf("ERROR: Titration pump stall (SG=%d)\n", sg);
+            setStallFlag();
+            return false;
+          }
+        }
         if (millis() - startTime > TITRATION_TIMEOUT_MS) {
           Serial.println("ERROR: Titration timeout!");
           return false;
@@ -252,7 +288,7 @@ bool titrate(int volume, float speedRpm, bool noAccel) {
   } else {
     // Small volume: absolute-time stepping immune to interrupt jitter.
     // No spread-spectrum here — titration motor needs precise timing for volume accuracy.
-    unsigned int halfPeriod = (unsigned int)speedUs;
+    unsigned int halfPeriod = (unsigned int)(speedUs + 0.5f);
     unsigned long t = micros();
     for (int i = 0; i < totalSteps; i++) {
       t += halfPeriod;
@@ -261,10 +297,76 @@ bool titrate(int volume, float speedRpm, bool noAccel) {
       t += halfPeriod;
       digitalWrite(STEP_PIN2, LOW);
       while ((long)(micros() - t) < 0) {}
+      // Check DIAG pin every 128 steps for stall detection
+      if ((i & 0x7F) == 0x7F && isTitrateStalled()) {
+        Serial.println("ERROR: Titration pump stall detected (DIAG)!");
+        setStallFlag();
+        return false;
+      }
     }
   }
 
   // No hold/disable here — caller manages EN_PIN2 to avoid
   // enable/disable overhead on every small titration step
   return true;
+}
+
+// Diagnostic: run sample pump for N revolutions, collect SG every revolution
+int diagStepSample(int revolutions, float rpm, SGSample* samples, int maxSamples) {
+  if (!isTMCDetected()) return 0;
+  float halfPeriodUs = rpmToHalfPeriodUs(rpm);
+  int totalSteps = revolutions * STEPS_PER_REVOLUTION;
+  int nSamples = 0;
+
+  digitalWrite(EN_PIN1, LOW);
+  delay(MOTOR_ENABLE_DELAY_MS);
+  digitalWrite(DIR_PIN1, HIGH);
+
+  for (int i = 0; i < totalSteps; i++) {
+    stepPulseJittered(STEP_PIN1, halfPeriodUs);
+    if ((i + 1) % STEPS_PER_REVOLUTION == 0 && nSamples < maxSamples) {
+      samples[nSamples].sg = getSampleSG();
+      samples[nSamples].diag = digitalRead(DIAG_SAMPLE);
+      nSamples++;
+    }
+  }
+
+  delay(MOTOR_HOLD_MS);
+  digitalWrite(EN_PIN1, HIGH);
+  return nSamples;
+}
+
+// Diagnostic: run titration pump for N revolutions, collect SG every revolution
+int diagStepTitrate(int revolutions, float rpm, SGSample* samples, int maxSamples) {
+  if (!isTMCDetected()) return 0;
+  float halfPeriodUs = rpmToHalfPeriodUs(rpm);
+  int totalSteps = revolutions * STEPS_PER_REVOLUTION;
+  int nSamples = 0;
+
+  digitalWrite(EN_PIN2, LOW);
+  delay(MOTOR_ENABLE_DELAY_MS);
+  digitalWrite(DIR_PIN2, LOW);
+
+  for (int i = 0; i < totalSteps; i++) {
+    stepPulse(STEP_PIN2, halfPeriodUs);
+    if ((i + 1) % STEPS_PER_REVOLUTION == 0 && nSamples < maxSamples) {
+      samples[nSamples].sg = getTitrateSG();
+      samples[nSamples].diag = digitalRead(DIAG_TITRATE);
+      nSamples++;
+    }
+  }
+
+  delay(MOTOR_HOLD_MS);
+  digitalWrite(EN_PIN2, HIGH);
+  return nSamples;
+}
+
+void getLastSampleSGStats(uint16_t* avg, uint16_t* min) {
+  *avg = sampleSGCount > 0 ? (uint16_t)(sampleSGSum / sampleSGCount) : 0;
+  *min = sampleSGCount > 0 ? sampleSGMin : 0;
+}
+
+void getLastTitrateSGStats(uint16_t* avg, uint16_t* min) {
+  *avg = titrateSGCount > 0 ? (uint16_t)(titrateSGSum / titrateSGCount) : 0;
+  *min = titrateSGCount > 0 ? titrateSGMin : 0;
 }

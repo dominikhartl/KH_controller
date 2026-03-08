@@ -4,6 +4,7 @@
 #include "wifi_manager.h"
 #include "web_server.h"
 #include "measurement.h"
+#include "motors.h"
 #include "temperature.h"
 #include <config.h>
 #include <ArduinoJson.h>
@@ -45,8 +46,13 @@ static char topicCfgAnchorTimeSet[60];
 
 static const char* availability_topic = nullptr;
 static char availTopic[60];
+static char deviceIdLower[32]; // lowercase DEVICE_NAME for HA discovery paths
 
 static void initTopics() {
+  strncpy(deviceIdLower, DEVICE_NAME, sizeof(deviceIdLower) - 1);
+  deviceIdLower[sizeof(deviceIdLower) - 1] = '\0';
+  for (char* p = deviceIdLower; *p; p++) *p = tolower(*p);
+
   snprintf(availTopic, sizeof(availTopic), "%s/availability", DEVICE_NAME);
   availability_topic = availTopic;
 
@@ -100,12 +106,14 @@ static uint16_t timeStrToMins(const char* str) {
 static void addDeviceBlock(JsonObject& doc) {
   JsonObject dev = doc["dev"].to<JsonObject>();
   JsonArray ids = dev["ids"].to<JsonArray>();
-  ids.add("khpro");
-  dev["name"] = "KH Pro";
+  ids.add(deviceIdLower);
+  dev["name"] = DEVICE_NAME;
   dev["mf"] = "DIY";
-  dev["mdl"] = "KHpro";
+  dev["mdl"] = DEVICE_NAME;
   dev["sw"] = FW_VERSION;
-  dev["cu"] = "http://khpro.local/";
+  char cuBuf[64];
+  snprintf(cuBuf, sizeof(cuBuf), "http://%s.local/", deviceIdLower);
+  dev["cu"] = cuBuf;
 }
 
 static void publishDiscoveryPayload(const char* discoveryTopic, JsonDocument& doc) {
@@ -133,7 +141,7 @@ static void publishSensorDiscovery(const char* id, const char* name, const char*
   addDeviceBlock(root);
 
   char discTopic[128];
-  snprintf(discTopic, sizeof(discTopic), "homeassistant/sensor/khpro/%s/config", id);
+  snprintf(discTopic, sizeof(discTopic), "homeassistant/sensor/%s/%s/config", deviceIdLower, id);
   publishDiscoveryPayload(discTopic, doc);
 }
 
@@ -157,7 +165,7 @@ static void publishNumberDiscovery(const char* id, const char* name,
   addDeviceBlock(root);
 
   char discTopic[128];
-  snprintf(discTopic, sizeof(discTopic), "homeassistant/number/khpro/%s/config", id);
+  snprintf(discTopic, sizeof(discTopic), "homeassistant/number/%s/%s/config", deviceIdLower, id);
   publishDiscoveryPayload(discTopic, doc);
 }
 
@@ -175,7 +183,7 @@ static void publishButtonDiscovery(const char* id, const char* name,
   addDeviceBlock(root);
 
   char discTopic[128];
-  snprintf(discTopic, sizeof(discTopic), "homeassistant/button/khpro/%s/config", id);
+  snprintf(discTopic, sizeof(discTopic), "homeassistant/button/%s/%s/config", deviceIdLower, id);
   publishDiscoveryPayload(discTopic, doc);
 }
 
@@ -195,7 +203,7 @@ static void publishSelectDiscovery(const char* id, const char* name,
   addDeviceBlock(root);
 
   char discTopic[128];
-  snprintf(discTopic, sizeof(discTopic), "homeassistant/select/khpro/%s/config", id);
+  snprintf(discTopic, sizeof(discTopic), "homeassistant/select/%s/%s/config", deviceIdLower, id);
   publishDiscoveryPayload(discTopic, doc);
 }
 
@@ -256,6 +264,26 @@ void publishAllDiscovery() {
   publishSensorDiscovery("khv3_water_temp", "Water Temperature", topicDiagnostics, "°C", "temperature",
                           "{{ value_json.water_temp }}", nullptr);
 
+  // Motor/tube health sensors
+  publishSensorDiscovery("khv3_sample_sg", "Sample Pump Load", topicDiagnostics, nullptr, nullptr,
+                          "{{ value_json.sample_sg }}", "diagnostic");
+  publishSensorDiscovery("khv3_titrate_sg", "Titration Pump Load", topicDiagnostics, nullptr, nullptr,
+                          "{{ value_json.titrate_sg }}", "diagnostic");
+  {
+    JsonDocument doc;
+    doc["name"] = "Tube Health";
+    doc["stat_t"] = topicDiagnostics;
+    doc["uniq_id"] = "khv3_tube_health";
+    doc["avty_t"] = availability_topic;
+    doc["val_tpl"] = "{{ value_json.tube_health }}";
+    doc["ent_cat"] = "diagnostic";
+    JsonObject root = doc.as<JsonObject>();
+    addDeviceBlock(root);
+    char dt[128];
+    snprintf(dt, sizeof(dt), "homeassistant/sensor/%s/khv3_tube_health/config", deviceIdLower);
+    publishDiscoveryPayload(dt, doc);
+  }
+
   // Probe health text sensor (no unit, no state_class)
   {
     JsonDocument doc;
@@ -267,8 +295,9 @@ void publishAllDiscovery() {
     doc["ent_cat"] = "diagnostic";
     JsonObject root = doc.as<JsonObject>();
     addDeviceBlock(root);
-    publishDiscoveryPayload(
-      "homeassistant/sensor/khpro/khv3_probe_health/config", doc);
+    char dt[128];
+    snprintf(dt, sizeof(dt), "homeassistant/sensor/%s/khv3_probe_health/config", deviceIdLower);
+    publishDiscoveryPayload(dt, doc);
   }
 
   // Text sensors (no unit, no state_class)
@@ -282,7 +311,7 @@ void publishAllDiscovery() {
     JsonObject root = doc.as<JsonObject>();
     addDeviceBlock(root);
     char dt[128];
-    snprintf(dt, sizeof(dt), "homeassistant/sensor/khpro/khv3_error/config");
+    snprintf(dt, sizeof(dt), "homeassistant/sensor/%s/khv3_error/config", deviceIdLower);
     publishDiscoveryPayload(dt, doc);
   }
   {
@@ -295,7 +324,7 @@ void publishAllDiscovery() {
     JsonObject root = doc.as<JsonObject>();
     addDeviceBlock(root);
     char dt[128];
-    snprintf(dt, sizeof(dt), "homeassistant/sensor/khpro/khv3_message/config");
+    snprintf(dt, sizeof(dt), "homeassistant/sensor/%s/khv3_message/config", deviceIdLower);
     publishDiscoveryPayload(dt, doc);
   }
 
@@ -311,7 +340,9 @@ void publishAllDiscovery() {
     doc["ent_cat"] = "diagnostic";
     JsonObject root = doc.as<JsonObject>();
     addDeviceBlock(root);
-    publishDiscoveryPayload("homeassistant/binary_sensor/khpro/connectivity/config", doc);
+    char dt[128];
+    snprintf(dt, sizeof(dt), "homeassistant/binary_sensor/%s/connectivity/config", deviceIdLower);
+    publishDiscoveryPayload(dt, doc);
   }
 
   // Number inputs
@@ -359,7 +390,7 @@ void publishAllDiscovery() {
     addDeviceBlock(root);
 
     char discTopic[128];
-    snprintf(discTopic, sizeof(discTopic), "homeassistant/text/khpro/%s/config", id);
+    snprintf(discTopic, sizeof(discTopic), "homeassistant/text/%s/%s/config", deviceIdLower, id);
     publishDiscoveryPayload(discTopic, doc);
   }
 
@@ -391,8 +422,9 @@ void publishAllDiscovery() {
     doc["ent_cat"] = "config";
     JsonObject root = doc.as<JsonObject>();
     addDeviceBlock(root);
-    publishDiscoveryPayload(
-      "homeassistant/text/khpro/khv3_anchor_time/config", doc);
+    char dt[128];
+    snprintf(dt, sizeof(dt), "homeassistant/text/%s/khv3_anchor_time/config", deviceIdLower);
+    publishDiscoveryPayload(dt, doc);
   }
 
   // Buttons
@@ -488,7 +520,16 @@ void publishDiagnostics() {
     doc["cal_age"] = -1;  // No calibration timestamp recorded
   }
 
-  char buf[512];
+  // Motor/tube health
+  uint16_t sAvg, sMin, tAvg, tMin;
+  getLastSampleSGStats(&sAvg, &sMin);
+  getLastTitrateSGStats(&tAvg, &tMin);
+  doc["sample_sg"] = sAvg;
+  doc["titrate_sg"] = tAvg;
+  const char* th = getTubeHealth();
+  doc["tube_health"] = th ? th : "Unknown";
+
+  char buf[640];
   serializeJson(doc, buf, sizeof(buf));
   mqttManager.publish(topicDiagnostics, buf, true);
 }

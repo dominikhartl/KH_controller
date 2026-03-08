@@ -145,6 +145,8 @@ h2{font-size:.8em;font-weight:600;color:var(--text-secondary);text-transform:upp
 .config-advanced summary::before{content:'▸ ';transition:transform .2s}
 .config-advanced[open] summary::before{content:'▾ '}
 .config-advanced .config-grid{margin-top:8px}
+.diag-table th,.diag-table td{padding:4px 8px;text-align:left;border-bottom:1px solid var(--separator)}
+.diag-table th{color:var(--text-secondary);font-weight:600}
 
 /* === Schedule === */
 .sched-grid{display:flex;flex-wrap:wrap;gap:8px}

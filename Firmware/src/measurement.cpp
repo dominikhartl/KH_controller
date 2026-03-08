@@ -6,6 +6,7 @@
 #include <config.h>
 #include <math.h>
 #include "driver/adc.h"
+#include "tmc_driver.h"
 
 // Measurement state
 float voltage = 0;
@@ -22,14 +23,18 @@ static bool adsFallback = false;
 // ADS1115 register addresses
 static const uint8_t ADS_REG_CONVERSION = 0x00;
 static const uint8_t ADS_REG_CONFIG     = 0x01;
-// Config register bits for single-shot, AIN0 vs GND, GAIN_TWO (±2.048V), 16 SPS
+static const uint8_t ADS_REG_LO_THRESH  = 0x02;
+static const uint8_t ADS_REG_HI_THRESH  = 0x03;
+// Config register bits for single-shot, AIN0 vs GND, GAIN_ONE (±4.096V), 16 SPS
 // [15]    OS=1 (start single conversion)
 // [14:12] MUX=100 (AIN0 vs GND)
 // [11:9]  PGA=001 (±4.096V, GAIN_ONE — 2061 mV headroom at pH 4)
 // [8]     MODE=1 (single-shot)
 // [7:5]   DR=001 (16 SPS → 62.5ms conversion)
-// [4:0]   COMP disabled (00011)
-static const uint16_t ADS_CONFIG_SINGLE_A0 = 0xC323;
+// [4:2]   COMP_MODE=0, COMP_POL=0, COMP_LAT=0
+// [1:0]   COMP_QUE=00 (assert after 1 conversion — enables RDY pin)
+static const uint16_t ADS_CONFIG_SINGLE_A0 = 0xC320;
+static bool adsRdyAvailable = false;  // true if RDY pin configured successfully
 
 // Piecewise linear coefficients: pH = slope * voltage + offset
 // Acid segment (pH 4→7, voltage >= voltage_7PH) and base segment (pH 7→10)
@@ -122,8 +127,16 @@ static float readADS1115MilliVolts() {
   Wire.write((uint8_t)(ADS_CONFIG_SINGLE_A0 & 0xFF));
   if (Wire.endTransmission() != 0) return NAN;
 
-  // Wait for conversion (16 SPS = 62.5ms, add margin)
-  delay(75);
+  // Wait for conversion: poll RDY pin if available, else fixed delay
+  if (adsRdyAvailable) {
+    unsigned long t0 = millis();
+    while (digitalRead(ADS_RDY_PIN) && (millis() - t0 < 150)) {
+      delay(1);
+    }
+    if (millis() - t0 >= 150) return NAN;  // conversion timeout
+  } else {
+    delay(75);  // fallback: 16 SPS = 62.5ms + margin
+  }
 
   // Read conversion result
   Wire.beginTransmission(ADS1115_I2C_ADDR);
@@ -131,6 +144,7 @@ static float readADS1115MilliVolts() {
   if (Wire.endTransmission() != 0) return NAN;
 
   if (Wire.requestFrom((uint8_t)ADS1115_I2C_ADDR, (uint8_t)2) != 2) return NAN;
+  if (Wire.available() < 2) return NAN;
   int16_t raw = ((int16_t)Wire.read() << 8) | Wire.read();
 
   if (raw < 0 || raw >= 32767) return NAN;
@@ -151,9 +165,11 @@ static float readADCTrimmed(int nSamples, int interSampleDelayMs) {
     if (adsActive()) {
       sample = readADS1115MilliVolts();
       // ADS1115 conversion time (~62ms at 16 SPS) provides inherent filtering
-    } else {
+    } else if (!isTMCDetected()) {
       sample = (float)analogReadMilliVolts(PH_PIN);
       delay(interSampleDelayMs);
+    } else {
+      return 0;  // TMC owns DIAG pins; no analog pH without ADS1115
     }
     if (!isnan(sample)) {
       adcBuf[valid++] = sample;
@@ -172,9 +188,11 @@ static float readADCTrimmed(int nSamples, int interSampleDelayMs) {
 }
 
 void initADC() {
-  analogSetPinAttenuation(PH_PIN, ADC_11db);
-  adc_power_acquire();  // Keep ADC powered to prevent hall sensor glitches on GPIO35
-  analogReadMilliVolts(PH_PIN);  // Dummy read to prime SAR ADC
+  if (!isTMCDetected()) {
+    analogSetPinAttenuation(PH_PIN, ADC_11db);
+    analogReadMilliVolts(PH_PIN);  // Dummy read to prime SAR ADC
+  }
+  adc_power_acquire();  // Keep ADC powered for any ADC usage
 }
 
 void initExternalADC() {
@@ -193,15 +211,42 @@ void initExternalADC() {
     return;
   }
 
-  // Verify with a test conversion
+  // Configure comparator thresholds for conversion-ready (RDY) mode:
+  // Lo_thresh = 0x0000, Hi_thresh = 0x8000 → ALERT/RDY asserts when conversion completes
+  Wire.beginTransmission(ADS1115_I2C_ADDR);
+  Wire.write(ADS_REG_LO_THRESH);
+  Wire.write((uint8_t)0x00);
+  Wire.write((uint8_t)0x00);
+  Wire.endTransmission();
+
+  Wire.beginTransmission(ADS1115_I2C_ADDR);
+  Wire.write(ADS_REG_HI_THRESH);
+  Wire.write((uint8_t)0x80);
+  Wire.write((uint8_t)0x00);
+  Wire.endTransmission();
+
+  // Configure RDY pin (GPIO34) as digital input for conversion-ready polling
+  pinMode(ADS_RDY_PIN, INPUT);
+  adsRdyAvailable = true;
+
+  // Verify with a test conversion (uses RDY pin polling)
   float testMv = readADS1115MilliVolts();
   if (!isnan(testMv)) {
     adsAvailable = true;
     adsFallback = false;
-    Serial.printf("ADS1115 initialized (test read: %.2f mV)\n", testMv);
+    Serial.printf("ADS1115 initialized with RDY pin (test read: %.2f mV)\n", testMv);
   } else {
-    adsFallback = true;
-    Serial.println("ADS1115 test read failed — falling back to internal ADC");
+    // RDY pin may not be wired — fall back to delay-based reads
+    adsRdyAvailable = false;
+    float testMv2 = readADS1115MilliVolts();
+    if (!isnan(testMv2)) {
+      adsAvailable = true;
+      adsFallback = false;
+      Serial.printf("ADS1115 initialized without RDY pin (test read: %.2f mV)\n", testMv2);
+    } else {
+      adsFallback = true;
+      Serial.println("ADS1115 test read failed — falling back to internal ADC");
+    }
   }
 }
 
@@ -236,8 +281,8 @@ void updateCalibrationFit() {
 bool isCalibrationValid() {
   if (isnan(voltage_4PH) || isnan(voltage_7PH) || isnan(voltage_10PH)) return false;
   if (voltage_4PH <= 0 || voltage_7PH <= 0 || voltage_10PH <= 0) return false;
-  if (fabs(voltage_4PH - voltage_7PH) < 50.0f) return false;
-  if (fabs(voltage_7PH - voltage_10PH) < 50.0f) return false;
+  if (fabs(voltage_4PH - voltage_7PH) < 150.0f) return false;  // ~1 pH minimum separation
+  if (fabs(voltage_7PH - voltage_10PH) < 150.0f) return false;
   // Verify monotonic ordering (lower pH → higher voltage on DFRobot board)
   if (!(voltage_4PH > voltage_7PH && voltage_7PH > voltage_10PH)) return false;
   return true;
@@ -627,7 +672,7 @@ static float tryGranWindow(TitrationPoint* points, int nPoints,
   float eqUnits = -intercept / slope;
   if (eqUnits < 0 || eqUnits > points[nPoints - 1].units) return NAN;
 
-  *outR2 = r2;
+  if (outR2) *outR2 = r2;
   if (outSlope) *outSlope = slope;
   if (outIntercept) *outIntercept = intercept;
   return eqUnits;

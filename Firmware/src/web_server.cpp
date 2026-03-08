@@ -8,6 +8,7 @@
 #include "scheduler.h"
 #include "stirrer.h"
 #include "temperature.h"
+#include "tmc_driver.h"
 #include <ArduinoJson.h>
 #include <LittleFS.h>
 #include <config.h>
@@ -147,10 +148,11 @@ static void sendMesData(AsyncWebSocketClient* client) {
       point.add(mesBuffer[i].mV);
     }
 
-    static char buf[8192];
-    size_t written = serializeJson(doc, buf, sizeof(buf));
-    if (written > 0) {
-      client->text(buf);
+    char* buf = (char*)malloc(8192);
+    if (buf) {
+      size_t written = serializeJson(doc, buf, 8192);
+      if (written > 0) client->text(buf);
+      free(buf);
     }
   }
 }
@@ -263,6 +265,26 @@ static void handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
         configStore.setUseADS1115((int)value == 1);
         publishMessage("ADS1115 setting changed. Reboot to apply.");
       }
+      else if (strcmp(key, "sample_spreadcycle") == 0) {
+        configStore.setSampleSpreadCycle((int)value == 1);
+        setSampleSpreadCycle((int)value == 1);
+      }
+      else if (strcmp(key, "sample_stall_sg") == 0) {
+        configStore.setSampleStallSG((int)value);
+      }
+      else if (strcmp(key, "titrate_spreadcycle") == 0) {
+        configStore.setTitrateSpreadCycle((int)value == 1);
+        setTitrateSpreadCycle((int)value == 1);
+      }
+      else if (strcmp(key, "titrate_stall_sg") == 0) {
+        configStore.setTitrateStallSG((int)value);
+      }
+      else if (strcmp(key, "sample_sg_baseline") == 0) {
+        configStore.setSampleSGBaseline((int)value);
+      }
+      else if (strcmp(key, "titrate_sg_baseline") == 0) {
+        configStore.setTitrateSGBaseline((int)value);
+      }
 
       broadcastState(); // Confirm the update
     } else if (strcmp(type, "schedule") == 0) {
@@ -285,7 +307,10 @@ static void handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
         uint8_t count = min((size_t)slots.size(), (size_t)8);
         configStore.setScheduleCount(count);
         for (uint8_t i = 0; i < count; i++) {
-          configStore.setScheduleTime(i, (uint16_t)slots[i].as<int>());
+          int t = slots[i].as<int>();
+          if (t < 0) t = 0;
+          if (t > 1439) t = 1439;
+          configStore.setScheduleTime(i, (uint16_t)t);
         }
       }
       publishAllConfigStates();
@@ -302,10 +327,41 @@ static void handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
       File f = LittleFS.open(filename, "r");
       if (!f) return;
 
-      uint32_t cutoff = (uint32_t)time(nullptr) - (7 * 86400);
       bool isGran = (strcmp(sensor, "gran") == 0);
+      bool isMotor = (strcmp(sensor, "motor") == 0);
+      uint32_t cutoff = (uint32_t)time(nullptr) - (isMotor ? (90UL * 86400UL) : (7UL * 86400UL));
 
-      if (isGran) {
+      if (isMotor) {
+        // Motor CSV: timestamp,sampleAvg,sampleMin,titrateAvg,titrateMin
+        JsonDocument resp;
+        resp["type"] = "history";
+        resp["sensor"] = "motor";
+        JsonArray dataArr = resp["data"].to<JsonArray>();
+
+        while (f.available() && dataArr.size() < 500) {
+          String line = f.readStringUntil('\n');
+          if (line.length() == 0) continue;
+          int c1 = line.indexOf(',');
+          if (c1 < 0) continue;
+          uint32_t ts = line.substring(0, c1).toInt();
+          if (ts < cutoff) continue;
+          int c2 = line.indexOf(',', c1 + 1);
+          int c3 = line.indexOf(',', c2 + 1);
+          int c4 = line.indexOf(',', c3 + 1);
+          if (c2 < 0 || c3 < 0 || c4 < 0) continue;
+          JsonArray pt = dataArr.add<JsonArray>();
+          pt.add(ts);
+          pt.add(line.substring(c1 + 1, c2).toInt());
+          pt.add(line.substring(c2 + 1, c3).toInt());
+          pt.add(line.substring(c3 + 1, c4).toInt());
+          pt.add(line.substring(c4 + 1).toInt());
+        }
+        f.close();
+
+        static char buf[4096];
+        size_t written = serializeJson(resp, buf, sizeof(buf));
+        if (written > 0) ws.textAll(buf);
+      } else if (isGran) {
         // Gran CSV: timestamp,r2,eqML,endpointPH,method,confidence,khGran,khEndpoint
         JsonDocument resp;
         resp["type"] = "history";
@@ -473,6 +529,10 @@ void executeCommand(const char* cmd) {
     // Defer to loopTask — keep AsyncTCP task free
     queueCommand('e');
     return;
+  } else if (strcmp(cmd, "d") == 0) {
+    // Defer motor diagnostics to loopTask — runs motors for ~30s
+    queueCommand('d');
+    return;
   } else if (strcmp(cmd, "o") == 0) {
     publishMessage("Restarting...");
     delay(100);
@@ -500,6 +560,8 @@ void broadcastState() {
 
   JsonDocument doc;
   doc["type"] = "state";
+  doc["deviceName"] = DEVICE_NAME;
+  doc["fwVersion"] = FW_VERSION;
   doc["ph"] = pH;
   doc["startPh"] = startPH;
   doc["units"] = units;
@@ -514,6 +576,7 @@ void broadcastState() {
   doc["nextMeas"] = scheduler.getNextMeasurementTime();
   doc["water_temp"] = getWaterTemperatureC();
   doc["temp_sensor"] = hasTemperatureSensor();
+  doc["tmc"] = isTMCDetected();
 
   // KH trend slope (dKH/day) and measurement confidence
   if (!isnan(cachedKHSlope)) doc["khSlope"] = serialized(String(cachedKHSlope, 3));
@@ -575,6 +638,15 @@ void broadcastState() {
   cfg["use_ads1115"] = configStore.getUseADS1115();
   cfg["ads_active"] = isExternalADCActive();
   cfg["ads_fallback"] = isExternalADCFallback();
+  cfg["sample_spreadcycle"] = configStore.getSampleSpreadCycle();
+  cfg["sample_stall_sg"] = configStore.getSampleStallSG();
+  cfg["titrate_spreadcycle"] = configStore.getTitrateSpreadCycle();
+  cfg["titrate_stall_sg"] = configStore.getTitrateStallSG();
+  cfg["sample_sg_baseline"] = configStore.getSampleSGBaseline();
+  cfg["titrate_sg_baseline"] = configStore.getTitrateSGBaseline();
+
+  const char* th = getTubeHealth();
+  if (th) doc["tubeHealth"] = th;
 
   // Schedule
   doc["schedMode"] = configStore.getScheduleMode();
@@ -654,6 +726,11 @@ void broadcastError(const char* msg) {
   char buf[128];
   serializeJson(doc, buf, sizeof(buf));
   ws.textAll(buf);
+}
+
+void broadcastMotorDiag(const char* json) {
+  if (ws.count() == 0) return;
+  ws.textAll(json);
 }
 
 void broadcastProgress(int percent) {
@@ -742,6 +819,7 @@ void appendHistory(const char* sensor, float value, uint32_t ts) {
     File f = LittleFS.open(filename, "r");
     if (f) {
       String kept;
+      kept.reserve(f.size());
       int lines = 0;
       while (f.available() && lines < 200) {
         String line = f.readStringUntil('\n');
@@ -792,6 +870,7 @@ void appendGranHistory(float r2, float eqML, float endpointPH, bool usedGran, fl
     File f = LittleFS.open(filename, "r");
     if (f) {
       String kept;
+      kept.reserve(f.size());
       int lines = 0;
       while (f.available() && lines < 200) {
         String line = f.readStringUntil('\n');
@@ -820,6 +899,72 @@ void appendGranHistory(float r2, float eqML, float endpointPH, bool usedGran, fl
   } else {
     Serial.println("Warning: failed to append to gran.csv");
   }
+}
+
+static uint16_t lastSampleSGAvgStored = 0;
+static uint16_t lastTitrateSGAvgStored = 0;
+
+void appendMotorHealth(uint32_t ts, int sampleAvg, int sampleMin, int titrateAvg, int titrateMin) {
+  const char* filename = "/history/motor.csv";
+
+  if (!LittleFS.exists("/history")) {
+    if (!LittleFS.mkdir("/history")) return;
+  }
+
+  // Remove entries older than 90 days
+  if (LittleFS.exists(filename)) {
+    uint32_t cutoff = ts - (90UL * 86400UL);
+    File f = LittleFS.open(filename, "r");
+    if (f) {
+      String kept;
+      kept.reserve(f.size());
+      int lines = 0;
+      while (f.available() && lines < 500) {
+        String line = f.readStringUntil('\n');
+        lines++;
+        if (line.length() == 0) continue;
+        int comma = line.indexOf(',');
+        if (comma < 0) continue;
+        uint32_t lineTs = line.substring(0, comma).toInt();
+        if (lineTs >= cutoff) kept += line + "\n";
+      }
+      f.close();
+      File fw = LittleFS.open(filename, "w");
+      if (fw) { fw.print(kept); fw.close(); }
+    }
+  }
+
+  lastSampleSGAvgStored = sampleAvg;
+  lastTitrateSGAvgStored = titrateAvg;
+
+  if (ts < MIN_VALID_EPOCH) return;
+
+  File f = LittleFS.open(filename, "a");
+  if (f) {
+    f.printf("%u,%d,%d,%d,%d\n", ts, sampleAvg, sampleMin, titrateAvg, titrateMin);
+    f.close();
+  }
+}
+
+// Tube health: compare latest SG to baseline
+const char* getTubeHealth() {
+  int sampleBL = configStore.getSampleSGBaseline();
+  int titrateBL = configStore.getTitrateSGBaseline();
+  if (sampleBL == 0 && titrateBL == 0) return nullptr;
+
+  // Use the pump with a baseline; if both have baselines, use the worse ratio
+  float ratio = 1.0f;
+  if (sampleBL > 0 && lastSampleSGAvgStored > 0) {
+    float r = (float)lastSampleSGAvgStored / sampleBL;
+    if (r < ratio) ratio = r;
+  }
+  if (titrateBL > 0 && lastTitrateSGAvgStored > 0) {
+    float r = (float)lastTitrateSGAvgStored / titrateBL;
+    if (r < ratio) ratio = r;
+  }
+  if (ratio > 0.8f) return "Good";
+  if (ratio > 0.6f) return "Aging";
+  return "Replace";
 }
 
 int getRecentKHValues(float* outValues, int maxCount) {
@@ -1141,7 +1286,8 @@ void setupWebServer() {
               "\"gran_step_mult\":%d,\"fast_batch_max\":%d,"
               "\"fast_batch_min\":%d,\"nernst_factor\":%.5f,"
               "\"meas_temp_c\":%.1f,\"ph_amp_gain\":%.1f,"
-              "\"water_temp\":%.1f,\"temp_sensor\":%s},",
+              "\"water_temp\":%.1f,\"temp_sensor\":%s,"
+              "\"tmc_detected\":%s},",
               GRAN_REGION_PH, GRAN_STOP_PH,
               ENDPOINT_PH, FIXED_ENDPOINT_STOP_PH,
               MIN_GRAN_POINTS, GRAN_MIN_R2,
@@ -1151,7 +1297,8 @@ void setupWebServer() {
               FAST_BATCH_MIN, NERNST_FACTOR,
               configStore.getMeasTempC(), PH_AMP_GAIN,
               getWaterTemperatureC(),
-              hasTemperatureSensor() ? "true" : "false");
+              hasTemperatureSensor() ? "true" : "false",
+              isTMCDetected() ? "true" : "false");
             ds = 2;
             break;
           }

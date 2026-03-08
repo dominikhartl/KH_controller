@@ -3,12 +3,12 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>KH Controller V3</title>
+  <title>KH Controller</title>
   <link rel="stylesheet" href="style.css?v=8">
 </head>
 <body>
   <header>
-    <h1>KH Controller V3</h1>
+    <h1 id="device-title">KH Controller</h1>
     <div class="status-icons">
       <span id="ind-wifi" class="si" title="WiFi">
         <svg viewBox="0 0 20 16" width="14" height="11"><path d="M10 14a1.5 1.5 0 100-3 1.5 1.5 0 000 3z" fill="currentColor"/><path d="M6 9.5a5.5 5.5 0 018 0" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M2.5 6a10.5 10.5 0 0115 0" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
@@ -24,6 +24,9 @@
       </span>
       <span id="ind-probe" class="si" title="Probe Health">
         <svg viewBox="0 0 12 24" width="8" height="16"><rect x="3" y="0" width="6" height="14" rx="3" fill="currentColor"/><rect x="5" y="14" width="2" height="10" fill="currentColor"/></svg>
+      </span>
+      <span id="ind-tube" class="si" title="Tube Health">
+        <svg viewBox="0 0 16 16" width="13" height="13"><path d="M7 1h2v2.1a5 5 0 011.7.7l1.5-1.5 1.4 1.4-1.5 1.5a5 5 0 01.7 1.7H15v2h-2.1a5 5 0 01-.7 1.7l1.5 1.5-1.4 1.4-1.5-1.5a5 5 0 01-1.7.7V15H7v-2.1a5 5 0 01-1.7-.7l-1.5 1.5-1.4-1.4 1.5-1.5A5 5 0 013.1 9H1V7h2.1a5 5 0 01.7-1.7L2.3 3.8l1.4-1.4 1.5 1.5A5 5 0 017 3.1V1z" fill="none" stroke="currentColor" stroke-width="1.2"/><circle cx="8" cy="8" r="2" fill="currentColor"/></svg>
       </span>
     </div>
   </header>
@@ -195,6 +198,37 @@
             <button class="cmd-btn" id="btn-stirrer" type="button">Start Stirrer</button>
           </label>
         </div>
+        <details class="config-advanced" style="margin-top:0.5em">
+          <summary>Motor Diagnostics</summary>
+          <div style="padding:0.5em 0">
+            <button class="cmd-btn" data-cmd="d" id="btn-motor-diag">Run Motor Diagnostics</button>
+            <div id="motor-diag-progress" style="display:none;margin-top:0.5em;font-size:0.9em;color:var(--text-secondary)">Running diagnostics...</div>
+            <div id="motor-diag-results" style="display:none;margin-top:0.5em">
+              <table class="diag-table" style="width:100%;font-size:0.85em;border-collapse:collapse">
+                <thead>
+                  <tr><th></th><th>StealthChop</th><th>SpreadCycle</th><th>Recommended</th></tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td><b>Sample Pump</b></td>
+                    <td id="diag-sample-sc"></td>
+                    <td id="diag-sample-sp"></td>
+                    <td id="diag-sample-rec"></td>
+                  </tr>
+                  <tr>
+                    <td><b>Titration Pump</b></td>
+                    <td id="diag-titrate-sc"></td>
+                    <td id="diag-titrate-sp"></td>
+                    <td id="diag-titrate-rec"></td>
+                  </tr>
+                </tbody>
+              </table>
+              <div style="margin-top:0.5em">
+                <button class="cmd-btn" id="btn-apply-diag">Apply Recommended Settings</button>
+              </div>
+            </div>
+          </div>
+        </details>
       </details>
     </div>
   </section>
@@ -284,6 +318,36 @@
       </div>
       <div class="probe-chart-container">
         <canvas id="chart-noise"></canvas>
+      </div>
+    </div>
+  </section>
+
+  <section class="probe-health collapsible collapsed" id="tube-health-section">
+    <h2 class="section-header">Tube Health <span class="chevron"></span></h2>
+    <div class="section-body">
+      <div class="probe-grid">
+        <div class="probe-item">
+          <span class="probe-label">Status</span>
+          <span class="probe-value" id="tube-health-status"><span class="health-dot"></span>--</span>
+        </div>
+        <div class="probe-item">
+          <span class="probe-label">Sample Pump</span>
+          <span class="probe-value" id="tube-health-sample">--</span>
+        </div>
+        <div class="probe-item">
+          <span class="probe-label">Titration Pump</span>
+          <span class="probe-value" id="tube-health-titrate">--</span>
+        </div>
+        <div class="probe-item">
+          <span class="probe-label">Baseline</span>
+          <span class="probe-value" id="tube-baseline-info">--</span>
+        </div>
+      </div>
+      <div class="probe-chart-container">
+        <canvas id="chart-sg-sample"></canvas>
+      </div>
+      <div class="probe-chart-container">
+        <canvas id="chart-sg-titrate"></canvas>
       </div>
     </div>
   </section>

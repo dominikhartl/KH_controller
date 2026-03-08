@@ -3,9 +3,9 @@
 #include <FS.h>
 #include <ArduinoOTA.h>
 #include <config.h>
-#include <ArduinoJson.h>
 #include <pins.h>
 #include <time.h>
+#include <atomic>
 
 #include "motors.h"
 #include "stirrer.h"
@@ -17,18 +17,20 @@
 #include "ha_discovery.h"
 #include "web_server.h"
 #include "temperature.h"
+#include "tmc_driver.h"
 
 // --- Global state ---
-int units = 0;
-float startPH = 0;
-bool discoveryPublished = false;
-unsigned long lastDiagnosticsTime = 0;
-unsigned long lastBroadcastTime = 0;
-uint32_t heapMin = UINT32_MAX;
+// These are accessed from both loopTask and AsyncTCP task — marked volatile
+volatile int units = 0;
+volatile float startPH = 0;
+volatile bool discoveryPublished = false;
+volatile unsigned long lastDiagnosticsTime = 0;
+volatile unsigned long lastBroadcastTime = 0;
+volatile uint32_t heapMin = UINT32_MAX;
 
 // Deferred command queue: WebSocket/MQTT sets the command, loop() executes it
 // This prevents long operations from blocking the AsyncTCP task
-static volatile char pendingCmd = 0;
+static std::atomic<char> pendingCmd{0};
 
 // MQTT topic buffers
 char topicCmd[50];
@@ -49,7 +51,7 @@ char MQmeasTime[50];
 // Long-running commands (measureKH, calibrate) must run on loopTask, not AsyncTCP.
 // WebSocket/MQTT handlers set pendingCmd; loop() picks it up.
 void queueCommand(char cmd) {
-  pendingCmd = cmd;
+  pendingCmd.store(cmd, std::memory_order_release);
 }
 
 void publishMessage(const char* message);
@@ -76,6 +78,16 @@ static void publishKHResult(const KHResult& r) {
   appendHistory("kh", r.khValue, ts);
   appendHistory("ph", r.startPH, ts);
   appendGranHistory(r.granR2, r.hclUsed, r.endpointPH, r.usedGran, r.confidence, r.khGran, r.khEndpoint, r.probeNoiseMv, r.phReversals, configStore.getDropVolumeUL(), configStore.getTitrationRPM(), ts);
+
+  // Motor health (SG stats from this measurement's pump operations)
+  if (isTMCDetected()) {
+    uint16_t sAvg, sMin, tAvg, tMin;
+    getLastSampleSGStats(&sAvg, &sMin);
+    getLastTitrateSGStats(&tAvg, &tMin);
+    if (sAvg > 0 || tAvg > 0) {
+      appendMotorHealth(ts, sAvg, sMin, tAvg, tMin);
+    }
+  }
 
   // Quality metrics
   { char mqBuf[16]; snprintf(mqBuf, sizeof(mqBuf), "%.4f", r.granR2);
@@ -191,10 +203,12 @@ void measureKHWithValidation() {
   publishKHResult(best);
 }
 
+void runMotorDiagnostic();  // forward declaration
+
 void processPendingCommand() {
-  char cmd = pendingCmd;
+  char cmd = pendingCmd.load(std::memory_order_acquire);
   if (cmd == 0) return;
-  pendingCmd = 0;
+  pendingCmd.store(0, std::memory_order_release);
 
   switch (cmd) {
     case 'k':
@@ -246,7 +260,7 @@ void processPendingCommand() {
       float pfTitV = configStore.getTitrationVolume();
       int pfUnits = max(2, (int)round(pfUL * pfCalU / (pfTitV * 1000.0f)));
       if (!titrate(pfUnits, configStore.getTitrationRPM(), true)) {
-        publishError("Error: titration pump timeout during fill");
+        publishError(wasMotorStall() ? "Error: titration pump stall during fill" : "Error: titration pump timeout during fill");
       } else {
         publishMessage("Fill done");
       }
@@ -259,7 +273,7 @@ void processPendingCommand() {
       stopStirrer();
       publishMessage("Washing sample");
       if (!washSample(1.2, 1.0, configStore.getSamplePumpRPM())) {
-        publishError("Error: sample pump timeout during wash");
+        publishError(wasMotorStall() ? "Error: sample pump stall during wash" : "Error: sample pump timeout during wash");
       } else {
         publishMessage("Wash done");
       }
@@ -269,7 +283,7 @@ void processPendingCommand() {
       stopStirrer();
       publishMessage("Removing sample");
       if (!removeSample(SAMPLE_PUMP_VOLUME, configStore.getSamplePumpRPM())) {
-        publishError("Error: sample pump timeout during remove");
+        publishError(wasMotorStall() ? "Error: sample pump stall during remove" : "Error: sample pump timeout during remove");
       } else {
         publishMessage("Sample removed");
       }
@@ -291,6 +305,10 @@ void processPendingCommand() {
     case 'e':
       stopStirrer();
       publishMessage("Stirrer stopped");
+      broadcastState();
+      break;
+    case 'd':
+      runMotorDiagnostic();
       broadcastState();
       break;
   }
@@ -324,6 +342,107 @@ void subtractHCl(int unitsUsed) {
   configStore.setHClVolume(remaining);
 }
 
+// --- Motor diagnostics ---
+
+void broadcastMotorDiag(const char* json);  // forward decl (web_server.cpp)
+
+struct MotorDiagResult {
+  uint16_t sgMin, sgMax;
+  float sgAvg;
+  bool diagAlwaysLow;
+};
+
+static MotorDiagResult analyzeSamples(SGSample* samples, int n) {
+  MotorDiagResult r = {65535, 0, 0, true};
+  if (n == 0) return r;
+  uint32_t sum = 0;
+  for (int i = 0; i < n; i++) {
+    if (samples[i].sg < r.sgMin) r.sgMin = samples[i].sg;
+    if (samples[i].sg > r.sgMax) r.sgMax = samples[i].sg;
+    sum += samples[i].sg;
+    if (samples[i].diag) r.diagAlwaysLow = false;
+  }
+  r.sgAvg = (float)sum / n;
+  return r;
+}
+
+void runMotorDiagnostic() {
+  if (!isTMCDetected()) {
+    publishError("Motor diagnostics requires TMC2209");
+    return;
+  }
+
+  publishMessage("Running motor diagnostics...");
+  const int DIAG_REVS = 5;
+  const int MAX_S = 20;
+  SGSample samples[MAX_S];
+
+  // --- Sample pump ---
+  publishMessage("Testing sample pump...");
+  float sampleRPM = configStore.getSamplePumpRPM();
+
+  // StealthChop
+  setSampleSpreadCycle(false);
+  delay(50);
+  int n = diagStepSample(DIAG_REVS, sampleRPM, samples, MAX_S);
+  MotorDiagResult scSample = analyzeSamples(samples, n);
+
+  // SpreadCycle
+  setSampleSpreadCycle(true);
+  delay(50);
+  n = diagStepSample(DIAG_REVS, sampleRPM, samples, MAX_S);
+  MotorDiagResult spSample = analyzeSamples(samples, n);
+
+  // Restore current setting
+  setSampleSpreadCycle(configStore.getSampleSpreadCycle());
+
+  bool sampleRecSC = scSample.sgMin > spSample.sgMin;
+  uint16_t sBestMin = sampleRecSC ? scSample.sgMin : spSample.sgMin;
+
+  // --- Titration pump ---
+  publishMessage("Testing titration pump...");
+  float titrateRPM = TITRATION_RPM;
+
+  // StealthChop
+  setTitrateSpreadCycle(false);
+  delay(50);
+  n = diagStepTitrate(DIAG_REVS, titrateRPM, samples, MAX_S);
+  MotorDiagResult scTitrate = analyzeSamples(samples, n);
+
+  // SpreadCycle
+  setTitrateSpreadCycle(true);
+  delay(50);
+  n = diagStepTitrate(DIAG_REVS, titrateRPM, samples, MAX_S);
+  MotorDiagResult spTitrate = analyzeSamples(samples, n);
+
+  // Restore current setting
+  setTitrateSpreadCycle(configStore.getTitrateSpreadCycle());
+
+  bool titrateRecSC = scTitrate.sgMin > spTitrate.sgMin;
+  uint16_t tBestMin = titrateRecSC ? scTitrate.sgMin : spTitrate.sgMin;
+
+  // Build JSON with snprintf to avoid JsonDocument DRAM overhead
+  char* json = (char*)malloc(512);
+  if (!json) { publishError("Motor diag: out of memory"); return; }
+  snprintf(json, 512,
+    "{\"type\":\"motorDiag\","
+    "\"sample\":{\"stealthchop\":{\"sgMin\":%d,\"sgMax\":%d,\"sgAvg\":%d},"
+    "\"spreadcycle\":{\"sgMin\":%d,\"sgMax\":%d,\"sgAvg\":%d},"
+    "\"recommended\":\"%s\",\"suggestedThreshold\":%d},"
+    "\"titrate\":{\"stealthchop\":{\"sgMin\":%d,\"sgMax\":%d,\"sgAvg\":%d},"
+    "\"spreadcycle\":{\"sgMin\":%d,\"sgMax\":%d,\"sgAvg\":%d},"
+    "\"recommended\":\"%s\",\"suggestedThreshold\":%d}}",
+    scSample.sgMin, scSample.sgMax, (int)scSample.sgAvg,
+    spSample.sgMin, spSample.sgMax, (int)spSample.sgAvg,
+    sampleRecSC ? "stealthchop" : "spreadcycle", sBestMin / 2,
+    scTitrate.sgMin, scTitrate.sgMax, (int)scTitrate.sgAvg,
+    spTitrate.sgMin, spTitrate.sgMax, (int)spTitrate.sgAvg,
+    titrateRecSC ? "stealthchop" : "spreadcycle", tBestMin / 2);
+  broadcastMotorDiag(json);
+  free(json);
+  publishMessage("Motor diagnostics complete");
+}
+
 // --- Pump calibration ---
 
 void calibrateTitrationPump() {
@@ -336,9 +455,20 @@ void calibrateTitrationPump() {
   while (units < CALIBRATION_TARGET_UNITS) {
     int batch = min(BATCH, CALIBRATION_TARGET_UNITS - units);
     if (!titrate(batch, TITRATION_RPM)) {
-      publishError("Error: titration pump timeout during calibration");
+      publishError(wasMotorStall() ? "Error: titration pump stall during calibration" : "Error: titration pump timeout during calibration");
       digitalWrite(EN_PIN2, HIGH);
       return;
+    }
+    // Read SG immediately after batch (motor was just stepping, SG still reflects load)
+    if (isTMCDetected()) {
+      uint16_t sg = getTitrateSG();
+      if (sg < (uint16_t)configStore.getTitrateStallSG()) {
+        Serial.printf("ERROR: Titration pump stall (SG=%d)\n", sg);
+        setStallFlag();
+        publishError("Error: titration pump stall during calibration");
+        digitalWrite(EN_PIN2, HIGH);
+        return;
+      }
     }
     units += batch;
     delay(TITRATION_MIX_DELAY_FAST_MS);
@@ -452,7 +582,7 @@ KHResult measureKH() {
   }
 
   if (!titrate(prefillUnits, configStore.getTitrationRPM(), true)) {
-    publishError("Error: titration pump timeout during prefill");
+    publishError(wasMotorStall() ? "Error: titration pump stall during prefill" : "Error: titration pump timeout during prefill");
     digitalWrite(EN_PIN2, HIGH);
     measuring = false;
     return result;
@@ -561,7 +691,7 @@ KHResult measureKH() {
     while (pH > fastPH && units < MAX_TITRATION_UNITS && errorflag == 0) {
       int batch = computeFastBatch(pH, fastPH);
       if (!titrate(batch, TITRATION_RPM)) {
-        errorMessage = "Error: titration pump timeout in fast phase";
+        errorMessage = wasMotorStall() ? "Error: titration pump stall in fast phase" : "Error: titration pump timeout in fast phase";
         errorflag = 1;
         break;
       }
@@ -638,7 +768,7 @@ KHResult measureKH() {
         curPhase = 1;
         stepVol = TITRATION_STEP_SIZE * MEDIUM_STEP_MULTIPLIER;  // 48 units
         if (!titrate(stepVol, TITRATION_RPM)) {
-          errorMessage = "Error: titration pump timeout in precise phase";
+          errorMessage = wasMotorStall() ? "Error: titration pump stall in precise phase" : "Error: titration pump timeout in precise phase";
           errorflag = 1;
           break;
         }
@@ -655,7 +785,7 @@ KHResult measureKH() {
         stepVol = max(2, (int)round(dropUL * unitsPerUL));
         float granRPM = configStore.getTitrationRPM();
         if (!titrate(stepVol, granRPM)) {
-          errorMessage = "Error: titration pump timeout in Gran zone";
+          errorMessage = wasMotorStall() ? "Error: titration pump stall in Gran zone" : "Error: titration pump timeout in Gran zone";
           errorflag = 1;
           break;
         }
@@ -1027,8 +1157,16 @@ void setup() {
   pinMode(STEP_PIN2, OUTPUT);
   pinMode(DIR_PIN2, OUTPUT);
   initStirrer();
-  pinMode(PH_PIN, INPUT);
   Serial.begin(115200);
+
+  // Detect TMC2209 stepper drivers (must be before initADC — IO35 is shared)
+  initTMCDrivers();
+
+  // Configure PH_PIN (GPIO34) as analog input for internal ADC fallback
+  // (when ADS1115 is present, initExternalADC() reconfigures it as RDY pin)
+  if (!isTMCDetected()) {
+    pinMode(PH_PIN, INPUT);
+  }
 
   // Initialize calibrated ADC
   initADC();
@@ -1126,6 +1264,12 @@ void setup() {
       publishMessage("ADS1115 external ADC active");
     } else if (isExternalADCFallback()) {
       publishError("ADS1115 configured but not detected — using internal ADC");
+    }
+    if (isTMCDetected()) {
+      publishMessage("TMC2209 stepper drivers active");
+      if (!isExternalADCActive()) {
+        publishError("TMC2209 uses IO35 for DIAG — pH requires ADS1115");
+      }
     }
     initTemperature();
   }
