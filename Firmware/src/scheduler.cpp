@@ -5,8 +5,9 @@
 Scheduler scheduler;
 
 void Scheduler::begin() {
-  // Configure NTP (timezone: CET/CEST for Europe/Zurich)
-  configTzTime("CET-1CEST,M3.5.0/2,M10.5.0/3", "pool.ntp.org", "time.google.com");
+  // Configure NTP with timezone from config (defaults to CET/CEST for Europe/Zurich)
+  const char* tz = configStore.getTimezone();
+  configTzTime(tz, "pool.ntp.org", "time.google.com");
   lastMeasurementTime = millis();
 }
 
@@ -82,6 +83,11 @@ void Scheduler::loop() {
           currentMinutes >= slots[i] &&
           currentMinutes < slots[i] + 2) {
         alreadyRanToday[i] = true;
+        // Deduplication: skip if last measurement was less than 5 minutes ago (rapid reboot protection)
+        if (millis() - lastMeasurementTime < 300000 && lastMeasurementTime > 0) {
+          Serial.printf("Skipping schedule slot %d — last measurement was <5min ago\n", i);
+          continue;
+        }
         Serial.printf("Scheduled measurement %d triggered at %02d:%02d\n",
                        i, timeinfo.tm_hour, timeinfo.tm_min);
         lastMeasurementTime = millis();

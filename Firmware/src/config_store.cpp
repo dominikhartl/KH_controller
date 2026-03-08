@@ -44,6 +44,20 @@ void ConfigStore::setDeviceName(const char* name) {
   prefs.putString("dev_name", name);
 }
 
+// Timezone (POSIX TZ string)
+static char tzBuf[48] = "CET-1CEST,M3.5.0/2,M10.5.0/3";
+
+const char* ConfigStore::getTimezone() {
+  String s = prefs.getString("timezone", "CET-1CEST,M3.5.0/2,M10.5.0/3");
+  strncpy(tzBuf, s.c_str(), sizeof(tzBuf) - 1);
+  tzBuf[sizeof(tzBuf) - 1] = '\0';
+  return tzBuf;
+}
+
+void ConfigStore::setTimezone(const char* tz) {
+  prefs.putString("timezone", tz);
+}
+
 // pH calibration voltages
 float ConfigStore::getVoltage4PH() { return prefs.getFloat("v4ph", 1812.0); }
 float ConfigStore::getVoltage7PH() { return prefs.getFloat("v7ph", 1292.0); }

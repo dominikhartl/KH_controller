@@ -14,6 +14,7 @@
 #include "web_server.h"
 
 extern char deviceName[];
+extern void subtractHCl(int unitsUsed);
 
 // --- Report data structures ---
 
@@ -602,6 +603,10 @@ static void testMotors() {
   fillResult(samples, n, &motorTitrateSP);
 
   setTitrateSpreadCycle(configStore.getTitrateSpreadCycle());
+
+  // Subtract HCl used by titration pump diagnostics (2× DIAG_REVS revolutions)
+  int diagUnits = DIAG_REVS * 2 * (STEPS_PER_REVOLUTION / MOTOR_STEPS_PER_UNIT);
+  subtractHCl(diagUnits);
 }
 
 static void testGPIOStates() {

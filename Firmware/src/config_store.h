@@ -127,6 +127,10 @@ public:
   uint32_t getTitrationCalTimestamp();
   void setTitrationCalTimestamp(uint32_t ts);
 
+  // Timezone (POSIX TZ string, e.g. "CET-1CEST,M3.5.0/2,M10.5.0/3")
+  const char* getTimezone();
+  void setTimezone(const char* tz);
+
   // Slope history (up to 10 entries, newest last)
   static const int MAX_SLOPE_HISTORY = 10;
   struct SlopeEntry {

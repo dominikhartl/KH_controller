@@ -6,13 +6,14 @@
   // (Volume conversion now done firmware-side)
 
   // --- WebSocket ---
-  var ws, wsOk = false, reconnTimer;
+  var ws, wsOk = false, reconnTimer, reconnDelay = 3000;
 
   function connect() {
     var host = location.hostname;
     ws = new WebSocket('ws://' + host + '/ws');
     ws.onopen = function() {
       if (reconnTimer) { clearTimeout(reconnTimer); reconnTimer = null; }
+      reconnDelay = 3000;  // Reset backoff on successful connection
       wsOk = true;
       setDot('ws', true);
       ws.send(JSON.stringify({type:'getHistory', sensor:'kh'}));
@@ -23,7 +24,8 @@
     ws.onclose = function() {
       wsOk = false;
       setDot('ws', false);
-      reconnTimer = setTimeout(connect, 3000);
+      reconnTimer = setTimeout(connect, reconnDelay);
+      reconnDelay = Math.min(reconnDelay * 2, 60000);  // Exponential backoff, max 60s
     };
     ws.onerror = function() {
       wsOk = false;
@@ -148,7 +150,7 @@
       setText('val-kh-slope', isNaN(s) ? '--' : (s >= 0 ? '+' : '') + s.toFixed(2));
     }
     if (d.confidence != null) {
-      setText('val-confidence', (d.confidence * 100).toFixed(0) + '%');
+      setText('val-confidence', (d.confidence != null && !isNaN(d.confidence)) ? (d.confidence * 100).toFixed(0) + '%' : '--');
     }
 
     // pH gauge (start pH from last KH measurement)
@@ -172,6 +174,12 @@
     setDot('wifi', d.wifiOk);
     setDot('mqtt', d.mqttOk);
     setDot('ntp', d.ntpOk);
+
+    // Stirrer state sync (from device, not local toggle)
+    if (d.stirrer != null && d.stirrer !== stirrerOn) {
+      stirrerOn = d.stirrer;
+      syncStirrerUI();
+    }
 
     // Status bar
     setText('water-temp', d.temp_sensor ? d.water_temp.toFixed(1) + ' \u00B0C' : '--');
@@ -979,34 +987,53 @@
 
   // --- Stirrer toggle ---
   var stirrerOn = false;
+  function syncStirrerUI() {
+    var btn = document.getElementById('btn-stirrer');
+    if (btn) btn.textContent = stirrerOn ? 'Stop Stirrer' : 'Start Stirrer';
+  }
   function initStirrerButton() {
     var btn = document.getElementById('btn-stirrer');
     if (!btn) return;
     btn.addEventListener('click', function() {
       if (stirrerOn) {
         send({ type: 'cmd', cmd: 'e' });
-        btn.textContent = 'Start Stirrer';
       } else {
         send({ type: 'cmd', cmd: 'm' });
-        btn.textContent = 'Stop Stirrer';
       }
       stirrerOn = !stirrerOn;
+      syncStirrerUI();
     });
   }
 
   // --- Config inputs ---
+  function showConfigFeedback(el, ok) {
+    var fb = el.parentElement && el.parentElement.querySelector('.config-fb');
+    if (!fb) {
+      fb = document.createElement('span');
+      fb.className = 'config-fb';
+      fb.style.cssText = 'margin-left:6px;font-size:0.8em;opacity:0;transition:opacity 0.3s';
+      el.parentElement.appendChild(fb);
+    }
+    fb.textContent = ok ? 'Saved' : 'Error';
+    fb.style.color = ok ? '#4a4' : '#c44';
+    fb.style.opacity = '1';
+    setTimeout(function() { fb.style.opacity = '0'; }, 1500);
+  }
+
   function initConfigInputs() {
     document.querySelectorAll('.config-grid input, .cal-ph-col input').forEach(function(inp) {
       inp.addEventListener('change', function() {
         var key = inp.id.replace('cfg-', '');
         var val = (inp.type === 'text') ? inp.value : parseFloat(inp.value);
         send({ type: 'config', key: key, value: val });
+        showConfigFeedback(inp, true);
       });
     });
     document.querySelectorAll('.config-grid select').forEach(function(sel) {
       sel.addEventListener('change', function() {
         var key = sel.id.replace('cfg-', '');
         send({ type: 'config', key: key, value: parseInt(sel.value) });
+        showConfigFeedback(sel, true);
       });
     });
   }

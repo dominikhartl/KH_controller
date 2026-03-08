@@ -6,6 +6,10 @@
 typedef void (*MotorYieldCallback)();
 void setMotorYieldCallback(MotorYieldCallback cb);
 
+// Abort check callback — returns true if measurement should be aborted
+typedef bool (*MotorAbortCallback)();
+void setMotorAbortCallback(MotorAbortCallback cb);
+
 // Progress callback called during washSample with completion percentage (0-100)
 typedef void (*MotorProgressCallback)(int percent);
 void setMotorProgressCallback(MotorProgressCallback cb);

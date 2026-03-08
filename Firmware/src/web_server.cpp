@@ -252,6 +252,14 @@ static void handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
         }
         return;
       }
+      if (strcmp(key, "timezone") == 0) {
+        const char* tz = doc["value"].as<const char*>();
+        if (tz && strlen(tz) >= 3 && strlen(tz) <= 45) {
+          configStore.setTimezone(tz);
+          broadcastMessage("Timezone changed. Reboot to apply.");
+        }
+        return;
+      }
 
       float value = doc["value"];
 
@@ -653,6 +661,7 @@ void broadcastState() {
   doc["water_temp"] = getWaterTemperatureC();
   doc["temp_sensor"] = hasTemperatureSensor();
   doc["tmc"] = isTMCDetected();
+  doc["stirrer"] = isStirrerRunning();
 
   // KH trend slope (dKH/day) and measurement confidence
   if (!isnan(cachedKHSlope)) doc["khSlope"] = serialized(String(cachedKHSlope, 3));
@@ -719,6 +728,7 @@ void broadcastState() {
   cfg["buf_ph10"] = configStore.getBufferPH10();
   cfg["slope_hours"] = configStore.getSlopeWindowHours();
   cfg["stirrer_speed"] = configStore.getStirrerSpeed();
+  cfg["timezone"] = configStore.getTimezone();
   cfg["use_ads1115"] = configStore.getUseADS1115();
   cfg["ads_active"] = isExternalADCActive();
   cfg["ads_fallback"] = isExternalADCFallback();
@@ -906,37 +916,44 @@ void appendHistory(const char* sensor, float value, uint32_t ts) {
     }
   }
 
-  // Remove entries older than 7 days
+  // Remove entries older than 7 days (atomic: write to temp file, then rename)
   if (LittleFS.exists(filename)) {
     uint32_t cutoff = ts - (7 * 86400);
     File f = LittleFS.open(filename, "r");
     if (f) {
-      String kept;
-      kept.reserve(f.size());
-      int lines = 0;
-      while (f.available() && lines < 200) {
-        String line = f.readStringUntil('\n');
-        lines++;
-        if (line.length() == 0) continue;
-        int comma = line.indexOf(',');
-        if (comma < 0) continue;
-        uint32_t lineTs = line.substring(0, comma).toInt();
-        if (lineTs >= cutoff) {
-          kept += line + "\n";
-        }
-      }
-      f.close();
-      File fw = LittleFS.open(filename, "w");
+      char tmpFile[36];
+      snprintf(tmpFile, sizeof(tmpFile), "%s.tmp", filename);
+      File fw = LittleFS.open(tmpFile, "w");
       if (fw) {
-        fw.print(kept);
+        int lines = 0;
+        while (f.available() && lines < 200) {
+          String line = f.readStringUntil('\n');
+          lines++;
+          if (line.length() == 0) continue;
+          int comma = line.indexOf(',');
+          if (comma < 0) continue;
+          uint32_t lineTs = line.substring(0, comma).toInt();
+          if (lineTs >= cutoff) {
+            fw.print(line + "\n");
+          }
+        }
         fw.close();
+        f.close();
+        LittleFS.remove(filename);
+        LittleFS.rename(tmpFile, filename);
       } else {
-        Serial.printf("Warning: failed to open %s for pruning\n", filename);
+        f.close();
+        Serial.printf("Warning: failed to open %s for pruning\n", tmpFile);
       }
     }
   }
 
-  if (ts < MIN_VALID_EPOCH) return;  // NTP not yet synced — skip bogus timestamp
+  if (ts < MIN_VALID_EPOCH) {
+    // NTP not yet synced — warn user that data won't be saved
+    Serial.printf("WARNING: Skipping history write for %s — NTP not synced (ts=%u)\n", sensor, ts);
+    publishError("Warning: Time not synced (NTP) — measurement not saved to history");
+    return;
+  }
 
   File f = LittleFS.open(filename, "a");
   if (f) {

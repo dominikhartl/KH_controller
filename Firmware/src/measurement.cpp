@@ -66,13 +66,35 @@ static float calBuf4 = DEFAULT_BUFFER_PH_4;
 static float calBuf7 = DEFAULT_BUFFER_PH_7;
 static float calBuf10 = DEFAULT_BUFFER_PH_10;
 
-// Convert voltage to pH using piecewise interpolation
+// Nernst temperature correction factor: ratio of measurement temp to cal temp
+// slope_actual = slope_cal * T_meas(K) / T_cal(K)
+static float nernstTempFactor = 1.0f;
+
+void updateNernstTempCorrection(float measTempC) {
+  float calTempC = configStore.getCalTempC();
+  float tMeasK = 273.15f + measTempC;
+  float tCalK  = 273.15f + calTempC;
+  nernstTempFactor = (tCalK > 0) ? tMeasK / tCalK : 1.0f;
+}
+
+// Convert voltage to pH using piecewise interpolation with Nernst temperature correction.
+// The correction adjusts the calibration slope for the difference between measurement
+// and calibration temperatures (~0.3%/°C drift).
 static inline float voltageToPH(float v) {
+  float corrAcidSlope = acidSlope * nernstTempFactor;
+  float corrBaseSlope = baseSlope * nernstTempFactor;
+  // Offsets are recomputed to still pass through pH 7 calibration point
+  float corrAcidOffset = calBuf7 - corrAcidSlope * voltage_7PH;
+  float corrBaseOffset = calBuf7 - corrBaseSlope * voltage_7PH;
+  float result;
   if (v >= voltage_7PH) {
-    return acidSlope * v + acidOffset;
+    result = corrAcidSlope * v + corrAcidOffset;
   } else {
-    return baseSlope * v + baseOffset;
+    result = corrBaseSlope * v + corrBaseOffset;
   }
+  // Guard against physically impossible values from bad calibration
+  if (result < 0.0f || result > 14.0f) return NAN;
+  return result;
 }
 
 // Response time tracking
@@ -149,7 +171,8 @@ static float emaValue = NAN;
 
 void resetADCFilter() { emaValue = NAN; }
 
-static float readADS1115MilliVolts() {
+// Single ADS1115 conversion attempt (internal helper)
+static float readADS1115Once() {
   // Start single-shot conversion
   Wire.beginTransmission(ADS1115_I2C_ADDR);
   Wire.write(ADS_REG_CONFIG);
@@ -180,7 +203,18 @@ static float readADS1115MilliVolts() {
   int16_t raw = ((int16_t)Wire.read() << 8) | Wire.read();
 
   if (raw < 0 || raw >= 32767) return NAN;
-  float mv = (float)raw * ADS_MV_PER_BIT;
+  return (float)raw * ADS_MV_PER_BIT;
+}
+
+static float readADS1115MilliVolts() {
+  // Retry up to 3 times with 50ms backoff — I2C glitches are common under WiFi load
+  float mv = NAN;
+  for (int attempt = 0; attempt < 3; attempt++) {
+    mv = readADS1115Once();
+    if (!isnan(mv)) break;
+    delay(50);
+  }
+  if (isnan(mv)) return NAN;
 
   // Apply EMA low-pass filter to reject low-frequency oscillations
   if (isnan(emaValue)) {
@@ -336,6 +370,13 @@ bool isCalibrationValid() {
   if (fabs(voltage_7PH - voltage_10PH) < 150.0f) return false;
   // Verify monotonic ordering (lower pH → higher voltage on DFRobot board)
   if (!(voltage_4PH > voltage_7PH && voltage_7PH > voltage_10PH)) return false;
+  // Nernst efficiency sanity check: reject physically impossible calibrations (70-120% of theoretical)
+  // Inline computation to avoid circular call to getAcidEfficiency()->isCalibrationValid()
+  float condSlope = (voltage_7PH - voltage_4PH) / (calBuf7 - calBuf4);
+  float nernst = NERNST_FACTOR * (273.15f + configStore.getCalTempC());
+  float rawSlope = fabsf(condSlope) / PH_AMP_GAIN;
+  float acidEff = (rawSlope / nernst) * 100.0f;
+  if (acidEff < 70.0f || acidEff > 120.0f) return false;
   return true;
 }
 
@@ -462,21 +503,28 @@ static void waitForStabilization() {
   if (!adsActive()) delay(50);  // ADS1115 conversion time (75ms/sample) provides spacing
   unsigned long start = millis();
   bool converged = false;
-  int consecCount = 0;
+  int goodCount = 0;    // readings within threshold in sliding window
+  int windowSize = 0;   // total readings in window
   while (millis() - start < (unsigned long)stabilizationTimeoutMs) {
     float curr = readADCTrimmed(stabSamples, ADC_INTER_SAMPLE_DELAY_MS);
     if (nReadings < MAX_STAB_READINGS) stabReadings[nReadings++] = curr;
+    windowSize++;
     if (fabs(curr - prev) < stabThresh) {
-      consecCount++;
-      if (consecCount >= STAB_CONSEC_REQUIRED) {
-        unsigned long elapsed = millis() - start;
-        lastStabilizationMs = elapsed;
-        stabTotalMs += elapsed;
-        converged = true;
-        break;
-      }
-    } else {
-      consecCount = 0;
+      goodCount++;
+    }
+    // Sliding window: require STAB_CONSEC_REQUIRED good readings out of STAB_CONSEC_REQUIRED+1
+    // This allows one transient spike without restarting the entire convergence counter
+    if (windowSize > STAB_CONSEC_REQUIRED + 1) {
+      // Shrink window — we only track count, so reset when window grows too large
+      windowSize = 0;
+      goodCount = 0;
+    }
+    if (goodCount >= STAB_CONSEC_REQUIRED) {
+      unsigned long elapsed = millis() - start;
+      lastStabilizationMs = elapsed;
+      stabTotalMs += elapsed;
+      converged = true;
+      break;
     }
     prev = curr;
     if (!adsActive()) delay(50);

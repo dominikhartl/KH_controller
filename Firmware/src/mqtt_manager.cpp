@@ -103,7 +103,11 @@ bool MQTTManager::publish(const char* topic, const char* payload, bool retained)
   if (!client.connected()) {
     return false;
   }
-  return client.publish(topic, payload, retained);
+  bool ok = client.publish(topic, payload, retained);
+  if (!ok) {
+    Serial.printf("MQTT publish failed: %s\n", topic);
+  }
+  return ok;
 }
 
 void MQTTManager::subscribe(const char* topic) {

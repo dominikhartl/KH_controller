@@ -19,6 +19,9 @@ bool isExternalADCFallback();  // True if configured for ADS1115 but fell back t
 // Recompute linear fit coefficients from current calibration voltages
 void updateCalibrationFit();
 
+// Update Nernst temperature correction factor for measurement temperature
+void updateNernstTempCorrection(float measTempC);
+
 // Temperature-compensated buffer pH (IUPAC/NIST standard coefficients)
 float bufferPHAtTemp(int nominal, float tempC);
 

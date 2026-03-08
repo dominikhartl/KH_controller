@@ -243,6 +243,8 @@ void processPendingCommand() {
     case 'p': {
       float pTemp = getWaterTemperatureC();
       configStore.setMeasTempC(pTemp);
+      updateNernstTempCorrection(pTemp);
+      resetADCFilter();
       Serial.printf("Water temperature: %.1f °C%s\n", pTemp,
                     hasTemperatureSensor() ? "" : " (default, no sensor)");
       startStirrer();
@@ -609,6 +611,12 @@ void runMotorDiagnostic(char mode) {
     } else {
       publishMessage("Titration: no stall detected within test range (30-150 RPM)");
     }
+
+    // Subtract HCl used by titration diagnostics:
+    // 2× diagStepTitrate(DIAG_REVS) + stall ramp (5 warmup + titRampCount ramp revs)
+    int diagTitrateRevs = DIAG_REVS * 2 + 5 + titRampCount;
+    int diagTitrateUnits = diagTitrateRevs * (STEPS_PER_REVOLUTION / MOTOR_STEPS_PER_UNIT);
+    subtractHCl(diagTitrateUnits);
   }
 
   // Build JSON with snprintf to avoid JsonDocument DRAM overhead
@@ -674,6 +682,8 @@ void calibrateTitrationPump() {
     int batch = min(BATCH, targetUnits - units);
     if (!titrate(batch, TITRATION_RPM)) {
       publishError(wasMotorStall() ? "Error: titration pump stall during calibration" : "Error: titration pump timeout during calibration");
+      if (units > 0) subtractHCl(units);
+      units = 0;
       digitalWrite(EN_PIN2, HIGH);
       return;
     }
@@ -684,6 +694,9 @@ void calibrateTitrationPump() {
         Serial.printf("ERROR: Titration pump stall (SG=%d)\n", sg);
         setStallFlag();
         publishError("Error: titration pump stall during calibration");
+        units += batch;  // batch was dispensed before SG check
+        subtractHCl(units);
+        units = 0;
         digitalWrite(EN_PIN2, HIGH);
         return;
       }
@@ -770,6 +783,7 @@ KHResult measureKH() {
   // Read water temperature from sensor (or use default if no sensor)
   float waterTemp = getWaterTemperatureC();
   configStore.setMeasTempC(waterTemp);
+  updateNernstTempCorrection(waterTemp);  // Adjust calibration slopes for measurement temperature
   Serial.printf("Water temperature: %.1f °C%s\n", waterTemp,
                 hasTemperatureSensor() ? "" : " (default, no sensor)");
 
@@ -777,6 +791,7 @@ KHResult measureKH() {
   setStabilizationTimeoutMs(configStore.getStabilizationTimeout());
   resetStabilizationStats();
   resetNoiseStats();
+  resetADCFilter();  // Clear stale EMA state from previous measurement
 
   broadcastTitrationStart();  // Signal dashboard to clear live pH chart
   int errorflag = 0;
@@ -985,6 +1000,15 @@ KHResult measureKH() {
     uint8_t epMethod = configStore.getEndpointMethod();
     float stopPH = (epMethod == 1) ? FIXED_ENDPOINT_STOP_PH : GRAN_STOP_PH;
 
+    // Cache config values at measurement start to prevent mid-measurement changes via web UI
+    float cachedDropUL = configStore.getDropVolumeUL();
+    float cachedCalU = (float)configStore.getCalUnits();
+    float cachedTitV = configStore.getTitrationVolume();
+    float cachedUnitsPerUL = cachedCalU / (cachedTitV * 1000.0f);
+    int cachedGranStepVol = max(2, (int)round(cachedDropUL * cachedUnitsPerUL));
+    float cachedGranRPM = configStore.getTitrationRPM();
+    int cachedGranMixDelay = configStore.getGranMixDelay();
+
     while (!isnan(pH) && pH > stopPH && units < MAX_TITRATION_UNITS
            && errorflag == 0) {
       mqttManager.loop();
@@ -1006,19 +1030,13 @@ KHResult measureKH() {
       } else {
         // Gran zone (pH below GRAN_REGION_PH): smaller steps, stabilization, accurate readings
         curPhase = 2;
-        // Compute step volume from configurable drop size (µL → units via calibration)
-        float dropUL = configStore.getDropVolumeUL();
-        float calU = (float)configStore.getCalUnits();
-        float titV = configStore.getTitrationVolume();
-        float unitsPerUL = calU / (titV * 1000.0f);
-        stepVol = max(2, (int)round(dropUL * unitsPerUL));
-        float granRPM = configStore.getTitrationRPM();
-        if (!titrate(stepVol, granRPM)) {
+        stepVol = cachedGranStepVol;
+        if (!titrate(stepVol, cachedGranRPM)) {
           errorMessage = wasMotorStall() ? "Error: titration pump stall in Gran zone" : "Error: titration pump timeout in Gran zone";
           errorflag = 1;
           break;
         }
-        delay(configStore.getGranMixDelay());
+        delay(cachedGranMixDelay);
         waitForPHStabilization();
         measurePHStabilized(isExternalADCActive() ? 5 : 20);
       }
@@ -1197,7 +1215,6 @@ KHResult measureKH() {
         } else {
           float hclUsed = (exactUnits / calUnits) * titVol;
           float khValue = (hclUsed / samVol) * 2800.0f * hclMol * corrF;
-          subtractHCl(units + prefillUnits);
 
           // Interpolate pH at equivalence point
           float endpointPHVal = ENDPOINT_PH;
@@ -1296,6 +1313,12 @@ KHResult measureKH() {
       publishError(errorMessage);
     }
   }
+
+  // Always subtract HCl used (even on error/abort — acid was dispensed regardless)
+  if (units + prefillUnits > 0) {
+    subtractHCl(units + prefillUnits);
+  }
+
   // Anti-suckback: small reverse to prevent drip from titration nozzle
   unsigned int suckbackUs = (unsigned int)rpmToHalfPeriodUs(MOTOR_START_RPM);
   digitalWrite(DIR_PIN2, HIGH);  // Reverse
@@ -1421,6 +1444,11 @@ void setup() {
   // Report wash progress to web dashboard (WebSocket only, no MQTT during motor ops)
   setMotorProgressCallback([](int percent) {
     broadcastProgress(percent);
+  });
+
+  // Allow aborting motor operations from web UI
+  setMotorAbortCallback([]() -> bool {
+    return abortRequested;
   });
 
   // Build MQTT topic strings
