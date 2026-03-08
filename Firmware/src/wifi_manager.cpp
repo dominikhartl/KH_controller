@@ -1,6 +1,7 @@
 #include "wifi_manager.h"
 #include <ESPmDNS.h>
-#include <config.h>
+
+extern char deviceName[];
 
 WifiManager wifiManager;
 
@@ -27,8 +28,8 @@ void WifiManager::loop() {
         Serial.print("WiFi connected. IP: ");
         Serial.println(WiFi.localIP());
 
-        // Start mDNS so device is reachable at khpro.local
-        String hostname = String(DEVICE_NAME);
+        // Start mDNS so device is reachable at <deviceName>.local
+        String hostname = String(deviceName);
         hostname.toLowerCase();
         if (MDNS.begin(hostname.c_str())) {
           Serial.print("mDNS started: ");

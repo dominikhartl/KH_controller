@@ -17,6 +17,7 @@
 #include <time.h>
 #include <math.h>
 
+extern char deviceName[];
 extern char MQmespH[];
 
 float lastConfidence = NAN;
@@ -232,6 +233,25 @@ static void handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
       const char* key = doc["key"];
       if (!key) return;
       if (!doc["value"].is<JsonVariant>()) return;
+
+      // Device name is a string config — handle separately
+      if (strcmp(key, "device_name") == 0) {
+        const char* name = doc["value"].as<const char*>();
+        if (name && strlen(name) >= 1 && strlen(name) <= 20) {
+          // Validate: alphanumeric and hyphens only
+          bool valid = true;
+          for (const char* p = name; *p; p++) {
+            if (!isalnum(*p) && *p != '-') { valid = false; break; }
+          }
+          if (valid) {
+            configStore.setDeviceName(name);
+            broadcastMessage("Device name changed. Reboot to apply.");
+            broadcastState();
+          }
+        }
+        return;
+      }
+
       float value = doc["value"];
 
       if (strcmp(key, "titration_vol") == 0 && value > 0) configStore.setTitrationVolume(value);
@@ -515,12 +535,14 @@ void calibratePH(int bufferPH) {
   char msg[32];
   snprintf(msg, sizeof(msg), "Calibrated pH %.2f", actualPH);
   publishMessage(msg);
-  char reason[96];
-  const char* health = getProbeHealthDetail(reason, sizeof(reason));
-  if (strcmp(health, "Good") != 0) {
-    char hBuf[128];
-    snprintf(hBuf, sizeof(hBuf), "Warning: Probe %s — %s", health, reason);
-    publishError(hBuf);
+  if (isCalibrationValid()) {
+    char reason[96];
+    const char* health = getProbeHealthDetail(reason, sizeof(reason));
+    if (strcmp(health, "Good") != 0) {
+      char hBuf[128];
+      snprintf(hBuf, sizeof(hBuf), "Warning: Probe %s — %s", health, reason);
+      publishError(hBuf);
+    }
   }
 }
 
@@ -583,7 +605,7 @@ void broadcastState() {
 
   JsonDocument doc;
   doc["type"] = "state";
-  doc["deviceName"] = DEVICE_NAME;
+  doc["deviceName"] = deviceName;
   doc["fwVersion"] = FW_VERSION;
   doc["ph"] = pH;
   doc["startPh"] = startPH;
@@ -640,6 +662,7 @@ void broadcastState() {
 
   // Config values
   JsonObject cfg = doc["config"].to<JsonObject>();
+  cfg["device_name"] = deviceName;
   cfg["titration_vol"] = configStore.getTitrationVolume();
   cfg["sample_vol"] = configStore.getSampleVolume();
   cfg["correction_factor"] = configStore.getCorrectionFactor();
@@ -1286,7 +1309,7 @@ void setupWebServer() {
               "\"cal_v4\":%.2f,\"cal_v7\":%.2f,\"cal_v10\":%.2f,"
               "\"schedule_mode\":%d,\"interval_hours\":%d,\"anchor_time\":%d"
               "},",
-              DEVICE_NAME, FW_VERSION,
+              deviceName, FW_VERSION,
               (uint32_t)time(nullptr), millis() / 1000, ESP.getFreeHeap(), heapMin,
               configStore.getTitrationVolume(), configStore.getSampleVolume(),
               configStore.getCorrectionFactor(), configStore.getHClMolarity(),
@@ -1564,7 +1587,9 @@ void setupWebServer() {
         hwds++;
         return written;
       });
-    response->addHeader("Content-Disposition", "attachment; filename=\"khpro_hw_diagnostics.json\"");
+    char cdHeader[80];
+    snprintf(cdHeader, sizeof(cdHeader), "attachment; filename=\"%s_hw_diagnostics.json\"", deviceName);
+    response->addHeader("Content-Disposition", cdHeader);
     request->send(response);
   });
 

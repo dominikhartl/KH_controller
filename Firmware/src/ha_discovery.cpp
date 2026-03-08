@@ -8,6 +8,8 @@
 #include "temperature.h"
 #include <config.h>
 #include <ArduinoJson.h>
+
+extern char deviceName[];
 #include <time.h>
 #include <math.h>
 
@@ -46,49 +48,49 @@ static char topicCfgAnchorTimeSet[60];
 
 static const char* availability_topic = nullptr;
 static char availTopic[60];
-static char deviceIdLower[32]; // lowercase DEVICE_NAME for HA discovery paths
+static char deviceIdLower[32]; // lowercase deviceName for HA discovery paths
 
 static void initTopics() {
-  strncpy(deviceIdLower, DEVICE_NAME, sizeof(deviceIdLower) - 1);
+  strncpy(deviceIdLower, deviceName, sizeof(deviceIdLower) - 1);
   deviceIdLower[sizeof(deviceIdLower) - 1] = '\0';
   for (char* p = deviceIdLower; *p; p++) *p = tolower(*p);
 
-  snprintf(availTopic, sizeof(availTopic), "%s/availability", DEVICE_NAME);
+  snprintf(availTopic, sizeof(availTopic), "%s/availability", deviceName);
   availability_topic = availTopic;
 
-  snprintf(topicCfgTitVol, sizeof(topicCfgTitVol), "%s/config/titration_vol", DEVICE_NAME);
-  snprintf(topicCfgSamVol, sizeof(topicCfgSamVol), "%s/config/sample_vol", DEVICE_NAME);
-  snprintf(topicCfgCorrF, sizeof(topicCfgCorrF), "%s/config/correction_factor", DEVICE_NAME);
-  snprintf(topicCfgHclMol, sizeof(topicCfgHclMol), "%s/config/hcl_molarity", DEVICE_NAME);
-  snprintf(topicCfgHclVol, sizeof(topicCfgHclVol), "%s/config/hcl_volume", DEVICE_NAME);
-  snprintf(topicCfgCalDrops, sizeof(topicCfgCalDrops), "%s/config/cal_drops", DEVICE_NAME);
-  snprintf(topicCfgTitVolSet, sizeof(topicCfgTitVolSet), "%s/config/titration_vol/set", DEVICE_NAME);
-  snprintf(topicCfgSamVolSet, sizeof(topicCfgSamVolSet), "%s/config/sample_vol/set", DEVICE_NAME);
-  snprintf(topicCfgCorrFSet, sizeof(topicCfgCorrFSet), "%s/config/correction_factor/set", DEVICE_NAME);
-  snprintf(topicCfgHclMolSet, sizeof(topicCfgHclMolSet), "%s/config/hcl_molarity/set", DEVICE_NAME);
-  snprintf(topicCfgHclVolSet, sizeof(topicCfgHclVolSet), "%s/config/hcl_volume/set", DEVICE_NAME);
-  snprintf(topicCfgCalDropsSet, sizeof(topicCfgCalDropsSet), "%s/config/cal_drops/set", DEVICE_NAME);
-  snprintf(topicCfgFastPH, sizeof(topicCfgFastPH), "%s/config/fast_ph", DEVICE_NAME);
-  snprintf(topicCfgFastPHSet, sizeof(topicCfgFastPHSet), "%s/config/fast_ph/set", DEVICE_NAME);
-  snprintf(topicCfgEpMethod, sizeof(topicCfgEpMethod), "%s/config/endpoint_method", DEVICE_NAME);
-  snprintf(topicCfgEpMethodSet, sizeof(topicCfgEpMethodSet), "%s/config/endpoint_method/set", DEVICE_NAME);
-  snprintf(topicCfgMinStartPH, sizeof(topicCfgMinStartPH), "%s/config/min_start_ph", DEVICE_NAME);
-  snprintf(topicCfgMinStartPHSet, sizeof(topicCfgMinStartPHSet), "%s/config/min_start_ph/set", DEVICE_NAME);
-  snprintf(topicCfgStabTimeout, sizeof(topicCfgStabTimeout), "%s/config/stab_timeout", DEVICE_NAME);
-  snprintf(topicCfgStabTimeoutSet, sizeof(topicCfgStabTimeoutSet), "%s/config/stab_timeout/set", DEVICE_NAME);
-  snprintf(topicDiagnostics, sizeof(topicDiagnostics), "%s/diagnostics", DEVICE_NAME);
+  snprintf(topicCfgTitVol, sizeof(topicCfgTitVol), "%s/config/titration_vol", deviceName);
+  snprintf(topicCfgSamVol, sizeof(topicCfgSamVol), "%s/config/sample_vol", deviceName);
+  snprintf(topicCfgCorrF, sizeof(topicCfgCorrF), "%s/config/correction_factor", deviceName);
+  snprintf(topicCfgHclMol, sizeof(topicCfgHclMol), "%s/config/hcl_molarity", deviceName);
+  snprintf(topicCfgHclVol, sizeof(topicCfgHclVol), "%s/config/hcl_volume", deviceName);
+  snprintf(topicCfgCalDrops, sizeof(topicCfgCalDrops), "%s/config/cal_drops", deviceName);
+  snprintf(topicCfgTitVolSet, sizeof(topicCfgTitVolSet), "%s/config/titration_vol/set", deviceName);
+  snprintf(topicCfgSamVolSet, sizeof(topicCfgSamVolSet), "%s/config/sample_vol/set", deviceName);
+  snprintf(topicCfgCorrFSet, sizeof(topicCfgCorrFSet), "%s/config/correction_factor/set", deviceName);
+  snprintf(topicCfgHclMolSet, sizeof(topicCfgHclMolSet), "%s/config/hcl_molarity/set", deviceName);
+  snprintf(topicCfgHclVolSet, sizeof(topicCfgHclVolSet), "%s/config/hcl_volume/set", deviceName);
+  snprintf(topicCfgCalDropsSet, sizeof(topicCfgCalDropsSet), "%s/config/cal_drops/set", deviceName);
+  snprintf(topicCfgFastPH, sizeof(topicCfgFastPH), "%s/config/fast_ph", deviceName);
+  snprintf(topicCfgFastPHSet, sizeof(topicCfgFastPHSet), "%s/config/fast_ph/set", deviceName);
+  snprintf(topicCfgEpMethod, sizeof(topicCfgEpMethod), "%s/config/endpoint_method", deviceName);
+  snprintf(topicCfgEpMethodSet, sizeof(topicCfgEpMethodSet), "%s/config/endpoint_method/set", deviceName);
+  snprintf(topicCfgMinStartPH, sizeof(topicCfgMinStartPH), "%s/config/min_start_ph", deviceName);
+  snprintf(topicCfgMinStartPHSet, sizeof(topicCfgMinStartPHSet), "%s/config/min_start_ph/set", deviceName);
+  snprintf(topicCfgStabTimeout, sizeof(topicCfgStabTimeout), "%s/config/stab_timeout", deviceName);
+  snprintf(topicCfgStabTimeoutSet, sizeof(topicCfgStabTimeoutSet), "%s/config/stab_timeout/set", deviceName);
+  snprintf(topicDiagnostics, sizeof(topicDiagnostics), "%s/diagnostics", deviceName);
 
   for (int i = 0; i < 8; i++) {
-    snprintf(topicCfgSched[i], sizeof(topicCfgSched[i]), "%s/config/sched_%d", DEVICE_NAME, i);
-    snprintf(topicCfgSchedSet[i], sizeof(topicCfgSchedSet[i]), "%s/config/sched_%d/set", DEVICE_NAME, i);
+    snprintf(topicCfgSched[i], sizeof(topicCfgSched[i]), "%s/config/sched_%d", deviceName, i);
+    snprintf(topicCfgSchedSet[i], sizeof(topicCfgSchedSet[i]), "%s/config/sched_%d/set", deviceName, i);
   }
 
-  snprintf(topicCfgSchedMode, sizeof(topicCfgSchedMode), "%s/config/sched_mode", DEVICE_NAME);
-  snprintf(topicCfgSchedModeSet, sizeof(topicCfgSchedModeSet), "%s/config/sched_mode/set", DEVICE_NAME);
-  snprintf(topicCfgIntervalHours, sizeof(topicCfgIntervalHours), "%s/config/interval_hours", DEVICE_NAME);
-  snprintf(topicCfgIntervalHoursSet, sizeof(topicCfgIntervalHoursSet), "%s/config/interval_hours/set", DEVICE_NAME);
-  snprintf(topicCfgAnchorTime, sizeof(topicCfgAnchorTime), "%s/config/anchor_time", DEVICE_NAME);
-  snprintf(topicCfgAnchorTimeSet, sizeof(topicCfgAnchorTimeSet), "%s/config/anchor_time/set", DEVICE_NAME);
+  snprintf(topicCfgSchedMode, sizeof(topicCfgSchedMode), "%s/config/sched_mode", deviceName);
+  snprintf(topicCfgSchedModeSet, sizeof(topicCfgSchedModeSet), "%s/config/sched_mode/set", deviceName);
+  snprintf(topicCfgIntervalHours, sizeof(topicCfgIntervalHours), "%s/config/interval_hours", deviceName);
+  snprintf(topicCfgIntervalHoursSet, sizeof(topicCfgIntervalHoursSet), "%s/config/interval_hours/set", deviceName);
+  snprintf(topicCfgAnchorTime, sizeof(topicCfgAnchorTime), "%s/config/anchor_time", deviceName);
+  snprintf(topicCfgAnchorTimeSet, sizeof(topicCfgAnchorTimeSet), "%s/config/anchor_time/set", deviceName);
 }
 
 // Helper: convert minutes from midnight to "HH:MM" string
@@ -107,9 +109,9 @@ static void addDeviceBlock(JsonObject& doc) {
   JsonObject dev = doc["dev"].to<JsonObject>();
   JsonArray ids = dev["ids"].to<JsonArray>();
   ids.add(deviceIdLower);
-  dev["name"] = DEVICE_NAME;
+  dev["name"] = deviceName;
   dev["mf"] = "DIY";
-  dev["mdl"] = DEVICE_NAME;
+  dev["mdl"] = deviceName;
   dev["sw"] = FW_VERSION;
   char cuBuf[64];
   snprintf(cuBuf, sizeof(cuBuf), "http://%s.local/", deviceIdLower);
@@ -211,37 +213,37 @@ void publishAllDiscovery() {
   initTopics();
 
   char cmdTopic[50];
-  snprintf(cmdTopic, sizeof(cmdTopic), "%s/cmd", DEVICE_NAME);
+  snprintf(cmdTopic, sizeof(cmdTopic), "%s/cmd", deviceName);
   char khValueTopic[50];
-  snprintf(khValueTopic, sizeof(khValueTopic), "%s/kh_value", DEVICE_NAME);
+  snprintf(khValueTopic, sizeof(khValueTopic), "%s/kh_value", deviceName);
   char startPhTopic[50];
-  snprintf(startPhTopic, sizeof(startPhTopic), "%s/startPH", DEVICE_NAME);
+  snprintf(startPhTopic, sizeof(startPhTopic), "%s/startPH", deviceName);
   char mesPhTopic[50];
-  snprintf(mesPhTopic, sizeof(mesPhTopic), "%s/mes_pH", DEVICE_NAME);
+  snprintf(mesPhTopic, sizeof(mesPhTopic), "%s/mes_pH", deviceName);
   char errorTopic[50];
-  snprintf(errorTopic, sizeof(errorTopic), "%s/error", DEVICE_NAME);
+  snprintf(errorTopic, sizeof(errorTopic), "%s/error", deviceName);
   char messageTopic[50];
-  snprintf(messageTopic, sizeof(messageTopic), "%s/message", DEVICE_NAME);
+  snprintf(messageTopic, sizeof(messageTopic), "%s/message", deviceName);
 
   // Sensors
   publishSensorDiscovery("khv3_kh", "KH", khValueTopic, "dKH", nullptr, nullptr, nullptr);
   publishSensorDiscovery("khv3_ph", "pH", startPhTopic, "pH", nullptr, nullptr, nullptr);
   { char confTopic[50];
-    snprintf(confTopic, sizeof(confTopic), "%s/confidence", DEVICE_NAME);
+    snprintf(confTopic, sizeof(confTopic), "%s/confidence", deviceName);
     publishSensorDiscovery("khv3_confidence", "Measurement Confidence", confTopic, nullptr, nullptr, nullptr, "diagnostic");
   }
   { char slopeTopic[50];
-    snprintf(slopeTopic, sizeof(slopeTopic), "%s/kh_slope", DEVICE_NAME);
+    snprintf(slopeTopic, sizeof(slopeTopic), "%s/kh_slope", deviceName);
     publishSensorDiscovery("khv3_kh_slope", "KH Trend", slopeTopic, "dKH/day", nullptr, nullptr, nullptr);
   }
   // Quality metrics
-  { char t[50]; snprintf(t, sizeof(t), "%s/gran_r2", DEVICE_NAME);
+  { char t[50]; snprintf(t, sizeof(t), "%s/gran_r2", deviceName);
     publishSensorDiscovery("khv3_gran_r2", "Gran R\u00b2", t, nullptr, nullptr, nullptr, "diagnostic"); }
-  { char t[50]; snprintf(t, sizeof(t), "%s/cross_val_diff", DEVICE_NAME);
+  { char t[50]; snprintf(t, sizeof(t), "%s/cross_val_diff", deviceName);
     publishSensorDiscovery("khv3_cross_val", "Cross Validation Diff", t, "dKH", nullptr, nullptr, "diagnostic"); }
-  { char t[50]; snprintf(t, sizeof(t), "%s/data_points", DEVICE_NAME);
+  { char t[50]; snprintf(t, sizeof(t), "%s/data_points", deviceName);
     publishSensorDiscovery("khv3_data_pts", "Data Points", t, nullptr, nullptr, nullptr, "diagnostic"); }
-  { char t[50]; snprintf(t, sizeof(t), "%s/meas_time", DEVICE_NAME);
+  { char t[50]; snprintf(t, sizeof(t), "%s/meas_time", deviceName);
     publishSensorDiscovery("khv3_meas_time", "Measurement Time", t, "s", "duration", nullptr, "diagnostic"); }
 
   publishSensorDiscovery("khv3_mes_ph", "Measured pH", mesPhTopic, "pH", nullptr, nullptr, nullptr);

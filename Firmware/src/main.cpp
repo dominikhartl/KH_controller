@@ -20,6 +20,9 @@
 #include "tmc_driver.h"
 #include "hw_diagnostics.h"
 
+// Device name (loaded from NVS at boot, used by mDNS, MQTT, HA, OTA, web UI)
+char deviceName[21] = "KHpro";
+
 // --- Global state ---
 // These are accessed from both loopTask and AsyncTCP task — marked volatile
 volatile int units = 0;
@@ -1183,6 +1186,9 @@ void setup() {
   // Initialize config store (NVS) and migrate from EEPROM if needed
   configStore.begin();
 
+  // Load device name from NVS (used by mDNS, MQTT, HA, OTA, web UI)
+  configStore.getDeviceName(deviceName, sizeof(deviceName));
+
   // Initialize ADS1115 external ADC if configured (must be after configStore.begin())
   initExternalADC();
 
@@ -1198,19 +1204,19 @@ void setup() {
   });
 
   // Build MQTT topic strings
-  snprintf(topicCmd, sizeof(topicCmd), "%s/cmd", DEVICE_NAME);
-  snprintf(MQmsg, sizeof(MQmsg), "%s/message", DEVICE_NAME);
-  snprintf(MQerr, sizeof(MQerr), "%s/error", DEVICE_NAME);
-  snprintf(MQKH, sizeof(MQKH), "%s/KH", DEVICE_NAME);
-  snprintf(MQstartpH, sizeof(MQstartpH), "%s/startPH", DEVICE_NAME);
-  snprintf(MQmespH, sizeof(MQmespH), "%s/mes_pH", DEVICE_NAME);
-  snprintf(MQkhValue, sizeof(MQkhValue), "%s/kh_value", DEVICE_NAME);
-  snprintf(MQconfidence, sizeof(MQconfidence), "%s/confidence", DEVICE_NAME);
-  snprintf(MQkhSlope, sizeof(MQkhSlope), "%s/kh_slope", DEVICE_NAME);
-  snprintf(MQgranR2, sizeof(MQgranR2), "%s/gran_r2", DEVICE_NAME);
-  snprintf(MQcrossVal, sizeof(MQcrossVal), "%s/cross_val_diff", DEVICE_NAME);
-  snprintf(MQdataPoints, sizeof(MQdataPoints), "%s/data_points", DEVICE_NAME);
-  snprintf(MQmeasTime, sizeof(MQmeasTime), "%s/meas_time", DEVICE_NAME);
+  snprintf(topicCmd, sizeof(topicCmd), "%s/cmd", deviceName);
+  snprintf(MQmsg, sizeof(MQmsg), "%s/message", deviceName);
+  snprintf(MQerr, sizeof(MQerr), "%s/error", deviceName);
+  snprintf(MQKH, sizeof(MQKH), "%s/KH", deviceName);
+  snprintf(MQstartpH, sizeof(MQstartpH), "%s/startPH", deviceName);
+  snprintf(MQmespH, sizeof(MQmespH), "%s/mes_pH", deviceName);
+  snprintf(MQkhValue, sizeof(MQkhValue), "%s/kh_value", deviceName);
+  snprintf(MQconfidence, sizeof(MQconfidence), "%s/confidence", deviceName);
+  snprintf(MQkhSlope, sizeof(MQkhSlope), "%s/kh_slope", deviceName);
+  snprintf(MQgranR2, sizeof(MQgranR2), "%s/gran_r2", deviceName);
+  snprintf(MQcrossVal, sizeof(MQcrossVal), "%s/cross_val_diff", deviceName);
+  snprintf(MQdataPoints, sizeof(MQdataPoints), "%s/data_points", deviceName);
+  snprintf(MQmeasTime, sizeof(MQmeasTime), "%s/meas_time", deviceName);
 
   // Non-blocking WiFi
   wifiManager.begin(WIFI_SSID, WIFI_PASSWORD);
@@ -1226,7 +1232,7 @@ void setup() {
 
   // OTA setup
   ArduinoOTA.setPort(3232);
-  ArduinoOTA.setHostname(DEVICE_NAME);
+  ArduinoOTA.setHostname(deviceName);
   ArduinoOTA.onStart([]() {
     Serial.println("OTA Start");
   });

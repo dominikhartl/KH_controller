@@ -152,16 +152,18 @@ static float readADS1115MilliVolts() {
   Wire.write((uint8_t)(ADS_CONFIG_SINGLE_A0 & 0xFF));
   if (Wire.endTransmission() != 0) return NAN;
 
-  // Wait for conversion: poll RDY pin if available, else fixed delay
-  if (adsRdyAvailable) {
-    unsigned long t0 = millis();
-    while (digitalRead(ADS_RDY_PIN) && (millis() - t0 < 150)) {
-      delay(1);
-    }
-    if (millis() - t0 >= 150) return NAN;  // conversion timeout
-  } else {
-    delay(75);  // fallback: 16 SPS = 62.5ms + margin
+  // Wait for conversion: poll OS bit in config register (bit 15 = 1 when done)
+  unsigned long t0 = millis();
+  while (millis() - t0 < 150) {
+    delay(1);
+    Wire.beginTransmission(ADS1115_I2C_ADDR);
+    Wire.write(ADS_REG_CONFIG);
+    if (Wire.endTransmission() != 0) return NAN;
+    if (Wire.requestFrom((uint8_t)ADS1115_I2C_ADDR, (uint8_t)2) != 2) return NAN;
+    uint16_t cfg = ((uint16_t)Wire.read() << 8) | Wire.read();
+    if (cfg & 0x8000) break;  // OS=1 means conversion complete
   }
+  if (millis() - t0 >= 150) return NAN;  // conversion timeout
 
   // Read conversion result
   Wire.beginTransmission(ADS1115_I2C_ADDR);
@@ -616,15 +618,18 @@ int16_t readADS1115RawDiag(uint8_t muxBits, uint8_t drBits) {
   uint16_t sps = spsTable[drBits & 0x07];
   unsigned long maxWaitMs = (1000 / sps) + 20;  // conversion time + margin
 
-  if (adsRdyAvailable) {
-    unsigned long t0 = millis();
-    while (digitalRead(ADS_RDY_PIN) && (millis() - t0 < maxWaitMs)) {
-      delay(1);
-    }
-    if (millis() - t0 >= maxWaitMs) return INT16_MIN;
-  } else {
-    delay(maxWaitMs);
+  // Poll OS bit in config register (bit 15 = 1 when conversion complete)
+  unsigned long t0 = millis();
+  while (millis() - t0 < maxWaitMs) {
+    delay(1);
+    Wire.beginTransmission(ADS1115_I2C_ADDR);
+    Wire.write(ADS_REG_CONFIG);
+    if (Wire.endTransmission() != 0) return INT16_MIN;
+    if (Wire.requestFrom((uint8_t)ADS1115_I2C_ADDR, (uint8_t)2) != 2) return INT16_MIN;
+    uint16_t cfg = ((uint16_t)Wire.read() << 8) | Wire.read();
+    if (cfg & 0x8000) break;  // OS=1 means conversion complete
   }
+  if (millis() - t0 >= maxWaitMs) return INT16_MIN;
 
   Wire.beginTransmission(ADS1115_I2C_ADDR);
   Wire.write(ADS_REG_CONVERSION);

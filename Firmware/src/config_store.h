@@ -7,6 +7,10 @@ class ConfigStore {
 public:
   void begin();
 
+  // Device name (mDNS hostname, MQTT prefix, UI title)
+  void getDeviceName(char* buf, size_t len);
+  void setDeviceName(const char* name);
+
   // pH calibration voltages
   float getVoltage4PH();
   float getVoltage7PH();

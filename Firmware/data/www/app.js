@@ -132,6 +132,9 @@
       var title = d.deviceName + (d.fwVersion ? ' v' + d.fwVersion : '');
       setText('device-title', title);
       document.title = title;
+      // Update HW diagnostics download filename
+      var dlLink = document.getElementById('hw-diag-dl');
+      if (dlLink) dlLink.download = d.deviceName + '_hw_diagnostics.json';
     }
 
     // KH gauge
@@ -171,6 +174,7 @@
     setDot('ntp', d.ntpOk);
 
     // Status bar
+    setText('water-temp', d.temp_sensor ? d.water_temp.toFixed(1) + ' \u00B0C' : '--');
     setText('rssi', d.rssi || '--');
     setText('uptime', fmtUptime(d.uptime || 0));
 
@@ -193,6 +197,7 @@
 
     // Config values
     if (d.config) {
+      setInput('cfg-device_name', d.config.device_name);
       setInput('cfg-titration_vol', d.config.titration_vol);
       setInput('cfg-sample_vol', d.config.sample_vol);
       setInput('cfg-correction_factor', d.config.correction_factor);
@@ -927,7 +932,8 @@
     document.querySelectorAll('.config-grid input').forEach(function(inp) {
       inp.addEventListener('change', function() {
         var key = inp.id.replace('cfg-', '');
-        send({ type: 'config', key: key, value: parseFloat(inp.value) });
+        var val = (inp.type === 'text') ? inp.value : parseFloat(inp.value);
+        send({ type: 'config', key: key, value: val });
       });
     });
     document.querySelectorAll('.config-grid select').forEach(function(sel) {
@@ -1298,13 +1304,20 @@
         var nStatus = noiseMv < 0.5 ? ok() : noiseMv < 2.0 ? warn(noiseMv.toFixed(2) + ' mV') : fail(noiseMv.toFixed(2) + ' mV');
         rows.push('<tr><td>ADC Noise (pH)</td><td>' + nStatus + ' stddev</td></tr>');
       }
+      if (an && an.noise_ph && an.noise_ph.valid) {
+        var np = an.noise_ph;
+        var impactColor = np.impact === 'Negligible' || np.impact === 'Low' ? '#30d158' :
+                          np.impact === 'Moderate' ? '#ff9f0a' : '#ff453a';
+        rows.push('<tr><td>pH Noise</td><td>&plusmn;' + np.stddev_ph.toFixed(2) + ' pH (PTP ' + np.ptp_ph.toFixed(2) + ') — <span style="color:' + impactColor + '">' + np.impact + '</span></td></tr>');
+        rows.push('<tr><td>Est. KH Error</td><td>&plusmn;' + np.est_kh_pct.toFixed(1) + '% (Gran avg. over ~15 pts)</td></tr>');
+      }
       if (an && an.baseline && !an.baseline.skipped) {
         rows.push('<tr><td>Noise Ratio</td><td>' + (an.noise_ratio ? an.noise_ratio.toFixed(1) + 'x' : '--') + '</td></tr>');
       }
 
-      // Internal ADC
+      // Board noise (ESP32 ADC on GPIO36)
       if (d.internal_adc && !d.internal_adc.skipped && d.internal_adc.n_samples > 0) {
-        rows.push('<tr><td>Internal ADC</td><td>stddev ' + d.internal_adc.stddev_mv.toFixed(1) + ' mV</td></tr>');
+        rows.push('<tr><td>Board Noise (GPIO36)</td><td>stddev ' + d.internal_adc.stddev_mv.toFixed(1) + ' mV</td></tr>');
       }
 
       // Temperature

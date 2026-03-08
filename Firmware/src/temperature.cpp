@@ -16,9 +16,10 @@ void initTemperature() {
   sensors->begin();
   sensorFound = sensors->getDeviceCount() > 0;
   if (sensorFound) {
+    sensors->setResolution(12);  // 0.0625°C precision
     sensors->requestTemperatures();
     float t = sensors->getTempCByIndex(0);
-    Serial.printf("DS18B20 temperature sensor found: %.1f °C\n", t);
+    Serial.printf("DS18B20 temperature sensor found: %.2f °C (12-bit)\n", t);
     publishMessage("Temperature sensor detected");
   } else {
     Serial.printf("No temperature sensor found, using default %.1f °C\n",

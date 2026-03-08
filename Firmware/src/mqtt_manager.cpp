@@ -2,6 +2,8 @@
 #include <config.h>
 #include <WiFi.h>
 
+extern char deviceName[];
+
 MQTTManager mqttManager;
 
 // MQTT topic buffers
@@ -17,7 +19,7 @@ void MQTTManager::begin() {
   WiFi.macAddress(mac);
   snprintf(clientId, sizeof(clientId), "KHv3-%02X%02X%02X", mac[3], mac[4], mac[5]);
 
-  snprintf(topicAvailability, sizeof(topicAvailability), "%s/availability", DEVICE_NAME);
+  snprintf(topicAvailability, sizeof(topicAvailability), "%s/availability", deviceName);
 }
 
 void MQTTManager::loop() {

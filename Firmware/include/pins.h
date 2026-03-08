@@ -32,6 +32,9 @@
 #define DIAG_SAMPLE    23
 #define DIAG_TITRATE   35
 
+// Board noise reference (unconnected ADC1 pin for EMI/noise measurement)
+#define NOISE_REF_PIN 36
+
 // DS18B20 temperature sensor (OneWire)
 #define TEMP_SENSOR_PIN 5
 

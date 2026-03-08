@@ -13,6 +13,8 @@
 #include "config_store.h"
 #include "web_server.h"
 
+extern char deviceName[];
+
 // --- Report data structures ---
 
 struct NoiseStats {
@@ -78,8 +80,15 @@ static float adcNoiseRatio;
 static bool adcMultiRateSkipped;
 static MultiRateEntry adcMultiRate[8];
 static int adcMultiRateCount;
-// Internal ADC
+// Internal ADC (ESP32 on GPIO36, board noise reference)
 static NoiseStats internalAdcNoise;
+
+// pH noise equivalent (computed from ADC noise + calibration slope)
+static float phSlope = 0;
+static float noiseStddevPH = 0;
+static float noisePtpPH = 0;
+static float noiseKhPct = 0;  // estimated relative KH uncertainty %
+static bool phNoiseValid = false;
 
 // Temperature
 static bool tempSkipped;
@@ -422,14 +431,18 @@ static void testADCMultiRate() {
 }
 
 static void testInternalADC() {
-  broadcastMessage("Internal ADC noise test...");
+  broadcastMessage("ESP32 ADC board noise test (GPIO36)...");
+
+  pinMode(NOISE_REF_PIN, INPUT);
+  analogSetPinAttenuation(NOISE_REF_PIN, ADC_11db);
+  analogReadMilliVolts(NOISE_REF_PIN);  // Dummy read to prime ADC
 
   const int N = 200;
   float* samples = (float*)malloc(N * sizeof(float));
   if (!samples) { internalAdcNoise = {}; return; }
 
   for (int i = 0; i < N; i++) {
-    samples[i] = readInternalADCmV();
+    samples[i] = (float)analogReadMilliVolts(NOISE_REF_PIN);
     delay(2);
   }
 
@@ -571,8 +584,8 @@ static void testGPIOStates() {
   }
 
   if (hwADS1115) {
-    // RDY pin should be HIGH when idle (no conversion pending)
-    addPin("ADS_RDY", ADS_RDY_PIN, HIGH);
+    // RDY pin is LOW when idle (last conversion complete, no new conversion pending)
+    addPin("ADS_RDY", ADS_RDY_PIN, LOW);
   }
 }
 
@@ -616,15 +629,9 @@ void runHardwareDiagnostics() {
   broadcastProgress(45);
   testADCMultiRate();
 
-  // Phase 6: Internal ADC (always)
+  // Phase 6: ESP32 ADC board noise (GPIO36, always runs)
   broadcastProgress(60);
-  if (!hwADS1115 || !isTMCDetected()) {
-    // Can only read internal ADC if TMC doesn't own GPIO34/35
-    testInternalADC();
-  } else {
-    internalAdcNoise = {};
-    internalAdcNoise.nSamples = 0;
-  }
+  testInternalADC();
 
   // Phase 7: Temperature
   broadcastProgress(70);
@@ -642,6 +649,20 @@ void runHardwareDiagnostics() {
   broadcastProgress(95);
   testGPIOStates();
   testProbeHealth();
+
+  // Compute pH-equivalent noise from ADC noise + calibration slope
+  phNoiseValid = false;
+  if (probeCalibrated && adcPhNoise.nSamples > 0) {
+    phSlope = (voltage_4PH - voltage_10PH) / 6.0f;
+    if (phSlope > 50.0f) {  // sanity: slope must be positive and reasonable
+      noiseStddevPH = adcPhNoise.stddevMv / phSlope;
+      noisePtpPH = adcPhNoise.ptpMv / phSlope;
+      // Estimated KH uncertainty %: Gran regression over ~15 points
+      // σ_KH/KH ≈ σ_pH * ln(10) / √N
+      noiseKhPct = noiseStddevPH * 2.302585f / sqrtf(15.0f) * 100.0f;
+      phNoiseValid = true;
+    }
+  }
 
   diagDurationMs = millis() - diagStartMs;
 
@@ -671,7 +692,7 @@ bool serveHWDiagChunk(int section, char* buf, size_t bufSize, size_t* written) {
   switch (section) {
     case 0:  // Opening + hardware
       P("{\"type\":\"hw_diagnostics\",\"version\":1,\"device\":\"%s\",\"firmware\":\"%s\",",
-        DEVICE_NAME, FW_VERSION);
+        deviceName, FW_VERSION);
       P("\"timestamp\":%lu,\"duration_sec\":%.1f,",
         (unsigned long)time(nullptr), diagDurationMs / 1000.0f);
       P("\"hardware\":{\"ads1115\":%s,\"tmc2209\":%s,\"ds18b20\":%s,\"adc_source\":\"%s\"},",
@@ -755,6 +776,19 @@ bool serveHWDiagChunk(int section, char* buf, size_t bufSize, size_t* written) {
         P("\"noise_ratio_desc\":\"pH circuit noise is %.1fx the ADC noise floor\",",
           adcNoiseRatio);
       }
+
+      // pH-equivalent noise
+      if (phNoiseValid) {
+        const char* impact = (noiseStddevPH < 0.05f) ? "Negligible" :
+                             (noiseStddevPH < 0.15f) ? "Low" :
+                             (noiseStddevPH < 0.30f) ? "Moderate" : "High";
+        P("\"noise_ph\":{\"valid\":true,\"stddev_ph\":%.3f,\"ptp_ph\":%.3f,",
+          noiseStddevPH, noisePtpPH);
+        P("\"slope_mv_per_ph\":%.1f,\"est_kh_pct\":%.1f,\"impact\":\"%s\"},",
+          phSlope, noiseKhPct, impact);
+      } else {
+        P("\"noise_ph\":{\"valid\":false},");
+      }
       break;
     }
 
@@ -783,15 +817,15 @@ bool serveHWDiagChunk(int section, char* buf, size_t bufSize, size_t* written) {
       }
       break;
 
-    case 6:  // Internal ADC
+    case 6:  // Internal ADC — board noise reference
       if (internalAdcNoise.nSamples > 0) {
         P("\"internal_adc\":{\"n_samples\":%d,", internalAdcNoise.nSamples);
         P("\"mean_mv\":%.1f,\"stddev_mv\":%.2f,\"min_mv\":%.1f,\"max_mv\":%.1f,\"ptp_mv\":%.1f,",
           internalAdcNoise.meanMv, internalAdcNoise.stddevMv,
           internalAdcNoise.minMv, internalAdcNoise.maxMv, internalAdcNoise.ptpMv);
-        P("\"note\":\"ESP32 12-bit SAR ADC on GPIO34 (always runs)\"},");
+        P("\"note\":\"ESP32 12-bit ADC on GPIO36 (VP, unconnected — board noise reference)\"},");
       } else {
-        P("\"internal_adc\":{\"skipped\":true,\"note\":\"TMC2209 owns GPIO34, cannot read internal ADC\"},");
+        P("\"internal_adc\":{\"skipped\":true},");
       }
       break;
 

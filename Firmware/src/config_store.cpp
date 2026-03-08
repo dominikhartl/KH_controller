@@ -33,6 +33,17 @@ void ConfigStore::migrateFromEEPROM() {
   }
 }
 
+// Device name
+void ConfigStore::getDeviceName(char* buf, size_t len) {
+  String s = prefs.getString("dev_name", DEFAULT_DEVICE_NAME);
+  strncpy(buf, s.c_str(), len - 1);
+  buf[len - 1] = '\0';
+}
+
+void ConfigStore::setDeviceName(const char* name) {
+  prefs.putString("dev_name", name);
+}
+
 // pH calibration voltages
 float ConfigStore::getVoltage4PH() { return prefs.getFloat("v4ph", 1812.0); }
 float ConfigStore::getVoltage7PH() { return prefs.getFloat("v7ph", 1292.0); }

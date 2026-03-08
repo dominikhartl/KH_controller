@@ -16,7 +16,7 @@ Import("env")
 
 HISTORY_FILES = ["kh", "ph", "gran"]
 DATA_DIR = os.path.join(env.subst("$PROJECT_DIR"), "data", "history")
-DEVICE_HOST = "khpro.local"
+DEVICE_HOST = env.subst("$UPLOAD_PORT") or "khpro.local"
 
 
 def cleanup_history(source, target, env):

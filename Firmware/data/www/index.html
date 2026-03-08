@@ -133,6 +133,9 @@
     <h2 class="section-header">Configuration <span class="chevron"></span></h2>
     <div class="section-body">
       <div class="config-grid">
+        <label>Device Name
+          <input type="text" id="cfg-device_name" maxlength="20" pattern="[A-Za-z0-9\-]+" title="Letters, numbers, hyphens only">
+        </label>
         <label>HCl Molarity (mol/L)
           <input type="number" id="cfg-hcl_molarity" step="0.001" min="0.001" max="1">
         </label>
@@ -245,7 +248,7 @@
             <button class="cmd-btn" data-cmd="H" id="btn-hw-diag">Run Full Diagnostics</button>
             <div id="hw-diag-status" style="display:none;margin-top:0.5em;font-size:0.9em;color:var(--text-secondary)">Running hardware diagnostics...</div>
             <div id="hw-diag-results" style="display:none;margin-top:0.5em">
-              <a class="export-btn" href="/api/hwdiag" download="khpro_hw_diagnostics.json" style="display:inline-block;margin-bottom:0.5em">Download Report (JSON)</a>
+              <a class="export-btn" id="hw-diag-dl" href="/api/hwdiag" download="hw_diagnostics.json" style="display:inline-block;margin-bottom:0.5em">Download Report (JSON)</a>
               <div id="hw-diag-summary" style="font-size:0.85em"></div>
             </div>
           </div>
@@ -374,6 +377,7 @@
   </section>
 
   <section class="status-bar">
+    <div><strong>Water:</strong> <span id="water-temp">--</span></div>
     <div><strong>RSSI:</strong> <span id="rssi">--</span> dBm</div>
     <div><strong>Uptime:</strong> <span id="uptime">--</span></div>
     <a class="export-btn" href="/api/export.csv" download="kh_history.csv">Export CSV</a>
