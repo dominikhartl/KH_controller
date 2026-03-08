@@ -111,10 +111,11 @@ static const int   MIN_GRAN_POINTS      = 8;       // Minimum points for reliabl
 static const int   MAX_TITRATION_POINTS = 200;      // Data point buffer size
 static const float GRAN_MIN_R2          = 0.99f;   // Minimum R² for Gran fit acceptance
 
-// Calibration buffer pH values at measurement temperature
-static const float BUFFER_PH_4  = 4.00f;
-static const float BUFFER_PH_7  = 7.02f;
-static const float BUFFER_PH_10 = 10.07f;
+// Default buffer pH values at 25°C (as printed on bottle)
+// User can override via config; device applies temperature compensation automatically
+static const float DEFAULT_BUFFER_PH_4  = 4.0f;
+static const float DEFAULT_BUFFER_PH_7  = 7.0f;
+static const float DEFAULT_BUFFER_PH_10 = 10.0f;
 
 // Nernst equation: slope(T) = NERNST_FACTOR * T(K) mV/pH
 // R*ln(10)/(n*F) = 8.31446 * 2.30259 / (1 * 96485.3) = 0.19842 mV/(pH·K)

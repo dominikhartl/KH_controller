@@ -208,6 +208,9 @@
       setInput('cfg-sample_pump_rpm', d.config.sample_pump_rpm);
       setInput('cfg-prefill_ul', d.config.prefill_ul);
       setInput('cfg-meas_temp_c', d.config.meas_temp_c);
+      setInput('cfg-buf_ph4', d.config.buf_ph4);
+      setInput('cfg-buf_ph7', d.config.buf_ph7);
+      setInput('cfg-buf_ph10', d.config.buf_ph10);
       setInput('cfg-slope_hours', d.config.slope_hours);
       setInput('cfg-stirrer_speed', d.config.stirrer_speed);
 
@@ -671,7 +674,7 @@
     khChart = new Chart(document.getElementById('chart-kh'), {
       type: 'line',
       data: { labels: [], datasets: [
-        { label: 'KH', data: [], borderColor: 'transparent', borderWidth: 0, pointRadius: 3, pointBackgroundColor: '#0a84ff', pointBorderColor: '#0a84ff', showLine: false, yAxisID: 'y', order: 1 },
+        { label: 'KH', data: [], backgroundColor: '#0a84ff', borderColor: '#0a84ff', borderWidth: 0, pointRadius: 3, pointBackgroundColor: '#0a84ff', pointBorderColor: '#0a84ff', showLine: false, yAxisID: 'y', order: 1 },
         { label: 'Smooth', data: [], borderColor: '#0a84ff', borderWidth: 3, pointRadius: 0, cubicInterpolationMode: 'monotone', tension: 0.4, yAxisID: 'y', order: 2 },
         { label: 'Trend', data: [], borderColor: 'rgba(255,159,10,0.6)', borderWidth: 2, borderDash: [6,3], pointRadius: 0, tension: 0, yAxisID: 'y', order: 0 },
         { label: 'Conf', type: 'bar', data: [], backgroundColor: 'rgba(48,209,88,0.13)', borderColor: 'rgba(48,209,88,0.3)', borderWidth: 1, yAxisID: 'yConf', order: 3 }

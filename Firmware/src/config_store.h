@@ -46,6 +46,14 @@ public:
   void setPrefillVolumeUL(float ul);
   float getMeasTempC();           // Measurement temperature in °C (default 21.0)
   void setMeasTempC(float t);
+  float getCalTempC();            // Temperature at which pH calibration was performed
+  void setCalTempC(float t);
+  float getBufferPH4();           // Buffer pH 4 value at 25°C (as printed on bottle)
+  void setBufferPH4(float v);
+  float getBufferPH7();           // Buffer pH 7 value at 25°C
+  void setBufferPH7(float v);
+  float getBufferPH10();          // Buffer pH 10 value at 25°C
+  void setBufferPH10(float v);
   int getSlopeWindowHours();      // KH slope lookback window in hours (default 72, range 24-168)
   void setSlopeWindowHours(int h);
   int getStirrerSpeed();           // Stirrer speed in percent (default 90, range 10-100)

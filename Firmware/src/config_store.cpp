@@ -141,6 +141,27 @@ void ConfigStore::setMeasTempC(float t) {
   prefs.putFloat("meas_temp", t);
 }
 
+// Calibration temperature (temperature at which pH buffers were measured)
+float ConfigStore::getCalTempC() {
+  float t = prefs.getFloat("cal_temp", DEFAULT_MEASUREMENT_TEMP_C);
+  if (t < 0.0f) t = 0.0f;
+  if (t > 40.0f) t = 40.0f;
+  return t;
+}
+void ConfigStore::setCalTempC(float t) {
+  if (t < 0.0f) t = 0.0f;
+  if (t > 40.0f) t = 40.0f;
+  prefs.putFloat("cal_temp", t);
+}
+
+// Buffer pH reference values at 25°C (user-settable, from bottle labels)
+float ConfigStore::getBufferPH4()  { return prefs.getFloat("buf_ph4", DEFAULT_BUFFER_PH_4); }
+void  ConfigStore::setBufferPH4(float v)  { prefs.putFloat("buf_ph4", v); }
+float ConfigStore::getBufferPH7()  { return prefs.getFloat("buf_ph7", DEFAULT_BUFFER_PH_7); }
+void  ConfigStore::setBufferPH7(float v)  { prefs.putFloat("buf_ph7", v); }
+float ConfigStore::getBufferPH10() { return prefs.getFloat("buf_ph10", DEFAULT_BUFFER_PH_10); }
+void  ConfigStore::setBufferPH10(float v) { prefs.putFloat("buf_ph10", v); }
+
 // KH slope lookback window
 int ConfigStore::getSlopeWindowHours() {
   int h = prefs.getInt("slope_hrs", 72);

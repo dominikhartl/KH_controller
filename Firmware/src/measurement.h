@@ -19,6 +19,9 @@ bool isExternalADCFallback();  // True if configured for ADS1115 but fell back t
 // Recompute linear fit coefficients from current calibration voltages
 void updateCalibrationFit();
 
+// Temperature-compensated buffer pH (IUPAC/NIST standard coefficients)
+float bufferPHAtTemp(int nominal, float tempC);
+
 // Check if calibration voltages are valid (not NaN, sufficient separation)
 bool isCalibrationValid();
 

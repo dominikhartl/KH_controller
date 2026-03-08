@@ -254,6 +254,15 @@ static void handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
       else if (strcmp(key, "sample_pump_rpm") == 0) { configStore.setSamplePumpRPM(value); }
       else if (strcmp(key, "prefill_ul") == 0) { configStore.setPrefillVolumeUL(value); }
       else if (strcmp(key, "meas_temp_c") == 0) { configStore.setMeasTempC(value); }
+      else if (strcmp(key, "buf_ph4") == 0 && value >= 3.0f && value <= 5.0f) {
+        configStore.setBufferPH4(value); updateCalibrationFit();
+      }
+      else if (strcmp(key, "buf_ph7") == 0 && value >= 6.0f && value <= 8.0f) {
+        configStore.setBufferPH7(value); updateCalibrationFit();
+      }
+      else if (strcmp(key, "buf_ph10") == 0 && value >= 9.0f && value <= 11.0f) {
+        configStore.setBufferPH10(value); updateCalibrationFit();
+      }
       else if (strcmp(key, "slope_hours") == 0) {
         configStore.setSlopeWindowHours((int)value);
         computeKHSlope();  // refresh cached slope with new window
@@ -460,8 +469,17 @@ static void handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
 }
 
 void calibratePH(int bufferPH) {
-  char calMsg[32];
-  snprintf(calMsg, sizeof(calMsg), "Calibrating pH %d...", bufferPH);
+  // Read temperature for buffer pH compensation (DS18B20 → fallback to config)
+  float calTemp;
+  if (hasTemperatureSensor()) {
+    calTemp = getWaterTemperatureC();
+  } else {
+    calTemp = configStore.getMeasTempC();
+  }
+  configStore.setCalTempC(calTemp);
+
+  char calMsg[64];
+  snprintf(calMsg, sizeof(calMsg), "Calibrating pH %d at %.1f°C...", bufferPH, calTemp);
   publishMessage(calMsg);
   startStirrer();
   delay(STIRRER_WARMUP_MS);
@@ -473,17 +491,17 @@ void calibratePH(int bufferPH) {
     case 4:
       voltage_4PH = v;
       if (ext) configStore.setVoltage4PHExt(v); else configStore.setVoltage4PH(v);
-      actualPH = BUFFER_PH_4;
+      actualPH = bufferPHAtTemp(4, calTemp);
       break;
     case 7:
       voltage_7PH = v;
       if (ext) configStore.setVoltage7PHExt(v); else configStore.setVoltage7PH(v);
-      actualPH = BUFFER_PH_7;
+      actualPH = bufferPHAtTemp(7, calTemp);
       break;
     case 10:
       voltage_10PH = v;
       if (ext) configStore.setVoltage10PHExt(v); else configStore.setVoltage10PH(v);
-      actualPH = BUFFER_PH_10;
+      actualPH = bufferPHAtTemp(10, calTemp);
       break;
     default: return;
   }
@@ -633,6 +651,9 @@ void broadcastState() {
   cfg["sample_pump_rpm"] = configStore.getSamplePumpRPM();
   cfg["prefill_ul"] = configStore.getPrefillVolumeUL();
   cfg["meas_temp_c"] = configStore.getMeasTempC();
+  cfg["buf_ph4"] = configStore.getBufferPH4();
+  cfg["buf_ph7"] = configStore.getBufferPH7();
+  cfg["buf_ph10"] = configStore.getBufferPH10();
   cfg["slope_hours"] = configStore.getSlopeWindowHours();
   cfg["stirrer_speed"] = configStore.getStirrerSpeed();
   cfg["use_ads1115"] = configStore.getUseADS1115();
@@ -1285,7 +1306,7 @@ void setupWebServer() {
               "\"titration_step_size\":%d,\"medium_step_mult\":%d,"
               "\"gran_step_mult\":%d,\"fast_batch_max\":%d,"
               "\"fast_batch_min\":%d,\"nernst_factor\":%.5f,"
-              "\"meas_temp_c\":%.1f,\"ph_amp_gain\":%.1f,"
+              "\"meas_temp_c\":%.1f,\"cal_temp_c\":%.1f,\"ph_amp_gain\":%.1f,"
               "\"water_temp\":%.1f,\"temp_sensor\":%s,"
               "\"tmc_detected\":%s},",
               GRAN_REGION_PH, GRAN_STOP_PH,
@@ -1295,7 +1316,7 @@ void setupWebServer() {
               TITRATION_STEP_SIZE, MEDIUM_STEP_MULTIPLIER,
               GRAN_STEP_MULTIPLIER, FAST_BATCH_MAX,
               FAST_BATCH_MIN, NERNST_FACTOR,
-              configStore.getMeasTempC(), PH_AMP_GAIN,
+              configStore.getMeasTempC(), configStore.getCalTempC(), PH_AMP_GAIN,
               getWaterTemperatureC(),
               hasTemperatureSensor() ? "true" : "false",
               isTMCDetected() ? "true" : "false");
@@ -1389,7 +1410,7 @@ void setupWebServer() {
               "\"response_ms\":%lu,\"cal_ts\":%u},",
               health, reason,
               ae, al, ay, as, ls,
-              NERNST_FACTOR * (273.15f + configStore.getMeasTempC()),
+              NERNST_FACTOR * (273.15f + configStore.getCalTempC()),
               getLastStabilizationMs(),
               configStore.getCalTimestamp());
             ds = 5;

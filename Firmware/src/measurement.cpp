@@ -41,6 +41,31 @@ static bool adsRdyAvailable = false;  // true if RDY pin configured successfully
 static float acidSlope = 0, acidOffset = 7.0;
 static float baseSlope = 0, baseOffset = 7.0;
 
+// Temperature coefficients for commercial calibration buffers (pH/°C):
+//   pH 4: +0.001  (phthalate, very stable)
+//   pH 7: -0.002  (phosphate)
+//   pH 10: -0.010 (carbonate/borate)
+static const float BUF4_TEMPCO  =  0.001f;
+static const float BUF7_TEMPCO  = -0.002f;
+static const float BUF10_TEMPCO = -0.010f;
+
+// User-configurable buffer pH values are stored at 25°C (as printed on bottle).
+// bufferPHAtTemp() applies temperature compensation at runtime.
+float bufferPHAtTemp(int nominal, float tempC) {
+  float dT = tempC - 25.0f;
+  switch (nominal) {
+    case 4:  return configStore.getBufferPH4()  + BUF4_TEMPCO  * dT;
+    case 7:  return configStore.getBufferPH7()  + BUF7_TEMPCO  * dT;
+    case 10: return configStore.getBufferPH10() + BUF10_TEMPCO * dT;
+    default: return (float)nominal;
+  }
+}
+
+// Cached buffer pH values at calibration temperature (updated in updateCalibrationFit)
+static float calBuf4 = DEFAULT_BUFFER_PH_4;
+static float calBuf7 = DEFAULT_BUFFER_PH_7;
+static float calBuf10 = DEFAULT_BUFFER_PH_10;
+
 // Convert voltage to pH using piecewise interpolation
 static inline float voltageToPH(float v) {
   if (v >= voltage_7PH) {
@@ -253,25 +278,34 @@ void initExternalADC() {
 bool isExternalADCActive() { return adsActive(); }
 bool isExternalADCFallback() { return adsFallback; }
 
+void updateCalibrationBuffers() {
+  float calTemp = configStore.getCalTempC();
+  calBuf4  = bufferPHAtTemp(4, calTemp);
+  calBuf7  = bufferPHAtTemp(7, calTemp);
+  calBuf10 = bufferPHAtTemp(10, calTemp);
+}
+
 void updateCalibrationFit() {
+  updateCalibrationBuffers();
+
   // Piecewise linear: two segments that pass exactly through calibration points
   float dv;
 
   // Acid segment: pH 4 → pH 7
   dv = voltage_7PH - voltage_4PH;
   if (fabsf(dv) > 1e-6f) {
-    acidSlope = (BUFFER_PH_7 - BUFFER_PH_4) / dv;
-    acidOffset = BUFFER_PH_4 - acidSlope * voltage_4PH;
+    acidSlope = (calBuf7 - calBuf4) / dv;
+    acidOffset = calBuf4 - acidSlope * voltage_4PH;
   } else {
     acidSlope = -1.0f / 173.0f;
-    acidOffset = BUFFER_PH_7 + voltage_7PH / 173.0f;
+    acidOffset = calBuf7 + voltage_7PH / 173.0f;
   }
 
   // Base segment: pH 7 → pH 10
   dv = voltage_10PH - voltage_7PH;
   if (fabsf(dv) > 1e-6f) {
-    baseSlope = (BUFFER_PH_10 - BUFFER_PH_7) / dv;
-    baseOffset = BUFFER_PH_7 - baseSlope * voltage_7PH;
+    baseSlope = (calBuf10 - calBuf7) / dv;
+    baseOffset = calBuf7 - baseSlope * voltage_7PH;
   } else {
     baseSlope = acidSlope;
     baseOffset = acidOffset;
@@ -296,19 +330,19 @@ unsigned long getLastStabilizationMs() {
 
 float getProbeSlope() {
   if (!isCalibrationValid()) return NAN;
-  float slopeAcid = (voltage_7PH - voltage_4PH) / (BUFFER_PH_7 - BUFFER_PH_4);
-  float slopeBase = (voltage_10PH - voltage_7PH) / (BUFFER_PH_10 - BUFFER_PH_7);
+  float slopeAcid = (voltage_7PH - voltage_4PH) / (calBuf7 - calBuf4);
+  float slopeBase = (voltage_10PH - voltage_7PH) / (calBuf10 - calBuf7);
   return (slopeAcid + slopeBase) / 2.0f;
 }
 
 float getAcidSlope() {
   if (!isCalibrationValid()) return NAN;
-  return (voltage_7PH - voltage_4PH) / (BUFFER_PH_7 - BUFFER_PH_4);
+  return (voltage_7PH - voltage_4PH) / (calBuf7 - calBuf4);
 }
 
 float getAlkalineSlope() {
   if (!isCalibrationValid()) return NAN;
-  return (voltage_10PH - voltage_7PH) / (BUFFER_PH_10 - BUFFER_PH_7);
+  return (voltage_10PH - voltage_7PH) / (calBuf10 - calBuf7);
 }
 
 // Nernst efficiency: probe slope vs theoretical at measurement temperature
@@ -317,7 +351,7 @@ float getAlkalineSlope() {
 //   nonlinearity, so we use a separate empirical gain factor.
 static float slopeToEfficiency(float conditionedSlope) {
   if (isnan(conditionedSlope)) return NAN;
-  float nernst = NERNST_FACTOR * (273.15f + configStore.getMeasTempC());
+  float nernst = NERNST_FACTOR * (273.15f + configStore.getCalTempC());
   float gain = PH_AMP_GAIN;
   float rawSlope = fabsf(conditionedSlope) / gain;
   return (rawSlope / nernst) * 100.0f;
@@ -333,8 +367,8 @@ float getAlkalineEfficiency() {
 
 float getProbeAsymmetry() {
   if (!isCalibrationValid()) return NAN;
-  float slopeAcid = fabsf((voltage_7PH - voltage_4PH) / (BUFFER_PH_7 - BUFFER_PH_4));
-  float slopeBase = fabsf((voltage_10PH - voltage_7PH) / (BUFFER_PH_10 - BUFFER_PH_7));
+  float slopeAcid = fabsf((voltage_7PH - voltage_4PH) / (calBuf7 - calBuf4));
+  float slopeBase = fabsf((voltage_10PH - voltage_7PH) / (calBuf10 - calBuf7));
   float avg = (slopeAcid + slopeBase) / 2.0f;
   if (avg < 1.0f) return NAN;
   return fabsf(slopeAcid - slopeBase) / avg * 100.0f;
