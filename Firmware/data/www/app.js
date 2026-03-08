@@ -905,6 +905,7 @@
       btn.addEventListener('click', function() {
         var cmd = btn.getAttribute('data-cmd');
         if (cmd === 'o' && !confirm('Restart the device?')) return;
+        if (cmd === 'p') addLogEntry('msg', 'Measuring pH...');
         send({ type: 'cmd', cmd: cmd });
       });
     });
@@ -1161,17 +1162,43 @@
     lastDiagResult = d;
     var prog = document.getElementById('motor-diag-progress');
     var results = document.getElementById('motor-diag-results');
-    var btn = document.getElementById('btn-motor-diag');
     if (prog) prog.style.display = 'none';
-    if (btn) btn.disabled = false;
+    ['btn-motor-diag', 'btn-motor-diag-sample', 'btn-motor-diag-titrate'].forEach(function(id) {
+      var b = document.getElementById(id);
+      if (b) b.disabled = false;
+    });
     if (!results) return;
 
-    setText('diag-sample-sc', fmtSG(d.sample.stealthchop));
-    setText('diag-sample-sp', fmtSG(d.sample.spreadcycle));
-    setText('diag-sample-rec', d.sample.recommended + ' (SG\u2265' + d.sample.suggestedThreshold + ')');
-    setText('diag-titrate-sc', fmtSG(d.titrate.stealthchop));
-    setText('diag-titrate-sp', fmtSG(d.titrate.spreadcycle));
-    setText('diag-titrate-rec', d.titrate.recommended + ' (SG\u2265' + d.titrate.suggestedThreshold + ')');
+    var m = d.mode || 'd';
+    var sampleRow = document.getElementById('diag-row-sample');
+    var titrateRow = document.getElementById('diag-row-titrate');
+    var stallEl = document.getElementById('diag-stall-result');
+
+    if (sampleRow) sampleRow.style.display = (m === 'd' || m === 'B') ? '' : 'none';
+    if (titrateRow) titrateRow.style.display = (m === 'd' || m === 'C') ? '' : 'none';
+
+    if (m === 'd' || m === 'B') {
+      setText('diag-sample-sc', fmtSG(d.sample.stealthchop));
+      setText('diag-sample-sp', fmtSG(d.sample.spreadcycle));
+      setText('diag-sample-rec', d.sample.recommended + ' (SG\u2265' + d.sample.suggestedThreshold + ')');
+    }
+    if (m === 'd' || m === 'C') {
+      setText('diag-titrate-sc', fmtSG(d.titrate.stealthchop));
+      setText('diag-titrate-sp', fmtSG(d.titrate.spreadcycle));
+      setText('diag-titrate-rec', d.titrate.recommended + ' (SG\u2265' + d.titrate.suggestedThreshold + ')');
+    }
+
+    if (stallEl && d.stallTest) {
+      stallEl.style.display = (m === 'd' || m === 'B') ? '' : 'none';
+      if (d.stallTest.stallRPM > 0) {
+        stallEl.textContent = 'Stall at ' + d.stallTest.stallRPM + ' RPM \u2192 recommended speed: ' + d.stallTest.recommendedRPM + ' RPM';
+        stallEl.style.color = '';
+      } else {
+        stallEl.textContent = 'No stall detected within test range (30\u2013500 RPM)';
+        stallEl.style.color = 'var(--text-secondary)';
+      }
+    }
+
     results.style.display = 'block';
   }
 
@@ -1235,32 +1262,48 @@
   var motorBaselines = { sample: 0, titrate: 0 };
 
   function initMotorDiag() {
-    var btn = document.getElementById('btn-motor-diag');
-    if (btn) {
-      btn.addEventListener('click', function() {
-        var prog = document.getElementById('motor-diag-progress');
-        var results = document.getElementById('motor-diag-results');
-        if (prog) prog.style.display = 'block';
-        if (results) results.style.display = 'none';
-        btn.disabled = true;
-      });
-    }
+    var diagBtns = ['btn-motor-diag', 'btn-motor-diag-sample', 'btn-motor-diag-titrate'];
+    diagBtns.forEach(function(id) {
+      var btn = document.getElementById(id);
+      if (btn) {
+        btn.addEventListener('click', function() {
+          var prog = document.getElementById('motor-diag-progress');
+          var results = document.getElementById('motor-diag-results');
+          if (prog) prog.style.display = 'block';
+          if (results) results.style.display = 'none';
+          diagBtns.forEach(function(bid) {
+            var b = document.getElementById(bid);
+            if (b) b.disabled = true;
+          });
+        });
+      }
+    });
     var applyBtn = document.getElementById('btn-apply-diag');
     if (applyBtn) {
       applyBtn.addEventListener('click', function() {
         if (!lastDiagResult) return;
+        var m = lastDiagResult.mode || 'd';
         var s = lastDiagResult.sample;
         var t = lastDiagResult.titrate;
-        send({ type: 'config', key: 'sample_spreadcycle', value: s.recommended === 'spreadcycle' ? 1 : 0 });
-        send({ type: 'config', key: 'sample_stall_sg', value: s.suggestedThreshold });
-        send({ type: 'config', key: 'titrate_spreadcycle', value: t.recommended === 'spreadcycle' ? 1 : 0 });
-        send({ type: 'config', key: 'titrate_stall_sg', value: t.suggestedThreshold });
-        // Store SG baselines for tube wear tracking
-        var sMode = s.recommended === 'spreadcycle' ? s.spreadcycle : s.stealthchop;
-        var tMode = t.recommended === 'spreadcycle' ? t.spreadcycle : t.stealthchop;
-        if (sMode) send({ type: 'config', key: 'sample_sg_baseline', value: sMode.sgAvg });
-        if (tMode) send({ type: 'config', key: 'titrate_sg_baseline', value: tMode.sgAvg });
-        addLogEntry('msg', 'Motor diagnostic settings and tube baseline applied');
+        if (m === 'd' || m === 'B') {
+          send({ type: 'config', key: 'sample_spreadcycle', value: s.recommended === 'spreadcycle' ? 1 : 0 });
+          send({ type: 'config', key: 'sample_stall_sg', value: s.suggestedThreshold });
+          var sMode = s.recommended === 'spreadcycle' ? s.spreadcycle : s.stealthchop;
+          if (sMode) send({ type: 'config', key: 'sample_sg_baseline', value: sMode.sgAvg });
+          // Auto-set sample pump RPM from stall test
+          if (lastDiagResult.stallTest && lastDiagResult.stallTest.recommendedRPM > 0) {
+            send({ type: 'config', key: 'sample_pump_rpm', value: lastDiagResult.stallTest.recommendedRPM });
+            var rpmInput = document.getElementById('cfg-sample_pump_rpm');
+            if (rpmInput) rpmInput.value = lastDiagResult.stallTest.recommendedRPM;
+          }
+        }
+        if (m === 'd' || m === 'C') {
+          send({ type: 'config', key: 'titrate_spreadcycle', value: t.recommended === 'spreadcycle' ? 1 : 0 });
+          send({ type: 'config', key: 'titrate_stall_sg', value: t.suggestedThreshold });
+          var tMode = t.recommended === 'spreadcycle' ? t.spreadcycle : t.stealthchop;
+          if (tMode) send({ type: 'config', key: 'titrate_sg_baseline', value: tMode.sgAvg });
+        }
+        addLogEntry('msg', 'Motor diagnostic settings applied');
       });
     }
   }

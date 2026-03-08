@@ -574,6 +574,14 @@ void executeCommand(const char* cmd) {
     // Defer motor diagnostics to loopTask — runs motors for ~30s
     queueCommand('d');
     return;
+  } else if (strcmp(cmd, "ds") == 0) {
+    // Sample pump diagnostics only
+    queueCommand('B');
+    return;
+  } else if (strcmp(cmd, "dt") == 0) {
+    // Titration pump diagnostics only
+    queueCommand('C');
+    return;
   } else if (strcmp(cmd, "H") == 0) {
     // Defer hardware diagnostics to loopTask — runs ~90-120s
     queueCommand('H');
@@ -615,6 +623,8 @@ void broadcastState() {
   doc["hclVol"] = configStore.getHClVolume();
   doc["rssi"] = wifiManager.getRSSI();
   doc["uptime"] = millis() / 1000;
+  doc["freeHeap"] = ESP.getFreeHeap();
+  doc["heapMin"] = heapMin;
   doc["mqttOk"] = mqttManager.isConnected();
   doc["wifiOk"] = wifiManager.isConnected();
   doc["ntpOk"] = scheduler.isTimeSynced();
@@ -1114,7 +1124,7 @@ void setupWebServer() {
   LittleFS.begin(true); // Format if mount fails
 
   // Serve static files from LittleFS
-  server.serveStatic("/", LittleFS, "/www/").setDefaultFile("index.html").setCacheControl("no-cache");
+  server.serveStatic("/", LittleFS, "/www/").setDefaultFile("index.html").setCacheControl("no-store, must-revalidate");
 
   // Serve history files for backup before filesystem upload
   server.serveStatic("/history/", LittleFS, "/history/");
@@ -1257,7 +1267,14 @@ void setupWebServer() {
     }
 
     AsyncWebServerResponse* resp = request->beginResponse(200, "text/csv", csv);
-    resp->addHeader("Content-Disposition", "attachment; filename=\"kh_history.csv\"");
+    char cdHeader[80];
+    time_t now = time(nullptr);
+    struct tm tm;
+    localtime_r(&now, &tm);
+    snprintf(cdHeader, sizeof(cdHeader),
+      "attachment; filename=\"kh_history_%04d%02d%02d_%02d%02d.csv\"",
+      tm.tm_year+1900, tm.tm_mon+1, tm.tm_mday, tm.tm_hour, tm.tm_min);
+    resp->addHeader("Content-Disposition", cdHeader);
     request->send(resp);
   });
 
@@ -1549,8 +1566,14 @@ void setupWebServer() {
         return (size_t)n;
       });
 
-    response->addHeader("Content-Disposition",
-                        "attachment; filename=\"kh_diagnostics.json\"");
+    char cdHeader[80];
+    time_t now = time(nullptr);
+    struct tm tm;
+    localtime_r(&now, &tm);
+    snprintf(cdHeader, sizeof(cdHeader),
+      "attachment; filename=\"kh_diagnostics_%04d%02d%02d_%02d%02d.json\"",
+      tm.tm_year+1900, tm.tm_mon+1, tm.tm_mday, tm.tm_hour, tm.tm_min);
+    response->addHeader("Content-Disposition", cdHeader);
     request->send(response);
   });
 
@@ -1587,8 +1610,13 @@ void setupWebServer() {
         hwds++;
         return written;
       });
-    char cdHeader[80];
-    snprintf(cdHeader, sizeof(cdHeader), "attachment; filename=\"%s_hw_diagnostics.json\"", deviceName);
+    char cdHeader[120];
+    time_t now = time(nullptr);
+    struct tm tm;
+    localtime_r(&now, &tm);
+    snprintf(cdHeader, sizeof(cdHeader),
+      "attachment; filename=\"%s_hw_diagnostics_%04d%02d%02d_%02d%02d.json\"",
+      deviceName, tm.tm_year+1900, tm.tm_mon+1, tm.tm_mday, tm.tm_hour, tm.tm_min);
     response->addHeader("Content-Disposition", cdHeader);
     request->send(response);
   });

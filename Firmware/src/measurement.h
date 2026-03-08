@@ -61,6 +61,9 @@ float getProbeAsymmetry();               // % difference between acid/base slope
 const char* getProbeHealth();            // "Good", "Fair", or "Replace"
 const char* getProbeHealthDetail(char* reasonBuf, size_t reasonLen);  // Same, with reason string
 
+// Reset EMA filter state (call when switching measurement contexts)
+void resetADCFilter();
+
 // Diagnostic ADC reads (for hardware diagnostics module)
 // Read ADS1115 with configurable MUX and data rate (returns raw 16-bit value, or INT16_MIN on error)
 // muxBits: 100=AIN0/GND (pH), 101=AIN1/GND (baseline), etc.

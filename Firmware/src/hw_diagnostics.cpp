@@ -36,7 +36,7 @@ struct MotorDiagData {
 
 // Maximum samples for rapid noise test time series
 static const int RAPID_SAMPLES = 500;
-static const int RAPID_TS_DOWNSAMPLE = 200;
+static const int RAPID_TS_DOWNSAMPLE = 100;  // Keep ≤100 to fit in TCP chunk (~1460 bytes)
 // Multi-rate test samples per rate
 static const int MULTIRATE_SAMPLES = 50;
 // Histogram bins
@@ -82,6 +82,10 @@ static MultiRateEntry adcMultiRate[8];
 static int adcMultiRateCount;
 // Internal ADC (ESP32 on GPIO36, board noise reference)
 static NoiseStats internalAdcNoise;
+
+// Motor noise comparison (motors off vs on)
+static bool motorNoiseSkipped;
+static NoiseStats motorOffNoise, motorOnNoise;
 
 // pH noise equivalent (computed from ADC noise + calibration slope)
 static float phSlope = 0;
@@ -450,6 +454,46 @@ static void testInternalADC() {
   free(samples);
 }
 
+static void testMotorNoiseComparison() {
+  if (!hwADS1115 || !hwTMC2209) {
+    motorNoiseSkipped = true;
+    return;
+  }
+  motorNoiseSkipped = false;
+  broadcastMessage("Motor noise comparison (off vs on)...");
+
+  const int N = 200;
+  int16_t samples[N];  // 400 bytes on stack — fine for ESP32
+
+  // Motors OFF (EN HIGH = disabled)
+  digitalWrite(EN_PIN1, HIGH);
+  digitalWrite(EN_PIN2, HIGH);
+  delay(50);
+
+  int valid = 0;
+  for (int i = 0; i < N; i++) {
+    int16_t raw = readADS1115RawDiag(0x04, 0x01);  // AIN0/GND, 16 SPS
+    if (raw != INT16_MIN) samples[valid++] = raw;
+  }
+  computeNoiseStatsI16(samples, valid, ADS_MV_PER_BIT, &motorOffNoise);
+
+  // Motors ON (EN LOW = enabled, but no stepping)
+  digitalWrite(EN_PIN1, LOW);
+  digitalWrite(EN_PIN2, LOW);
+  delay(100);  // let charge pumps stabilize
+
+  valid = 0;
+  for (int i = 0; i < N; i++) {
+    int16_t raw = readADS1115RawDiag(0x04, 0x01);
+    if (raw != INT16_MIN) samples[valid++] = raw;
+  }
+  computeNoiseStatsI16(samples, valid, ADS_MV_PER_BIT, &motorOnNoise);
+
+  // Restore motors OFF
+  digitalWrite(EN_PIN1, HIGH);
+  digitalWrite(EN_PIN2, HIGH);
+}
+
 static void testTemperature() {
   if (!hwDS18B20) {
     tempSkipped = true;
@@ -617,6 +661,10 @@ void runHardwareDiagnostics() {
   broadcastProgress(10);
   testI2CBus();
 
+  // Ensure motor drivers are disabled during ADC noise tests
+  digitalWrite(EN_PIN1, HIGH);
+  digitalWrite(EN_PIN2, HIGH);
+
   // Phase 3: ADC Rapid Noise (pH channel)
   broadcastProgress(15);
   testADCNoisePH();
@@ -629,23 +677,27 @@ void runHardwareDiagnostics() {
   broadcastProgress(45);
   testADCMultiRate();
 
-  // Phase 6: ESP32 ADC board noise (GPIO36, always runs)
+  // Phase 6: Motor noise comparison (off vs on)
+  broadcastProgress(55);
+  testMotorNoiseComparison();
+
+  // Phase 7: ESP32 ADC board noise (GPIO36, always runs)
   broadcastProgress(60);
   testInternalADC();
 
-  // Phase 7: Temperature
+  // Phase 8: Temperature
   broadcastProgress(70);
   testTemperature();
 
-  // Phase 8: TMC drivers
+  // Phase 9: TMC drivers
   broadcastProgress(75);
   testTMCDrivers();
 
-  // Phase 9: Motors
+  // Phase 10: Motors
   broadcastProgress(80);
   testMotors();
 
-  // Phase 10: GPIO + Probe
+  // Phase 11: GPIO + Probe
   broadcastProgress(95);
   testGPIOStates();
   testProbeHealth();
@@ -680,14 +732,17 @@ bool isHWDiagReportReady() { return reportReady; }
 
 // --- Chunked JSON serialization ---
 
-static const int SECTION_COUNT = 11;
+static const int SECTION_COUNT = 12;
 
 int getHWDiagSectionCount() { return SECTION_COUNT; }
 
 bool serveHWDiagChunk(int section, char* buf, size_t bufSize, size_t* written) {
   size_t pos = 0;
-  // Helper macro for printf-style appending to buffer
-  #define P(fmt, ...) do { pos += snprintf(buf + pos, bufSize - pos, fmt, ##__VA_ARGS__); } while(0)
+  // Helper macro for printf-style appending to buffer (guards against overflow)
+  #define P(fmt, ...) do { \
+    if (pos < bufSize) \
+      pos += snprintf(buf + pos, bufSize - pos, fmt, ##__VA_ARGS__); \
+  } while(0)
 
   switch (section) {
     case 0:  // Opening + hardware
@@ -748,23 +803,24 @@ bool serveHWDiagChunk(int section, char* buf, size_t bufSize, size_t* written) {
       P("],\"counts\":[");
       for (int i = 0; i < HIST_BINS; i++) P("%s%.0f", i ? "," : "", adcPhHistBins[i]);
       P("]},");
-      break;
-
-    case 4: {  // ADC noise: time series + baseline
-      // Time series (downsampled)
+      // Time series (inline with buffer guard)
       P("\"time_series\":[");
       if (hwADS1115 && rapidRawSamples && adcPhNoise.nSamples > 0) {
         int step = adcPhNoise.nSamples / RAPID_TS_DOWNSAMPLE;
         if (step < 1) step = 1;
         bool first = true;
-        for (int i = 0; i < adcPhNoise.nSamples; i += step) {
+        for (int i = 0; i < adcPhNoise.nSamples && pos + 12 < bufSize; i += step) {
           P("%s%.3f", first ? "" : ",", rapidRawSamples[i] * ADS_MV_PER_BIT);
           first = false;
         }
+      } else {
+        Serial.printf("[DIAG] time_series skip: hwADS=%d rawPtr=%p nSamp=%d\n",
+          hwADS1115, rapidRawSamples, adcPhNoise.nSamples);
       }
       P("]},");  // close ph_channel
+      break;
 
-      // Baseline
+    case 4: {  // Baseline + noise_ph
       if (adcBaselineSkipped) {
         P("\"baseline\":{\"skipped\":true},\"noise_ratio\":null,");
       } else {
@@ -777,7 +833,6 @@ bool serveHWDiagChunk(int section, char* buf, size_t bufSize, size_t* written) {
           adcNoiseRatio);
       }
 
-      // pH-equivalent noise
       if (phNoiseValid) {
         const char* impact = (noiseStddevPH < 0.05f) ? "Negligible" :
                              (noiseStddevPH < 0.15f) ? "Low" :
@@ -792,7 +847,7 @@ bool serveHWDiagChunk(int section, char* buf, size_t bufSize, size_t* written) {
       break;
     }
 
-    case 5:  // Multi-rate + datasheet comparison
+    case 5:  // Multi-rate + datasheet comparison + close adc_noise
       if (adcMultiRateSkipped) {
         P("\"multi_rate\":{\"skipped\":true},");
       } else {
@@ -805,7 +860,6 @@ bool serveHWDiagChunk(int section, char* buf, size_t bufSize, size_t* written) {
         }
         P("],");
       }
-      // Datasheet comparison (ADS1115 typical noise at 16 SPS: ~7.8 uV RMS)
       if (hwADS1115) {
         float measuredUv = adcPhNoise.stddevMv * 1000.0f;
         float datasheetUv = 7.8f;
@@ -817,7 +871,23 @@ bool serveHWDiagChunk(int section, char* buf, size_t bufSize, size_t* written) {
       }
       break;
 
-    case 6:  // Internal ADC — board noise reference
+    case 6:  // Motor noise comparison
+      if (motorNoiseSkipped) {
+        P("\"motor_noise_comparison\":{\"skipped\":true},");
+      } else {
+        float deltaSd = motorOnNoise.stddevMv - motorOffNoise.stddevMv;
+        float deltaPct = (motorOffNoise.stddevMv > 0.001f)
+          ? (deltaSd / motorOffNoise.stddevMv) * 100.0f : 0;
+        P("\"motor_noise_comparison\":{\"skipped\":false,");
+        P("\"motors_off\":{\"n_samples\":%d,\"mean_mv\":%.3f,\"stddev_mv\":%.3f,\"ptp_mv\":%.3f},",
+          motorOffNoise.nSamples, motorOffNoise.meanMv, motorOffNoise.stddevMv, motorOffNoise.ptpMv);
+        P("\"motors_on\":{\"n_samples\":%d,\"mean_mv\":%.3f,\"stddev_mv\":%.3f,\"ptp_mv\":%.3f},",
+          motorOnNoise.nSamples, motorOnNoise.meanMv, motorOnNoise.stddevMv, motorOnNoise.ptpMv);
+        P("\"delta_stddev_mv\":%.3f,\"delta_pct\":%.1f},", deltaSd, deltaPct);
+      }
+      break;
+
+    case 7:  // Internal ADC — board noise reference
       if (internalAdcNoise.nSamples > 0) {
         P("\"internal_adc\":{\"n_samples\":%d,", internalAdcNoise.nSamples);
         P("\"mean_mv\":%.1f,\"stddev_mv\":%.2f,\"min_mv\":%.1f,\"max_mv\":%.1f,\"ptp_mv\":%.1f,",
@@ -829,7 +899,7 @@ bool serveHWDiagChunk(int section, char* buf, size_t bufSize, size_t* written) {
       }
       break;
 
-    case 7:  // Temperature
+    case 8:  // Temperature
       if (tempSkipped) {
         P("\"temperature\":{\"skipped\":true},");
       } else {
@@ -842,7 +912,7 @@ bool serveHWDiagChunk(int section, char* buf, size_t bufSize, size_t* written) {
       }
       break;
 
-    case 8:  // TMC + Motors
+    case 9:  // TMC + Motors
       if (tmcSkipped) {
         P("\"tmc_drivers\":{\"skipped\":true},\"motors\":{\"skipped\":true},");
       } else {
@@ -880,7 +950,7 @@ bool serveHWDiagChunk(int section, char* buf, size_t bufSize, size_t* written) {
       }
       break;
 
-    case 9:  // GPIO
+    case 10:  // GPIO
       P("\"gpio\":{");
       for (int i = 0; i < gpioCount; i++) {
         P("%s\"%s\":{\"pin\":%d,\"state\":%d,\"expected\":%d,\"ok\":%s}",
@@ -892,7 +962,7 @@ bool serveHWDiagChunk(int section, char* buf, size_t bufSize, size_t* written) {
       P("},");
       break;
 
-    case 10: {  // Probe + close
+    case 11: {  // Probe + close
       P("\"probe\":{\"voltage_mv\":%.1f,\"calibrated\":%s",
         probeVoltageMv, probeCalibrated ? "true" : "false");
       if (probeCalibrated) {

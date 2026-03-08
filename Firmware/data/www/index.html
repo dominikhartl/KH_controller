@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>KH Controller</title>
-  <link rel="stylesheet" href="style.css?v=8">
+  <link rel="stylesheet" href="style.css?v=9">
 </head>
 <body>
   <header>
@@ -183,7 +183,7 @@
             <input type="number" id="cfg-titration_rpm" step="1" min="10" max="200">
           </label>
           <label>Sample Pump Speed (RPM)
-            <input type="number" id="cfg-sample_pump_rpm" step="5" min="20" max="150">
+            <input type="number" id="cfg-sample_pump_rpm" step="5" min="20" max="400">
           </label>
           <label>Prefill Volume (uL)
             <input type="number" id="cfg-prefill_ul" step="10" min="10" max="500">
@@ -213,7 +213,11 @@
         <details class="config-advanced" style="margin-top:0.5em">
           <summary>Motor Diagnostics</summary>
           <div style="padding:0.5em 0">
-            <button class="cmd-btn" data-cmd="d" id="btn-motor-diag">Run Motor Diagnostics</button>
+            <div style="display:flex;gap:0.5em;flex-wrap:wrap">
+              <button class="cmd-btn" data-cmd="d" id="btn-motor-diag">Both Motors</button>
+              <button class="cmd-btn" data-cmd="ds" id="btn-motor-diag-sample">Sample Pump</button>
+              <button class="cmd-btn" data-cmd="dt" id="btn-motor-diag-titrate">Titration Pump</button>
+            </div>
             <div id="motor-diag-progress" style="display:none;margin-top:0.5em;font-size:0.9em;color:var(--text-secondary)">Running diagnostics...</div>
             <div id="motor-diag-results" style="display:none;margin-top:0.5em">
               <table class="diag-table" style="width:100%;font-size:0.85em;border-collapse:collapse">
@@ -221,13 +225,13 @@
                   <tr><th></th><th>StealthChop</th><th>SpreadCycle</th><th>Recommended</th></tr>
                 </thead>
                 <tbody>
-                  <tr>
+                  <tr id="diag-row-sample">
                     <td><b>Sample Pump</b></td>
                     <td id="diag-sample-sc"></td>
                     <td id="diag-sample-sp"></td>
                     <td id="diag-sample-rec"></td>
                   </tr>
-                  <tr>
+                  <tr id="diag-row-titrate">
                     <td><b>Titration Pump</b></td>
                     <td id="diag-titrate-sc"></td>
                     <td id="diag-titrate-sp"></td>
@@ -235,6 +239,7 @@
                   </tr>
                 </tbody>
               </table>
+              <div id="diag-stall-result" style="margin-top:0.5em;font-size:0.85em;font-weight:500"></div>
               <div style="margin-top:0.5em">
                 <button class="cmd-btn" id="btn-apply-diag">Apply Recommended Settings</button>
               </div>
@@ -385,6 +390,6 @@
   </section>
 
   <script src="chart.min.js?v=2"></script>
-  <script src="app.js?v=9"></script>
+  <script src="app.js?v=10"></script>
 </body>
 </html>

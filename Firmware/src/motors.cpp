@@ -361,6 +361,67 @@ int diagStepTitrate(int revolutions, float rpm, SGSample* samples, int maxSample
   return nSamples;
 }
 
+// Stall speed ramp: ramp sample pump from startRPM to maxRPM in stepRPM increments
+// Returns RPM at which stall detected, or 0.0 if no stall within range
+float diagStallRamp(float startRPM, float maxRPM, float stepRPM, int revsPerStep,
+                    SGSample* samples, int maxSamples, int* totalSamples,
+                    bool dirForward, StallRampCallback rpmCb) {
+  if (!isTMCDetected()) { *totalSamples = 0; return 0.0f; }
+
+  int nSamples = 0;
+  int stallSG = configStore.getSampleStallSG();
+
+  digitalWrite(EN_PIN1, LOW);
+  delay(MOTOR_ENABLE_DELAY_MS);
+  digitalWrite(DIR_PIN1, dirForward ? HIGH : LOW);
+
+  for (float rpm = startRPM; rpm <= maxRPM; rpm += stepRPM) {
+    if (rpmCb) rpmCb(rpm);
+    float halfPeriodUs = rpmToHalfPeriodUs(rpm);
+
+    for (int rev = 0; rev < revsPerStep; rev++) {
+      for (int step = 0; step < STEPS_PER_REVOLUTION; step++) {
+        stepPulseJittered(STEP_PIN1, halfPeriodUs);
+      }
+      // Collect SG after each revolution
+      if (nSamples < maxSamples) {
+        samples[nSamples].sg = getSampleSG();
+        samples[nSamples].diag = digitalRead(DIAG_SAMPLE);
+        nSamples++;
+      }
+      // Immediate stall check via DIAG pin
+      if (isSampleStalled()) {
+        *totalSamples = nSamples;
+        delay(MOTOR_HOLD_MS);
+        digitalWrite(EN_PIN1, HIGH);
+        return rpm;
+      }
+    }
+
+    // Check average SG for this speed step
+    int startIdx = nSamples - revsPerStep;
+    if (startIdx < 0) startIdx = 0;
+    uint32_t sgSum = 0;
+    for (int i = startIdx; i < nSamples; i++) {
+      sgSum += samples[i].sg;
+    }
+    uint16_t sgAvg = sgSum / (nSamples - startIdx);
+    if (sgAvg <= (uint16_t)stallSG) {
+      *totalSamples = nSamples;
+      delay(MOTOR_HOLD_MS);
+      digitalWrite(EN_PIN1, HIGH);
+      return rpm;
+    }
+
+    delay(50); // settle between speed changes
+  }
+
+  *totalSamples = nSamples;
+  delay(MOTOR_HOLD_MS);
+  digitalWrite(EN_PIN1, HIGH);
+  return 0.0f;
+}
+
 void getLastSampleSGStats(uint16_t* avg, uint16_t* min) {
   *avg = sampleSGCount > 0 ? (uint16_t)(sampleSGSum / sampleSGCount) : 0;
   *min = sampleSGCount > 0 ? sampleSGMin : 0;

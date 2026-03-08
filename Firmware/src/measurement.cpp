@@ -144,6 +144,11 @@ static int effectiveOversamplingFast() { return adsActive() ? ADS_OVERSAMPLING_F
 static int effectiveStabSamples() { return adsActive() ? ADS_STAB_SAMPLES : 16; }
 static float effectiveStabThreshold() { return adsActive() ? ADS_STABILIZATION_THRESHOLD_MV : STABILIZATION_THRESHOLD_MV; }
 
+// EMA (exponential moving average) state for low-frequency noise rejection
+static float emaValue = NAN;
+
+void resetADCFilter() { emaValue = NAN; }
+
 static float readADS1115MilliVolts() {
   // Start single-shot conversion
   Wire.beginTransmission(ADS1115_I2C_ADDR);
@@ -175,7 +180,15 @@ static float readADS1115MilliVolts() {
   int16_t raw = ((int16_t)Wire.read() << 8) | Wire.read();
 
   if (raw < 0 || raw >= 32767) return NAN;
-  return (float)raw * ADS_MV_PER_BIT;
+  float mv = (float)raw * ADS_MV_PER_BIT;
+
+  // Apply EMA low-pass filter to reject low-frequency oscillations
+  if (isnan(emaValue)) {
+    emaValue = mv;  // initialize on first valid reading
+  } else {
+    emaValue = ADS_EMA_ALPHA * mv + (1.0f - ADS_EMA_ALPHA) * emaValue;
+  }
+  return emaValue;
 }
 
 // Oversampled ADC read with trimmed mean to reject noise spikes.
@@ -261,6 +274,7 @@ void initExternalADC() {
   if (!isnan(testMv)) {
     adsAvailable = true;
     adsFallback = false;
+    resetADCFilter();
     Serial.printf("ADS1115 initialized with RDY pin (test read: %.2f mV)\n", testMv);
   } else {
     // RDY pin may not be wired — fall back to delay-based reads
@@ -269,6 +283,7 @@ void initExternalADC() {
     if (!isnan(testMv2)) {
       adsAvailable = true;
       adsFallback = false;
+      resetADCFilter();
       Serial.printf("ADS1115 initialized without RDY pin (test read: %.2f mV)\n", testMv2);
     } else {
       adsFallback = true;

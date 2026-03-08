@@ -207,7 +207,7 @@ void measureKHWithValidation() {
   publishKHResult(best);
 }
 
-void runMotorDiagnostic();  // forward declaration
+void runMotorDiagnostic(char mode = 'd');  // forward declaration
 
 void processPendingCommand() {
   char cmd = pendingCmd.load(std::memory_order_acquire);
@@ -312,7 +312,15 @@ void processPendingCommand() {
       broadcastState();
       break;
     case 'd':
-      runMotorDiagnostic();
+      runMotorDiagnostic('d');
+      broadcastState();
+      break;
+    case 'B':
+      runMotorDiagnostic('B');
+      broadcastState();
+      break;
+    case 'C':
+      runMotorDiagnostic('C');
       broadcastState();
       break;
     case 'H':
@@ -378,78 +386,171 @@ static MotorDiagResult analyzeSamples(SGSample* samples, int n) {
   return r;
 }
 
-void runMotorDiagnostic() {
+// Stall ramp RPM progress callback
+static void stallRpmProgress(float rpm) {
+  char buf[32];
+  snprintf(buf, sizeof(buf), "Stall test: %.0f RPM...", rpm);
+  publishMessage(buf);
+}
+
+// mode: 'B' = sample only, 'C' = titrate only, 'd' = both
+void runMotorDiagnostic(char mode) {
   if (!isTMCDetected()) {
     publishError("Motor diagnostics requires TMC2209");
     return;
   }
 
-  publishMessage("Running motor diagnostics...");
   const int DIAG_REVS = 5;
   const int MAX_S = 20;
   SGSample samples[MAX_S];
 
-  // --- Sample pump ---
-  publishMessage("Testing sample pump...");
-  float sampleRPM = configStore.getSamplePumpRPM();
+  // Sample pump results (zeroed defaults for when skipped)
+  MotorDiagResult scSample = {0, 0, 0, true};
+  MotorDiagResult spSample = {0, 0, 0, true};
+  bool sampleRecSC = false;
+  uint16_t sBestMin = 0;
+  float stallRPM = 0.0f;
+  float recommendedRPM = 0.0f;
 
-  // StealthChop
-  setSampleSpreadCycle(false);
-  delay(50);
-  int n = diagStepSample(DIAG_REVS, sampleRPM, samples, MAX_S);
-  MotorDiagResult scSample = analyzeSamples(samples, n);
+  // Titration pump results
+  MotorDiagResult scTitrate = {0, 0, 0, true};
+  MotorDiagResult spTitrate = {0, 0, 0, true};
+  bool titrateRecSC = false;
+  uint16_t tBestMin = 0;
 
-  // SpreadCycle
-  setSampleSpreadCycle(true);
-  delay(50);
-  n = diagStepSample(DIAG_REVS, sampleRPM, samples, MAX_S);
-  MotorDiagResult spSample = analyzeSamples(samples, n);
+  bool doSample = (mode == 'd' || mode == 'B');
+  bool doTitrate = (mode == 'd' || mode == 'C');
 
-  // Restore current setting
-  setSampleSpreadCycle(configStore.getSampleSpreadCycle());
+  publishMessage("Running motor diagnostics...");
 
-  bool sampleRecSC = scSample.sgMin > spSample.sgMin;
-  uint16_t sBestMin = sampleRecSC ? scSample.sgMin : spSample.sgMin;
+  if (doSample) {
+    // --- Sample pump ---
+    publishMessage("Testing sample pump...");
+    float sampleRPM = configStore.getSamplePumpRPM();
 
-  // --- Titration pump ---
-  publishMessage("Testing titration pump...");
-  float titrateRPM = TITRATION_RPM;
+    // StealthChop
+    setSampleSpreadCycle(false);
+    delay(50);
+    int n = diagStepSample(DIAG_REVS, sampleRPM, samples, MAX_S);
+    scSample = analyzeSamples(samples, n);
 
-  // StealthChop
-  setTitrateSpreadCycle(false);
-  delay(50);
-  n = diagStepTitrate(DIAG_REVS, titrateRPM, samples, MAX_S);
-  MotorDiagResult scTitrate = analyzeSamples(samples, n);
+    // SpreadCycle
+    setSampleSpreadCycle(true);
+    delay(50);
+    n = diagStepSample(DIAG_REVS, sampleRPM, samples, MAX_S);
+    spSample = analyzeSamples(samples, n);
 
-  // SpreadCycle
-  setTitrateSpreadCycle(true);
-  delay(50);
-  n = diagStepTitrate(DIAG_REVS, titrateRPM, samples, MAX_S);
-  MotorDiagResult spTitrate = analyzeSamples(samples, n);
+    // Restore current setting
+    setSampleSpreadCycle(configStore.getSampleSpreadCycle());
 
-  // Restore current setting
-  setTitrateSpreadCycle(configStore.getTitrateSpreadCycle());
+    sampleRecSC = scSample.sgMin > spSample.sgMin;
+    sBestMin = sampleRecSC ? scSample.sgMin : spSample.sgMin;
 
-  bool titrateRecSC = scTitrate.sgMin > spTitrate.sgMin;
-  uint16_t tBestMin = titrateRecSC ? scTitrate.sgMin : spTitrate.sgMin;
+    // --- Stall speed ramp (sample pump, both directions) ---
+    publishMessage("Testing stall speed (forward)...");
+
+    // Use recommended chopper mode for stall test
+    setSampleSpreadCycle(!sampleRecSC);
+    delay(50);
+
+    const int RAMP_MAX_SAMPLES = 288;  // (500-30)/5 * 3 = 282 max
+    SGSample rampSamples[RAMP_MAX_SAMPLES];
+    int rampSampleCount = 0;
+
+    float stallFwd = diagStallRamp(30.0f, 500.0f, 5.0f, 3,
+                                    rampSamples, RAMP_MAX_SAMPLES, &rampSampleCount,
+                                    true, stallRpmProgress);
+
+    if (stallFwd > 0) {
+      char buf[48];
+      snprintf(buf, sizeof(buf), "Forward stall at %.0f RPM", stallFwd);
+      publishMessage(buf);
+    } else {
+      publishMessage("No forward stall detected");
+    }
+
+    publishMessage("Testing stall speed (reverse)...");
+    rampSampleCount = 0;
+
+    float stallRev = diagStallRamp(30.0f, 500.0f, 5.0f, 3,
+                                    rampSamples, RAMP_MAX_SAMPLES, &rampSampleCount,
+                                    false, stallRpmProgress);
+
+    if (stallRev > 0) {
+      char buf[48];
+      snprintf(buf, sizeof(buf), "Reverse stall at %.0f RPM", stallRev);
+      publishMessage(buf);
+    } else {
+      publishMessage("No reverse stall detected");
+    }
+
+    // Restore configured chopper mode
+    setSampleSpreadCycle(configStore.getSampleSpreadCycle());
+
+    // Take the lower stall RPM from both directions
+    if (stallFwd > 0 && stallRev > 0) {
+      stallRPM = (stallFwd < stallRev) ? stallFwd : stallRev;
+    } else if (stallFwd > 0) {
+      stallRPM = stallFwd;
+    } else {
+      stallRPM = stallRev;  // 0 if neither stalled
+    }
+    recommendedRPM = stallRPM > 0 ? stallRPM * 0.8f : 0.0f;
+
+    if (stallRPM > 0) {
+      char buf[80];
+      snprintf(buf, sizeof(buf), "Stall at %.0f RPM (fwd:%.0f rev:%.0f, recommended: %.0f RPM)",
+               stallRPM, stallFwd, stallRev, recommendedRPM);
+      publishMessage(buf);
+    } else {
+      publishMessage("No stall detected within test range (30-500 RPM)");
+    }
+  }
+
+  if (doTitrate) {
+    // --- Titration pump ---
+    publishMessage("Testing titration pump...");
+    float titrateRPM = TITRATION_RPM;
+
+    // StealthChop
+    setTitrateSpreadCycle(false);
+    delay(50);
+    int n = diagStepTitrate(DIAG_REVS, titrateRPM, samples, MAX_S);
+    scTitrate = analyzeSamples(samples, n);
+
+    // SpreadCycle
+    setTitrateSpreadCycle(true);
+    delay(50);
+    n = diagStepTitrate(DIAG_REVS, titrateRPM, samples, MAX_S);
+    spTitrate = analyzeSamples(samples, n);
+
+    // Restore current setting
+    setTitrateSpreadCycle(configStore.getTitrateSpreadCycle());
+
+    titrateRecSC = scTitrate.sgMin > spTitrate.sgMin;
+    tBestMin = titrateRecSC ? scTitrate.sgMin : spTitrate.sgMin;
+  }
 
   // Build JSON with snprintf to avoid JsonDocument DRAM overhead
-  char* json = (char*)malloc(512);
+  char* json = (char*)malloc(768);
   if (!json) { publishError("Motor diag: out of memory"); return; }
-  snprintf(json, 512,
-    "{\"type\":\"motorDiag\","
+  snprintf(json, 768,
+    "{\"type\":\"motorDiag\",\"mode\":\"%c\","
     "\"sample\":{\"stealthchop\":{\"sgMin\":%d,\"sgMax\":%d,\"sgAvg\":%d},"
     "\"spreadcycle\":{\"sgMin\":%d,\"sgMax\":%d,\"sgAvg\":%d},"
     "\"recommended\":\"%s\",\"suggestedThreshold\":%d},"
     "\"titrate\":{\"stealthchop\":{\"sgMin\":%d,\"sgMax\":%d,\"sgAvg\":%d},"
     "\"spreadcycle\":{\"sgMin\":%d,\"sgMax\":%d,\"sgAvg\":%d},"
-    "\"recommended\":\"%s\",\"suggestedThreshold\":%d}}",
+    "\"recommended\":\"%s\",\"suggestedThreshold\":%d},"
+    "\"stallTest\":{\"stallRPM\":%.0f,\"recommendedRPM\":%.0f}}",
+    mode,
     scSample.sgMin, scSample.sgMax, (int)scSample.sgAvg,
     spSample.sgMin, spSample.sgMax, (int)spSample.sgAvg,
     sampleRecSC ? "stealthchop" : "spreadcycle", sBestMin / 2,
     scTitrate.sgMin, scTitrate.sgMax, (int)scTitrate.sgAvg,
     spTitrate.sgMin, spTitrate.sgMax, (int)spTitrate.sgAvg,
-    titrateRecSC ? "stealthchop" : "spreadcycle", tBestMin / 2);
+    titrateRecSC ? "stealthchop" : "spreadcycle", tBestMin / 2,
+    stallRPM, recommendedRPM);
   broadcastMotorDiag(json);
   free(json);
   publishMessage("Motor diagnostics complete");
@@ -1330,9 +1431,19 @@ void loop() {
     broadcastState();
   }
 
-  // Track heap watermark
+  // Track heap watermark with low-heap warning
   uint32_t h = ESP.getFreeHeap();
-  if (h < heapMin) heapMin = h;
+  if (h < heapMin) {
+    heapMin = h;
+    if (h < HEAP_WARNING_THRESHOLD) {
+      static unsigned long lastHeapWarn = 0;
+      if (millis() - lastHeapWarn > 60000) {
+        lastHeapWarn = millis();
+        Serial.printf("WARNING: Free heap low: %lu bytes (min: %lu)\n",
+          (unsigned long)h, (unsigned long)heapMin);
+      }
+    }
+  }
 
   // Publish diagnostics every 60s
   if (mqttManager.isConnected() && millis() - lastDiagnosticsTime > 60000) {

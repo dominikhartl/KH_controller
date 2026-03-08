@@ -31,4 +31,13 @@ struct SGSample { uint16_t sg; bool diag; };
 int diagStepSample(int revolutions, float rpm, SGSample* samples, int maxSamples);
 int diagStepTitrate(int revolutions, float rpm, SGSample* samples, int maxSamples);
 
+// Stall speed ramp: run sample pump at increasing RPM until stall detected
+// Returns RPM at which stall occurred (0.0 if no stall within range)
+// dirForward: true = forward (DIR HIGH), false = reverse (DIR LOW)
+// Optional rpmCallback is called at each speed step with the current RPM
+typedef void (*StallRampCallback)(float rpm);
+float diagStallRamp(float startRPM, float maxRPM, float stepRPM, int revsPerStep,
+                    SGSample* samples, int maxSamples, int* totalSamples,
+                    bool dirForward = true, StallRampCallback rpmCb = nullptr);
+
 #endif // MOTORS_H

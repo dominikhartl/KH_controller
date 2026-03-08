@@ -139,6 +139,9 @@ static const float PROBE_NOISE_GOOD_MV = 6.0f;    // mV StdDev — below: health
 static const float PROBE_NOISE_FAIR_MV = 10.0f;   // mV StdDev — below: fair, above: noisy
 static const int CALIBRATION_AGE_WARNING_DAYS = 30;
 
+// Heap monitoring
+static const uint32_t HEAP_WARNING_THRESHOLD = 40000;  // Warn on serial when free heap drops below 40KB
+
 // Minimum valid Unix timestamp (Nov 2023) — used to detect NTP not yet synced
 static const uint32_t MIN_VALID_EPOCH = 1700000000;
 
@@ -149,6 +152,7 @@ static const uint32_t MIN_VALID_EPOCH = 1700000000;
 #define ADS_STAB_SAMPLES               8        // 8 samples × 75ms = 600ms per stab iteration (~6 in 4s timeout)
 static const float ADS_STABILIZATION_THRESHOLD_MV = 4.0f;  // Matches effective threshold from pre-fix ADS1115 reporting
 static const float ADS_MV_PER_BIT = 0.125f;    // GAIN_ONE: ±4.096V / 32768 = 0.125 mV/bit
+static const float ADS_EMA_ALPHA  = 0.3f;      // EMA smoothing factor (0.3 = ~3-sample time constant)
 
 // TMC2209 stepper driver configuration
 #define TMC_SERIAL_BAUD     115200
