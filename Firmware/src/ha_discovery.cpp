@@ -28,6 +28,7 @@ char topicCfgSched[8][60];
 char topicCfgSchedMode[60];
 char topicCfgIntervalHours[60];
 char topicCfgAnchorTime[60];
+char topicCfgMeasTemp[60];
 char topicDiagnostics[60];
 
 // Set command topics
@@ -44,6 +45,7 @@ static char topicCfgStabTimeoutSet[60];
 static char topicCfgSchedSet[8][60];
 static char topicCfgSchedModeSet[60];
 static char topicCfgIntervalHoursSet[60];
+static char topicCfgMeasTempSet[60];
 static char topicCfgAnchorTimeSet[60];
 
 static const char* availability_topic = nullptr;
@@ -78,6 +80,8 @@ static void initTopics() {
   snprintf(topicCfgMinStartPHSet, sizeof(topicCfgMinStartPHSet), "%s/config/min_start_ph/set", deviceName);
   snprintf(topicCfgStabTimeout, sizeof(topicCfgStabTimeout), "%s/config/stab_timeout", deviceName);
   snprintf(topicCfgStabTimeoutSet, sizeof(topicCfgStabTimeoutSet), "%s/config/stab_timeout/set", deviceName);
+  snprintf(topicCfgMeasTemp, sizeof(topicCfgMeasTemp), "%s/config/meas_temp", deviceName);
+  snprintf(topicCfgMeasTempSet, sizeof(topicCfgMeasTempSet), "%s/config/meas_temp/set", deviceName);
   snprintf(topicDiagnostics, sizeof(topicDiagnostics), "%s/diagnostics", deviceName);
 
   for (int i = 0; i < 8; i++) {
@@ -120,8 +124,11 @@ static void addDeviceBlock(JsonObject& doc) {
 
 static void publishDiscoveryPayload(const char* discoveryTopic, JsonDocument& doc) {
   char buf[768];
-  serializeJson(doc, buf, sizeof(buf));
-  mqttManager.publish(discoveryTopic, buf, true);
+  size_t len = serializeJson(doc, buf, sizeof(buf));
+  bool ok = mqttManager.publish(discoveryTopic, buf, true);
+  if (!ok) {
+    Serial.printf("HA Discovery FAILED: %s (len=%u)\n", discoveryTopic, (unsigned)len);
+  }
   delay(100);
   mqttManager.getClient().loop();
 }
@@ -129,10 +136,13 @@ static void publishDiscoveryPayload(const char* discoveryTopic, JsonDocument& do
 static void publishSensorDiscovery(const char* id, const char* name, const char* statTopic,
                                     const char* unit, const char* devClass,
                                     const char* valTpl, const char* entityCat) {
+  char uid[64];
+  snprintf(uid, sizeof(uid), "%s_%s", deviceIdLower, id);
+
   JsonDocument doc;
   doc["name"] = name;
   doc["stat_t"] = statTopic;
-  doc["uniq_id"] = id;
+  doc["uniq_id"] = uid;
   doc["avty_t"] = availability_topic;
   if (unit) doc["unit_of_meas"] = unit;
   if (devClass) doc["dev_cla"] = devClass;
@@ -151,11 +161,14 @@ static void publishNumberDiscovery(const char* id, const char* name,
                                     const char* statTopic, const char* cmdTopic,
                                     float minVal, float maxVal, float step,
                                     const char* unit) {
+  char uid[64];
+  snprintf(uid, sizeof(uid), "%s_%s", deviceIdLower, id);
+
   JsonDocument doc;
   doc["name"] = name;
   doc["stat_t"] = statTopic;
   doc["cmd_t"] = cmdTopic;
-  doc["uniq_id"] = id;
+  doc["uniq_id"] = uid;
   doc["avty_t"] = availability_topic;
   doc["min"] = minVal;
   doc["max"] = maxVal;
@@ -174,11 +187,14 @@ static void publishNumberDiscovery(const char* id, const char* name,
 static void publishButtonDiscovery(const char* id, const char* name,
                                     const char* cmdTopic, const char* payload,
                                     const char* entityCat) {
+  char uid[64];
+  snprintf(uid, sizeof(uid), "%s_%s", deviceIdLower, id);
+
   JsonDocument doc;
   doc["name"] = name;
   doc["cmd_t"] = cmdTopic;
   doc["pl_prs"] = payload;
-  doc["uniq_id"] = id;
+  doc["uniq_id"] = uid;
   doc["avty_t"] = availability_topic;
   if (entityCat) doc["ent_cat"] = entityCat;
   JsonObject root = doc.as<JsonObject>();
@@ -192,11 +208,14 @@ static void publishButtonDiscovery(const char* id, const char* name,
 static void publishSelectDiscovery(const char* id, const char* name,
                                     const char* statTopic, const char* cmdTopic,
                                     const char** options, uint8_t optCount) {
+  char uid[64];
+  snprintf(uid, sizeof(uid), "%s_%s", deviceIdLower, id);
+
   JsonDocument doc;
   doc["name"] = name;
   doc["stat_t"] = statTopic;
   doc["cmd_t"] = cmdTopic;
-  doc["uniq_id"] = id;
+  doc["uniq_id"] = uid;
   doc["avty_t"] = availability_topic;
   doc["ent_cat"] = "config";
   JsonArray opts = doc["options"].to<JsonArray>();
@@ -239,12 +258,6 @@ void publishAllDiscovery() {
   // Quality metrics
   { char t[50]; snprintf(t, sizeof(t), "%s/gran_r2", deviceName);
     publishSensorDiscovery("khv3_gran_r2", "Gran R\u00b2", t, nullptr, nullptr, nullptr, "diagnostic"); }
-  { char t[50]; snprintf(t, sizeof(t), "%s/cross_val_diff", deviceName);
-    publishSensorDiscovery("khv3_cross_val", "Cross Validation Diff", t, "dKH", nullptr, nullptr, "diagnostic"); }
-  { char t[50]; snprintf(t, sizeof(t), "%s/data_points", deviceName);
-    publishSensorDiscovery("khv3_data_pts", "Data Points", t, nullptr, nullptr, nullptr, "diagnostic"); }
-  { char t[50]; snprintf(t, sizeof(t), "%s/meas_time", deviceName);
-    publishSensorDiscovery("khv3_meas_time", "Measurement Time", t, "s", "duration", nullptr, "diagnostic"); }
 
   publishSensorDiscovery("khv3_mes_ph", "Measured pH", mesPhTopic, "pH", nullptr, nullptr, nullptr);
   publishSensorDiscovery("khv3_rssi", "WiFi Signal", topicDiagnostics, "dBm", "signal_strength",
@@ -253,16 +266,14 @@ void publishAllDiscovery() {
                           "{{ value_json.uptime }}", "diagnostic");
 
   // Probe health sensors
-  publishSensorDiscovery("khv3_acid_eff", "Acid Slope Efficiency", topicDiagnostics, "%", nullptr,
-                          "{{ value_json.acid_efficiency }}", "diagnostic");
-  publishSensorDiscovery("khv3_alk_eff", "Alkaline Slope Efficiency", topicDiagnostics, "%", nullptr,
-                          "{{ value_json.alk_efficiency }}", "diagnostic");
   publishSensorDiscovery("khv3_probe_asym", "Probe Asymmetry", topicDiagnostics, "%", nullptr,
                           "{{ value_json.probe_asymmetry }}", "diagnostic");
-  publishSensorDiscovery("khv3_probe_resp", "Probe Response Time", topicDiagnostics, "ms", nullptr,
-                          "{{ value_json.probe_response }}", "diagnostic");
   publishSensorDiscovery("khv3_cal_age", "Calibration Age", topicDiagnostics, "d", nullptr,
                           "{{ value_json.cal_age }}", "diagnostic");
+  publishSensorDiscovery("khv3_sample_cal_age", "Sample Pump Cal Age", topicDiagnostics, "d", nullptr,
+                          "{{ value_json.sample_cal_age }}", "diagnostic");
+  publishSensorDiscovery("khv3_titrate_cal_age", "Titration Pump Cal Age", topicDiagnostics, "d", nullptr,
+                          "{{ value_json.titrate_cal_age }}", "diagnostic");
   publishSensorDiscovery("khv3_water_temp", "Water Temperature", topicDiagnostics, "°C", "temperature",
                           "{{ value_json.water_temp }}", nullptr);
 
@@ -272,70 +283,80 @@ void publishAllDiscovery() {
   publishSensorDiscovery("khv3_titrate_sg", "Titration Pump Load", topicDiagnostics, nullptr, nullptr,
                           "{{ value_json.titrate_sg }}", "diagnostic");
   {
+    char uid[64];
+    snprintf(uid, sizeof(uid), "%s_tube_health", deviceIdLower);
     JsonDocument doc;
     doc["name"] = "Tube Health";
     doc["stat_t"] = topicDiagnostics;
-    doc["uniq_id"] = "khv3_tube_health";
+    doc["uniq_id"] = uid;
     doc["avty_t"] = availability_topic;
     doc["val_tpl"] = "{{ value_json.tube_health }}";
     doc["ent_cat"] = "diagnostic";
     JsonObject root = doc.as<JsonObject>();
     addDeviceBlock(root);
     char dt[128];
-    snprintf(dt, sizeof(dt), "homeassistant/sensor/%s/khv3_tube_health/config", deviceIdLower);
+    snprintf(dt, sizeof(dt), "homeassistant/sensor/%s/tube_health/config", deviceIdLower);
     publishDiscoveryPayload(dt, doc);
   }
 
   // Probe health text sensor (no unit, no state_class)
   {
+    char uid[64];
+    snprintf(uid, sizeof(uid), "%s_probe_health", deviceIdLower);
     JsonDocument doc;
     doc["name"] = "Probe Health";
     doc["stat_t"] = topicDiagnostics;
-    doc["uniq_id"] = "khv3_probe_health";
+    doc["uniq_id"] = uid;
     doc["avty_t"] = availability_topic;
     doc["val_tpl"] = "{{ value_json.probe_health }}";
     doc["ent_cat"] = "diagnostic";
     JsonObject root = doc.as<JsonObject>();
     addDeviceBlock(root);
     char dt[128];
-    snprintf(dt, sizeof(dt), "homeassistant/sensor/%s/khv3_probe_health/config", deviceIdLower);
+    snprintf(dt, sizeof(dt), "homeassistant/sensor/%s/probe_health/config", deviceIdLower);
     publishDiscoveryPayload(dt, doc);
   }
 
   // Text sensors (no unit, no state_class)
   {
+    char uid[64];
+    snprintf(uid, sizeof(uid), "%s_error", deviceIdLower);
     JsonDocument doc;
     doc["name"] = "Last Error";
     doc["stat_t"] = errorTopic;
-    doc["uniq_id"] = "khv3_error";
+    doc["uniq_id"] = uid;
     doc["avty_t"] = availability_topic;
     doc["ent_cat"] = "diagnostic";
     JsonObject root = doc.as<JsonObject>();
     addDeviceBlock(root);
     char dt[128];
-    snprintf(dt, sizeof(dt), "homeassistant/sensor/%s/khv3_error/config", deviceIdLower);
+    snprintf(dt, sizeof(dt), "homeassistant/sensor/%s/error/config", deviceIdLower);
     publishDiscoveryPayload(dt, doc);
   }
   {
+    char uid[64];
+    snprintf(uid, sizeof(uid), "%s_message", deviceIdLower);
     JsonDocument doc;
     doc["name"] = "Last Message";
     doc["stat_t"] = messageTopic;
-    doc["uniq_id"] = "khv3_message";
+    doc["uniq_id"] = uid;
     doc["avty_t"] = availability_topic;
     doc["ent_cat"] = "diagnostic";
     JsonObject root = doc.as<JsonObject>();
     addDeviceBlock(root);
     char dt[128];
-    snprintf(dt, sizeof(dt), "homeassistant/sensor/%s/khv3_message/config", deviceIdLower);
+    snprintf(dt, sizeof(dt), "homeassistant/sensor/%s/message/config", deviceIdLower);
     publishDiscoveryPayload(dt, doc);
   }
 
   // Binary sensor - connectivity
   {
+    char uid[64];
+    snprintf(uid, sizeof(uid), "%s_connectivity", deviceIdLower);
     JsonDocument doc;
     doc["name"] = "Connectivity";
     doc["stat_t"] = availability_topic;
-    doc["uniq_id"] = "khv3_connectivity";
+    doc["uniq_id"] = uid;
     doc["dev_cla"] = "connectivity";
     doc["pl_on"] = "online";
     doc["pl_off"] = "offline";
@@ -366,6 +387,8 @@ void publishAllDiscovery() {
                           topicCfgMinStartPH, topicCfgMinStartPHSet, 6.0, 9.0, 0.1, "pH");
   publishNumberDiscovery("khv3_stab_timeout", "Stabilization Timeout",
                           topicCfgStabTimeout, topicCfgStabTimeoutSet, 500, 5000, 100, "ms");
+  publishNumberDiscovery("khv3_meas_temp", "Measurement Temperature",
+                          topicCfgMeasTemp, topicCfgMeasTempSet, 0.0, 40.0, 0.5, "°C");
 
   {
     const char* epOpts[] = {"Gran", "Fixed"};
@@ -376,15 +399,16 @@ void publishAllDiscovery() {
 
   // Schedule text inputs (HH:MM format)
   for (int i = 0; i < 8; i++) {
-    char id[20], name[30];
-    snprintf(id, sizeof(id), "khv3_sched_%d", i);
+    char id[20], name[30], uid[64];
+    snprintf(id, sizeof(id), "sched_%d", i);
+    snprintf(uid, sizeof(uid), "%s_sched_%d", deviceIdLower, i);
     snprintf(name, sizeof(name), "Schedule %d", i + 1);
 
     JsonDocument doc;
     doc["name"] = name;
     doc["stat_t"] = topicCfgSched[i];
     doc["cmd_t"] = topicCfgSchedSet[i];
-    doc["uniq_id"] = id;
+    doc["uniq_id"] = uid;
     doc["avty_t"] = availability_topic;
     doc["pattern"] = "^([01]?[0-9]|2[0-3]):[0-5][0-9]$";
     doc["ent_cat"] = "config";
@@ -414,18 +438,20 @@ void publishAllDiscovery() {
 
   // Anchor time text input
   {
+    char uid[64];
+    snprintf(uid, sizeof(uid), "%s_anchor_time", deviceIdLower);
     JsonDocument doc;
     doc["name"] = "Anchor Time";
     doc["stat_t"] = topicCfgAnchorTime;
     doc["cmd_t"] = topicCfgAnchorTimeSet;
-    doc["uniq_id"] = "khv3_anchor_time";
+    doc["uniq_id"] = uid;
     doc["avty_t"] = availability_topic;
     doc["pattern"] = "^([01]?[0-9]|2[0-3]):[0-5][0-9]$";
     doc["ent_cat"] = "config";
     JsonObject root = doc.as<JsonObject>();
     addDeviceBlock(root);
     char dt[128];
-    snprintf(dt, sizeof(dt), "homeassistant/text/%s/khv3_anchor_time/config", deviceIdLower);
+    snprintf(dt, sizeof(dt), "homeassistant/text/%s/anchor_time/config", deviceIdLower);
     publishDiscoveryPayload(dt, doc);
   }
 
@@ -441,7 +467,8 @@ void publishAllDiscovery() {
   publishButtonDiscovery("khv3_btn_cal10", "Calibrate pH 10", cmdTopic, "10", "config");
   publishButtonDiscovery("khv3_btn_restart", "Restart", cmdTopic, "o", "config");
 
-  Serial.println("HA Discovery published");
+  Serial.printf("HA Discovery published (%s, MQTT %s)\n",
+                 deviceName, mqttManager.isConnected() ? "connected" : "DISCONNECTED");
 
   // Subscribe to config set topics
   mqttManager.subscribe(topicCfgTitVolSet);
@@ -454,6 +481,7 @@ void publishAllDiscovery() {
   mqttManager.subscribe(topicCfgEpMethodSet);
   mqttManager.subscribe(topicCfgMinStartPHSet);
   mqttManager.subscribe(topicCfgStabTimeoutSet);
+  mqttManager.subscribe(topicCfgMeasTempSet);
   for (int i = 0; i < 8; i++) {
     mqttManager.subscribe(topicCfgSchedSet[i]);
   }
@@ -474,6 +502,7 @@ void publishAllConfigStates() {
                       (configStore.getEndpointMethod() == 1) ? "Fixed" : "Gran", true);
   mqttManager.publish(topicCfgMinStartPH, String(configStore.getMinStartPH(), 1).c_str(), true);
   mqttManager.publish(topicCfgStabTimeout, String(configStore.getStabilizationTimeout()).c_str(), true);
+  mqttManager.publish(topicCfgMeasTemp, String(configStore.getMeasTempC(), 1).c_str(), true);
 
   for (int i = 0; i < 8; i++) {
     char timeBuf[6];
@@ -501,14 +530,9 @@ void publishDiagnostics() {
   extern uint32_t heapMin;
   doc["heap_min"] = heapMin;
 
-  // Probe health metrics — Nernst efficiency per segment
-  float acidEff = getAcidEfficiency();
-  float alkEff = getAlkalineEfficiency();
+  // Probe health metrics
   float asym = getProbeAsymmetry();
-  doc["acid_efficiency"] = isnan(acidEff) ? 0 : (int)(acidEff + 0.5f);
-  doc["alk_efficiency"] = isnan(alkEff) ? 0 : (int)(alkEff + 0.5f);
   doc["probe_asymmetry"] = isnan(asym) ? 0 : asym;
-  doc["probe_response"] = getLastStabilizationMs();
   doc["probe_health"] = getProbeHealth();
 
   doc["water_temp"] = getWaterTemperatureC();
@@ -520,6 +544,15 @@ void publishDiagnostics() {
     doc["cal_age"] = (int)((now - calTs) / 86400);
   } else {
     doc["cal_age"] = -1;  // No calibration timestamp recorded
+  }
+
+  // Pump calibration ages
+  {
+    uint32_t sampCalTs = configStore.getSampleCalTimestamp();
+    uint32_t titCalTs = configStore.getTitrationCalTimestamp();
+    time_t now2 = time(nullptr);
+    doc["sample_cal_age"] = (sampCalTs > 0 && now2 > 1000000000) ? (int)((now2 - sampCalTs) / 86400) : -1;
+    doc["titrate_cal_age"] = (titCalTs > 0 && now2 > 1000000000) ? (int)((now2 - titCalTs) / 86400) : -1;
   }
 
   // Motor/tube health
@@ -571,6 +604,9 @@ void handleConfigSet(const char* topic, const char* payload) {
     configStore.setStabilizationTimeout((int)val);
     setStabilizationTimeoutMs(configStore.getStabilizationTimeout());
     mqttManager.publish(topicCfgStabTimeout, String(configStore.getStabilizationTimeout()).c_str(), true);
+  } else if (strcmp(topic, topicCfgMeasTempSet) == 0) {
+    configStore.setMeasTempC(val);
+    mqttManager.publish(topicCfgMeasTemp, String(val, 1).c_str(), true);
   } else if (strcmp(topic, topicCfgSchedModeSet) == 0) {
     uint8_t mode = (strcmp(payload, "interval") == 0) ? 1 : 0;
     configStore.setScheduleMode(mode);

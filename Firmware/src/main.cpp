@@ -61,9 +61,6 @@ char MQkhValue[50];
 char MQconfidence[50];
 char MQkhSlope[50];
 char MQgranR2[50];
-char MQcrossVal[50];
-char MQdataPoints[50];
-char MQmeasTime[50];
 
 // --- Deferred command execution ---
 // Long-running commands (measureKH, calibrate) must run on loopTask, not AsyncTCP.
@@ -110,14 +107,6 @@ static void publishKHResult(const KHResult& r) {
   // Quality metrics
   { char mqBuf[16]; snprintf(mqBuf, sizeof(mqBuf), "%.4f", r.granR2);
     mqttManager.publish(MQgranR2, mqBuf, true); }
-  if (!isnan(r.crossValDiff)) {
-    char mqBuf[16]; snprintf(mqBuf, sizeof(mqBuf), "%.3f", r.crossValDiff);
-    mqttManager.publish(MQcrossVal, mqBuf, true);
-  }
-  { char mqBuf[16]; snprintf(mqBuf, sizeof(mqBuf), "%d", r.dataPointCount);
-    mqttManager.publish(MQdataPoints, mqBuf, true); }
-  { char mqBuf[16]; snprintf(mqBuf, sizeof(mqBuf), "%lu", r.elapsedSec);
-    mqttManager.publish(MQmeasTime, mqBuf, true); }
 
   // Compute and publish KH trend slope (dKH/day) from configured window
   float slope = computeKHSlope();
@@ -1445,9 +1434,6 @@ void setup() {
   snprintf(MQconfidence, sizeof(MQconfidence), "%s/confidence", deviceName);
   snprintf(MQkhSlope, sizeof(MQkhSlope), "%s/kh_slope", deviceName);
   snprintf(MQgranR2, sizeof(MQgranR2), "%s/gran_r2", deviceName);
-  snprintf(MQcrossVal, sizeof(MQcrossVal), "%s/cross_val_diff", deviceName);
-  snprintf(MQdataPoints, sizeof(MQdataPoints), "%s/data_points", deviceName);
-  snprintf(MQmeasTime, sizeof(MQmeasTime), "%s/meas_time", deviceName);
 
   // Non-blocking WiFi
   wifiManager.begin(WIFI_SSID, WIFI_PASSWORD);

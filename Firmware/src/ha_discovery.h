@@ -20,6 +20,7 @@ extern char topicCfgSched[8][60];
 extern char topicCfgSchedMode[60];
 extern char topicCfgIntervalHours[60];
 extern char topicCfgAnchorTime[60];
+extern char topicCfgMeasTemp[60];
 extern char topicDiagnostics[60];
 
 #endif // HA_DISCOVERY_H
