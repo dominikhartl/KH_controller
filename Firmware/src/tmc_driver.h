@@ -14,6 +14,12 @@ uint16_t getSampleSG();
 uint16_t getTitrateSG();
 void setSampleSpreadCycle(bool enable);
 void setTitrateSpreadCycle(bool enable);
+void resetSampleStallGuard();
+void resetTitrateStallGuard();
+void disableSampleStallGuard();
+void enableSampleStallGuard();
+void disableTitrateStallGuard();
+void enableTitrateStallGuard();
 void printTMCDebug();
 
 // Diagnostic register accessors (read-only, for hardware diagnostics)

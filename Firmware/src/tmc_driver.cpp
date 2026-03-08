@@ -75,6 +75,38 @@ uint16_t getTitrateSG() {
   return titrateDriver ? titrateDriver->SG_RESULT() : 0;
 }
 
+void resetSampleStallGuard() {
+  if (!sampleDriver) return;
+  sampleDriver->SGTHRS(0);        // disable StallGuard → DIAG goes LOW
+  delay(10);
+  sampleDriver->SGTHRS(TMC_STALL_THRESHOLD);  // re-enable with fresh state
+  sampleDriver->SG_RESULT();      // read to clear any pending DIAG
+}
+
+void resetTitrateStallGuard() {
+  if (!titrateDriver) return;
+  titrateDriver->SGTHRS(0);
+  delay(10);
+  titrateDriver->SGTHRS(TMC_STALL_THRESHOLD);
+  titrateDriver->SG_RESULT();
+}
+
+void disableSampleStallGuard() {
+  if (sampleDriver) sampleDriver->SGTHRS(0);
+}
+
+void enableSampleStallGuard() {
+  if (sampleDriver) sampleDriver->SGTHRS(TMC_STALL_THRESHOLD);
+}
+
+void disableTitrateStallGuard() {
+  if (titrateDriver) titrateDriver->SGTHRS(0);
+}
+
+void enableTitrateStallGuard() {
+  if (titrateDriver) titrateDriver->SGTHRS(TMC_STALL_THRESHOLD);
+}
+
 void setSampleSpreadCycle(bool enable) {
   if (sampleDriver) sampleDriver->en_spreadCycle(enable);
 }

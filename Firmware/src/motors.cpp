@@ -401,23 +401,29 @@ float diagStallRamp(float startRPM, float maxRPM, float stepRPM, int revsPerStep
   int nSamples = 0;
   int stallSG = configStore.getSampleStallSG();
 
+  // Disable hardware DIAG stall — SGTHRS=50 triggers at SG≤100 which overlaps
+  // normal operating range (SG min ~94). Use software SG check only.
+  disableSampleStallGuard();  // SGTHRS=0 for entire ramp
   clearStallFlag();
   digitalWrite(EN_PIN1, LOW);
   delay(MOTOR_ENABLE_DELAY_MS);
   digitalWrite(DIR_PIN1, dirForward ? HIGH : LOW);
   delay(100);
 
-  // Warm-up: run 3 revolutions at start speed so StallGuard stabilizes in new direction
+  // Warm-up: run 5 revolutions at start speed so StallGuard stabilizes in new direction
   {
     float warmupUs = rpmToHalfPeriodUs(startRPM);
-    for (int rev = 0; rev < 3; rev++) {
+    for (int rev = 0; rev < 5; rev++) {
       for (int step = 0; step < STEPS_PER_REVOLUTION; step++) {
         stepPulseJittered(STEP_PIN1, warmupUs);
       }
     }
-    clearStallFlag();  // discard any transient stall during warm-up
+    delay(50);
   }
 
+  // Software SG stall detection only (DIAG disabled).
+  // Skip first 4 speed steps for StallGuard settling after direction change.
+  int stepCount = 0;
   for (float rpm = startRPM; rpm <= maxRPM; rpm += stepRPM) {
     if (rpmCb) rpmCb(rpm);
     float halfPeriodUs = rpmToHalfPeriodUs(rpm);
@@ -432,29 +438,17 @@ float diagStallRamp(float startRPM, float maxRPM, float stepRPM, int revsPerStep
         samples[nSamples].diag = digitalRead(DIAG_SAMPLE);
         nSamples++;
       }
-      // Immediate stall check via DIAG pin
-      if (isSampleStalled()) {
+      // Stall check via SG value (skip first 4 speed steps for settling)
+      if (stepCount >= 4 && stallSG > 0 && nSamples > 0
+          && samples[nSamples-1].sg <= (uint16_t)stallSG) {
         *totalSamples = nSamples;
         delay(MOTOR_HOLD_MS);
         digitalWrite(EN_PIN1, HIGH);
+        enableSampleStallGuard();  // restore for normal operation
         return rpm;
       }
     }
-
-    // Check average SG for this speed step
-    int startIdx = nSamples - revsPerStep;
-    if (startIdx < 0) startIdx = 0;
-    uint32_t sgSum = 0;
-    for (int i = startIdx; i < nSamples; i++) {
-      sgSum += samples[i].sg;
-    }
-    uint16_t sgAvg = sgSum / (nSamples - startIdx);
-    if (sgAvg <= (uint16_t)stallSG) {
-      *totalSamples = nSamples;
-      delay(MOTOR_HOLD_MS);
-      digitalWrite(EN_PIN1, HIGH);
-      return rpm;
-    }
+    stepCount++;
 
     delay(50); // settle between speed changes
   }
@@ -462,6 +456,7 @@ float diagStallRamp(float startRPM, float maxRPM, float stepRPM, int revsPerStep
   *totalSamples = nSamples;
   delay(MOTOR_HOLD_MS);
   digitalWrite(EN_PIN1, HIGH);
+  enableSampleStallGuard();  // restore for normal operation
   return 0.0f;
 }
 
@@ -473,23 +468,27 @@ float diagStallRampTitrate(float startRPM, float maxRPM, float stepRPM, int revs
   int nSamples = 0;
   int stallSG = configStore.getTitrateStallSG();
 
+  // Disable hardware DIAG stall — use software SG check only
+  disableTitrateStallGuard();  // SGTHRS=0 for entire ramp
   clearStallFlag();
   digitalWrite(EN_PIN2, LOW);
   delay(MOTOR_ENABLE_DELAY_MS);
   digitalWrite(DIR_PIN2, dirForward ? LOW : HIGH);
   delay(100);
 
-  // Warm-up: run 3 revolutions at start speed so StallGuard stabilizes
+  // Warm-up: run 5 revolutions at start speed so StallGuard stabilizes
   {
     float warmupUs = rpmToHalfPeriodUs(startRPM);
-    for (int rev = 0; rev < 3; rev++) {
+    for (int rev = 0; rev < 5; rev++) {
       for (int step = 0; step < STEPS_PER_REVOLUTION; step++) {
         stepPulse(STEP_PIN2, warmupUs);
       }
     }
-    clearStallFlag();
+    delay(50);
   }
 
+  // Software SG stall detection only (DIAG disabled).
+  int stepCount = 0;
   for (float rpm = startRPM; rpm <= maxRPM; rpm += stepRPM) {
     if (rpmCb) rpmCb(rpm);
     float halfPeriodUs = rpmToHalfPeriodUs(rpm);
@@ -503,27 +502,17 @@ float diagStallRampTitrate(float startRPM, float maxRPM, float stepRPM, int revs
         samples[nSamples].diag = digitalRead(DIAG_TITRATE);
         nSamples++;
       }
-      if (isTitrateStalled()) {
+      // Stall check via SG value (skip first 4 speed steps for settling)
+      if (stepCount >= 4 && stallSG > 0 && nSamples > 0
+          && samples[nSamples-1].sg <= (uint16_t)stallSG) {
         *totalSamples = nSamples;
         delay(MOTOR_HOLD_MS);
         digitalWrite(EN_PIN2, HIGH);
+        enableTitrateStallGuard();  // restore for normal operation
         return rpm;
       }
     }
-
-    int startIdx = nSamples - revsPerStep;
-    if (startIdx < 0) startIdx = 0;
-    uint32_t sgSum = 0;
-    for (int i = startIdx; i < nSamples; i++) {
-      sgSum += samples[i].sg;
-    }
-    uint16_t sgAvg = sgSum / (nSamples - startIdx);
-    if (sgAvg <= (uint16_t)stallSG) {
-      *totalSamples = nSamples;
-      delay(MOTOR_HOLD_MS);
-      digitalWrite(EN_PIN2, HIGH);
-      return rpm;
-    }
+    stepCount++;
 
     delay(50);
   }
@@ -531,6 +520,7 @@ float diagStallRampTitrate(float startRPM, float maxRPM, float stepRPM, int revs
   *totalSamples = nSamples;
   delay(MOTOR_HOLD_MS);
   digitalWrite(EN_PIN2, HIGH);
+  enableTitrateStallGuard();  // restore for normal operation
   return 0.0f;
 }
 
