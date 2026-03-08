@@ -45,7 +45,7 @@ static const int STEPS_PER_REVOLUTION = 1600;
 inline float rpmToHalfPeriodUs(float rpm) { return 18750.0f / rpm; }
 
 // Motor speeds (RPM) — all stepper speeds defined here, converted to us internally
-static const float MOTOR_TARGET_RPM   = 75.0f;   // Sample pump cruising speed
+static const float MOTOR_TARGET_RPM   = 100.0f;  // Sample pump cruising speed
 static const float MOTOR_START_RPM    = 9.4f;     // Acceleration ramp start speed (~2000 us)
 static const float TITRATION_RPM      = 47.0f;    // Titration pump speed (~400 us)
 static const float PREFILL_RPM        = 63.0f;    // Prefill/fill pump speed (~300 us)
@@ -59,14 +59,15 @@ static const int TITRATION_MIX_DELAY_MEDIUM_MS = 1000; // Medium zone mixing (st
 static const int TITRATION_MIX_DELAY_GRAN_MS = 2500;   // Gran zone mixing (explicit stabilization follows)
 static const int MAX_TITRATION_UNITS = 10000;
 static const int FILL_VOLUME = 100;
-static const int STIRRER_SPEED = 230;            // PWM duty cycle (0-255), not RPM
+// Stirrer speed is configured via configStore (80-100%, default 90%)
 static const int STIRRER_WARMUP_MS = 3000;
 static const int MEASUREMENT_DELAY_MS = 50;
 
 // Measurement defaults
 static const float ENDPOINT_PH = 4.6f;            // Fixed endpoint titration pH
 static const float FIXED_ENDPOINT_STOP_PH = 4.0f; // Stop titrating here in fixed endpoint mode
-static const int SAMPLE_PUMP_VOLUME = 350;
+static const int SAMPLE_PUMP_VOLUME = 350;        // Legacy: use configStore.getSampleCalRevsPerML() * getSampleVolume()
+static const int SAMPLE_CAL_REVOLUTIONS = 350;    // Revolutions used during sample pump calibration
 static const int CALIBRATION_TARGET_UNITS = 6000;
 static const float FAST_TITRATION_PH_DEFAULT = 5.0f; // pH threshold: fast→precise titration
 

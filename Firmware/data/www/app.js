@@ -89,11 +89,11 @@
   function handleMsg(d) {
     if (d.type === 'state') updateState(d);
     else if (d.type === 'mesPh') updateLivePH(d);
-    else if (d.type === 'mesStart') clearLiveChart();
-    else if (d.type === 'mesData') loadMesData(d);
+    else if (d.type === 'mesStart') { clearLiveChart(); setMeasuringMode(true); }
+    else if (d.type === 'mesData') { loadMesData(d); setMeasuringMode(false); }
     else if (d.type === 'history') updateHistory(d);
     else if (d.type === 'msg') addLogEntry('msg', d.text);
-    else if (d.type === 'error') { addLogEntry('error', d.text); updateProgress(100); }
+    else if (d.type === 'error') { addLogEntry('error', d.text); updateProgress(100); setMeasuringMode(false); }
     else if (d.type === 'logData') loadLogData(d.entries);
     else if (d.type === 'granData') updateGranChart(d);
     else if (d.type === 'progress') updateProgress(d.pct);
@@ -220,6 +220,29 @@
       setInput('cfg-slope_hours', d.config.slope_hours);
       setInput('cfg-stirrer_speed', d.config.stirrer_speed);
 
+      // Sample pump calibration info
+      var calInfo = document.getElementById('sample-cal-info');
+      if (calInfo && d.config.sample_cal_revs_per_ml) {
+        calInfo.textContent = 'Cal factor: ' + d.config.sample_cal_revs_per_ml.toFixed(2) + ' revs/mL';
+      }
+
+      // Pump calibration age badges
+      var sampAge = document.getElementById('sample-cal-age');
+      if (sampAge && d.config.sample_cal_age != null) {
+        sampAge.textContent = d.config.sample_cal_age < 0 ? '(never calibrated)' : '(' + d.config.sample_cal_age + 'd ago)';
+      }
+      var titAge = document.getElementById('titration-cal-age');
+      if (titAge && d.config.titration_cal_age != null) {
+        titAge.textContent = d.config.titration_cal_age < 0 ? '(never calibrated)' : '(' + d.config.titration_cal_age + 'd ago)';
+      }
+
+      // Max RPM hints from motor diagnostics (separate per pump)
+      var hintSamp = document.getElementById('hint-sample-rpm');
+      if (hintSamp && d.config.sample_max_rpm > 0) hintSamp.textContent = '(max ' + Math.round(d.config.sample_max_rpm) + ')';
+      var hintTit = document.getElementById('hint-titration-rpm');
+      if (hintTit && d.config.titrate_max_rpm > 0) hintTit.textContent = '(max ' + Math.round(d.config.titrate_max_rpm) + ')';
+
+
       // Tube baseline info
       var sbl = d.config.sample_sg_baseline || 0;
       var tbl = d.config.titrate_sg_baseline || 0;
@@ -341,6 +364,21 @@
     if (calVEl && p.v4 != null) {
       var fmt = function(v) { return (isNaN(v) || v === 0) ? '--' : v.toFixed(0); };
       calVEl.innerHTML = fmt(p.v4) + ' / ' + fmt(p.v7) + ' / ' + fmt(p.v10) + ' <small>mV</small>';
+    }
+
+    // pH calibration mV per column
+    var fmv = function(v) { return (isNaN(v) || v === 0) ? '--' : v.toFixed(0) + ' mV'; };
+    var mv4 = document.getElementById('cal-mv-4');
+    var mv7 = document.getElementById('cal-mv-7');
+    var mv10 = document.getElementById('cal-mv-10');
+    if (mv4 && p.v4 != null) mv4.textContent = fmv(p.v4);
+    if (mv7 && p.v7 != null) mv7.textContent = fmv(p.v7);
+    if (mv10 && p.v10 != null) mv10.textContent = fmv(p.v10);
+
+    // pH calibration age badge
+    var phAge = document.getElementById('ph-cal-age');
+    if (phAge && p.calAge != null) {
+      phAge.textContent = p.calAge < 0 ? '(never calibrated)' : '(' + p.calAge + 'd ago)';
     }
 
     // Asymmetry trend chart (over calibrations)
@@ -899,6 +937,33 @@
     });
   }
 
+  function setMeasuringMode(active) {
+    var btnKH = document.querySelector('[data-original-cmd="k"]') || document.querySelector('[data-cmd="k"]');
+    var btnPH = document.querySelector('[data-original-cmd="p"]') || document.querySelector('[data-cmd="p"]');
+    [btnKH, btnPH].forEach(function(btn) {
+      if (!btn) return;
+      if (active) {
+        btn.setAttribute('data-original-cmd', btn.getAttribute('data-cmd'));
+        btn.setAttribute('data-cmd', 'abort');
+        btn.textContent = 'Abort';
+        btn.classList.remove('primary');
+        btn.style.background = 'var(--red)';
+        btn.style.color = '#fff';
+      } else {
+        var orig = btn.getAttribute('data-original-cmd');
+        if (orig) {
+          btn.setAttribute('data-cmd', orig);
+          btn.removeAttribute('data-original-cmd');
+        }
+        var cmd = btn.getAttribute('data-cmd');
+        btn.textContent = (cmd === 'k') ? 'Measure KH' : 'Measure pH';
+        btn.classList.add('primary');
+        btn.style.background = '';
+        btn.style.color = '';
+      }
+    });
+  }
+
   // --- Buttons ---
   function initButtons() {
     document.querySelectorAll('.cmd-btn').forEach(function(btn) {
@@ -930,7 +995,7 @@
 
   // --- Config inputs ---
   function initConfigInputs() {
-    document.querySelectorAll('.config-grid input').forEach(function(inp) {
+    document.querySelectorAll('.config-grid input, .cal-ph-col input').forEach(function(inp) {
       inp.addEventListener('change', function() {
         var key = inp.id.replace('cfg-', '');
         var val = (inp.type === 'text') ? inp.value : parseFloat(inp.value);
@@ -1188,18 +1253,28 @@
       setText('diag-titrate-rec', d.titrate.recommended + ' (SG\u2265' + d.titrate.suggestedThreshold + ')');
     }
 
-    if (stallEl && d.stallTest) {
-      stallEl.style.display = (m === 'd' || m === 'B') ? '' : 'none';
-      if (d.stallTest.stallRPM > 0) {
-        stallEl.textContent = 'Stall at ' + d.stallTest.stallRPM + ' RPM \u2192 recommended speed: ' + d.stallTest.recommendedRPM + ' RPM';
-        stallEl.style.color = '';
-      } else {
-        stallEl.textContent = 'No stall detected within test range (30\u2013500 RPM)';
-        stallEl.style.color = 'var(--text-secondary)';
+    if (stallEl) {
+      var parts = [];
+      if ((m === 'd' || m === 'B') && d.sample) {
+        if (d.sample.stallRPM > 0) {
+          parts.push('Sample: stall ' + d.sample.stallRPM + ' RPM \u2192 max ' + Math.round(d.sample.maxRPM) + ' RPM');
+        } else {
+          parts.push('Sample: no stall (30\u2013500 RPM)');
+        }
       }
+      if ((m === 'd' || m === 'C') && d.titrate) {
+        if (d.titrate.stallRPM > 0) {
+          parts.push('Titration: stall ' + d.titrate.stallRPM + ' RPM \u2192 max ' + Math.round(d.titrate.maxRPM) + ' RPM');
+        } else {
+          parts.push('Titration: no stall (30\u2013150 RPM)');
+        }
+      }
+      stallEl.innerHTML = parts.join('<br>');
+      stallEl.style.display = parts.length > 0 ? '' : 'none';
     }
 
     results.style.display = 'block';
+    try { localStorage.setItem('motorDiagResult', JSON.stringify(d)); } catch(e) {}
   }
 
   function initMotorCharts() {
@@ -1290,12 +1365,6 @@
           send({ type: 'config', key: 'sample_stall_sg', value: s.suggestedThreshold });
           var sMode = s.recommended === 'spreadcycle' ? s.spreadcycle : s.stealthchop;
           if (sMode) send({ type: 'config', key: 'sample_sg_baseline', value: sMode.sgAvg });
-          // Auto-set sample pump RPM from stall test
-          if (lastDiagResult.stallTest && lastDiagResult.stallTest.recommendedRPM > 0) {
-            send({ type: 'config', key: 'sample_pump_rpm', value: lastDiagResult.stallTest.recommendedRPM });
-            var rpmInput = document.getElementById('cfg-sample_pump_rpm');
-            if (rpmInput) rpmInput.value = lastDiagResult.stallTest.recommendedRPM;
-          }
         }
         if (m === 'd' || m === 'C') {
           send({ type: 'config', key: 'titrate_spreadcycle', value: t.recommended === 'spreadcycle' ? 1 : 0 });
@@ -1405,6 +1474,7 @@
 
       rows.push('</tbody></table>');
       el.innerHTML = rows.join('');
+      try { localStorage.setItem('hwDiagDone', '1'); } catch(e) {}
     }).catch(function() {});
   }
 
@@ -1417,8 +1487,21 @@
         if (status) status.style.display = 'block';
         if (results) results.style.display = 'none';
         btn.disabled = true;
+        try { localStorage.removeItem('hwDiagDone'); } catch(e) {}
       });
     }
+  }
+
+  function restoreDiagResults() {
+    // Restore motor diagnostics
+    try {
+      var md = localStorage.getItem('motorDiagResult');
+      if (md) showMotorDiag(JSON.parse(md));
+    } catch(e) {}
+    // Restore HW diagnostics
+    try {
+      if (localStorage.getItem('hwDiagDone')) showHWDiagDone();
+    } catch(e) {}
   }
 
   function init() {
@@ -1433,6 +1516,7 @@
     initMotorDiag();
     initMotorCharts();
     initHWDiag();
+    restoreDiagResults();
     connect();
   }
 

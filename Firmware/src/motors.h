@@ -18,7 +18,8 @@ void clearMultiWashContext();
 // All motor functions return true on success, false on timeout
 bool removeSample(int volume, float speedRpm);
 bool takeSample(int volume, float speedRpm);
-bool washSample(float remPart, float fillPart, float speedRpm);
+bool washSample(float remPart, float fillPart, float speedRpm);   // Legacy: uses SAMPLE_PUMP_VOLUME
+bool washSampleVol(int removeRevs, int fillRevs, float speedRpm); // Absolute revolution counts
 bool titrate(int volume, float speedRpm, bool noAccel = false);
 
 // Per-operation SG stats for tube wear tracking
@@ -37,6 +38,11 @@ int diagStepTitrate(int revolutions, float rpm, SGSample* samples, int maxSample
 // Optional rpmCallback is called at each speed step with the current RPM
 typedef void (*StallRampCallback)(float rpm);
 float diagStallRamp(float startRPM, float maxRPM, float stepRPM, int revsPerStep,
+                    SGSample* samples, int maxSamples, int* totalSamples,
+                    bool dirForward = true, StallRampCallback rpmCb = nullptr);
+
+// Stall speed ramp for titration pump (same interface, uses EN_PIN2/STEP_PIN2/DIR_PIN2)
+float diagStallRampTitrate(float startRPM, float maxRPM, float stepRPM, int revsPerStep,
                     SGSample* samples, int maxSamples, int* totalSamples,
                     bool dirForward = true, StallRampCallback rpmCb = nullptr);
 

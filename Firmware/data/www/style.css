@@ -139,6 +139,25 @@ h2{font-size:.8em;font-weight:600;color:var(--text-secondary);text-transform:upp
   font-variant-numeric:tabular-nums;
 }
 .config-grid input:focus,.config-grid select:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-dim)}
+.cal-heading{font-size:.75em;font-weight:600;color:var(--text-secondary);text-transform:uppercase;letter-spacing:.04em;margin:14px 0 6px;padding-top:10px;border-top:1px solid var(--separator)}
+.cal-heading:first-of-type{margin-top:0;padding-top:0;border-top:none}
+.cal-info{font-size:.8em;color:var(--text-secondary);margin:4px 0 8px}
+.cal-mv{font-size:.75em;color:var(--text-tertiary);text-align:center}
+.cal-age-badge{font-weight:400;font-size:.85em;color:var(--text-tertiary);text-transform:none;letter-spacing:0}
+.status-bar-inline{display:grid;grid-template-columns:1fr 1fr;gap:4px;font-size:.85em;color:var(--text-secondary)}
+.status-bar-inline strong{color:var(--text-secondary);font-weight:600}
+.cfg-hint{font-weight:400;color:var(--text-tertiary);font-size:.9em;text-transform:none;letter-spacing:0}
+.cal-ph-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:4px}
+.cal-ph-col{display:flex;flex-direction:column;gap:6px}
+.cal-ph-col label{display:flex;flex-direction:column;font-size:.7em;font-weight:500;color:var(--text-secondary);gap:5px;text-transform:uppercase;letter-spacing:.03em}
+.cal-ph-col input{background:var(--card-elevated);border:1px solid var(--separator);color:var(--text-primary);padding:8px;border-radius:var(--radius-sm);font-size:1em;outline:none;width:100%;transition:border-color .2s,box-shadow .2s;font-variant-numeric:tabular-nums}
+.cal-ph-col input:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-dim)}
+.cmd-btn.cal-4{background:rgba(255,69,58,.15);color:#ff453a}
+.cmd-btn.cal-4:active{background:rgba(255,69,58,.25)}
+.cmd-btn.cal-7{background:rgba(48,209,88,.15);color:#30d158}
+.cmd-btn.cal-7:active{background:rgba(48,209,88,.25)}
+.cmd-btn.cal-10{background:rgba(100,120,255,.15);color:#6478ff}
+.cmd-btn.cal-10:active{background:rgba(100,120,255,.25)}
 .config-advanced{margin-top:12px}
 .config-advanced summary{font-size:.75em;font-weight:600;color:var(--text-secondary);text-transform:uppercase;letter-spacing:.04em;cursor:pointer;padding:8px 0;list-style:none;-webkit-tap-highlight-color:transparent}
 .config-advanced summary::-webkit-details-marker{display:none}
@@ -292,6 +311,9 @@ h2{font-size:.8em;font-weight:600;color:var(--text-secondary);text-transform:upp
   .cmd-btn.primary:hover{background:rgba(10,132,255,.22)}
   .cmd-btn.cal:hover{background:rgba(48,209,88,.22)}
   .cmd-btn.warn:hover{background:rgba(255,69,58,.22)}
+  .cmd-btn.cal-4:hover{background:rgba(255,69,58,.22)}
+  .cmd-btn.cal-7:hover{background:rgba(48,209,88,.22)}
+  .cmd-btn.cal-10:hover{background:rgba(100,120,255,.22)}
   .sched-rm:hover{color:var(--red);background:var(--red-dim)}
   .sched-add-btn:hover{color:var(--accent);border-color:var(--accent)}
 }

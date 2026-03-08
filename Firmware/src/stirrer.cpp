@@ -1,16 +1,19 @@
 #include <Arduino.h>
 #include "stirrer.h"
+#include "config_store.h"
 #include <pins.h>
 
 void initStirrer() {
   pinMode(STIRRER_PIN, OUTPUT);
-  digitalWrite(STIRRER_PIN, LOW);
+  analogWrite(STIRRER_PIN, 0);
 }
 
 void startStirrer() {
-  digitalWrite(STIRRER_PIN, HIGH);
+  int pct = configStore.getStirrerSpeed();  // 80-100%
+  int duty = (pct * 255) / 100;
+  analogWrite(STIRRER_PIN, duty);
 }
 
 void stopStirrer() {
-  digitalWrite(STIRRER_PIN, LOW);
+  analogWrite(STIRRER_PIN, 0);
 }

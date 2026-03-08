@@ -19,6 +19,8 @@
 
 extern char deviceName[];
 extern char MQmespH[];
+extern void requestAbort();
+extern volatile uint32_t heapMin;
 
 float lastConfidence = NAN;
 
@@ -82,7 +84,6 @@ void storeAnalysisPoints(const TitrationPoint* points, int count) {
 // Forward declarations for command/config handlers from main
 extern int units;
 extern float startPH;
-extern uint32_t heapMin;
 extern void calibrateTitrationPump();
 extern void subtractHCl(int unitsUsed);
 extern void publishMessage(const char* message);
@@ -273,6 +274,14 @@ static void handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
       else if (strcmp(key, "drop_ul") == 0) { configStore.setDropVolumeUL(value); }
       else if (strcmp(key, "titration_rpm") == 0) { configStore.setTitrationRPM(value); }
       else if (strcmp(key, "sample_pump_rpm") == 0) { configStore.setSamplePumpRPM(value); }
+      else if (strcmp(key, "sample_cal_vol") == 0 && value > 0.1f) {
+        // User entered measured volume from sample pump calibration
+        float revsPerML = (float)SAMPLE_CAL_REVOLUTIONS / value;
+        configStore.setSampleCalRevsPerML(revsPerML);
+        char buf[64];
+        snprintf(buf, sizeof(buf), "Sample pump: %.2f revs/mL (from %.1f mL)", revsPerML, value);
+        publishMessage(buf);
+      }
       else if (strcmp(key, "prefill_ul") == 0) { configStore.setPrefillVolumeUL(value); }
       else if (strcmp(key, "meas_temp_c") == 0) { configStore.setMeasTempC(value); }
       else if (strcmp(key, "buf_ph4") == 0 && value >= 3.0f && value <= 5.0f) {
@@ -288,7 +297,7 @@ static void handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
         configStore.setSlopeWindowHours((int)value);
         computeKHSlope();  // refresh cached slope with new window
       }
-      else if (strcmp(key, "stirrer_speed") == 0 && (int)value >= 10 && (int)value <= 100) {
+      else if (strcmp(key, "stirrer_speed") == 0 && (int)value >= 80 && (int)value <= 100) {
         configStore.setStirrerSpeed((int)value);
       }
       else if (strcmp(key, "use_ads1115") == 0) {
@@ -586,6 +595,18 @@ void executeCommand(const char* cmd) {
     // Defer hardware diagnostics to loopTask — runs ~90-120s
     queueCommand('H');
     return;
+  } else if (strcmp(cmd, "abort") == 0) {
+    requestAbort();
+    publishMessage("Aborting measurement...");
+    return;
+  } else if (strcmp(cmd, "cs") == 0) {
+    // Defer sample pump calibration to loopTask
+    queueCommand('S');
+    return;
+  } else if (strcmp(cmd, "cw") == 0) {
+    // Defer tube cleaning to loopTask
+    queueCommand('W');
+    return;
   } else if (strcmp(cmd, "o") == 0) {
     publishMessage("Restarting...");
     delay(100);
@@ -687,6 +708,7 @@ void broadcastState() {
   cfg["drop_ul"] = configStore.getDropVolumeUL();
   cfg["titration_rpm"] = configStore.getTitrationRPM();
   cfg["sample_pump_rpm"] = configStore.getSamplePumpRPM();
+  cfg["sample_cal_revs_per_ml"] = configStore.getSampleCalRevsPerML();
   cfg["prefill_ul"] = configStore.getPrefillVolumeUL();
   cfg["meas_temp_c"] = configStore.getMeasTempC();
   cfg["buf_ph4"] = configStore.getBufferPH4();
@@ -704,6 +726,15 @@ void broadcastState() {
   cfg["sample_sg_baseline"] = configStore.getSampleSGBaseline();
   cfg["titrate_sg_baseline"] = configStore.getTitrateSGBaseline();
 
+  // Pump calibration ages (days, -1 = never)
+  time_t nowTs = time(nullptr);
+  uint32_t sampCalTs = configStore.getSampleCalTimestamp();
+  cfg["sample_cal_age"] = (sampCalTs > 0 && nowTs > (time_t)sampCalTs) ? (int)((nowTs - sampCalTs) / 86400) : -1;
+  uint32_t titCalTs = configStore.getTitrationCalTimestamp();
+  cfg["titration_cal_age"] = (titCalTs > 0 && nowTs > (time_t)titCalTs) ? (int)((nowTs - titCalTs) / 86400) : -1;
+  cfg["sample_max_rpm"] = configStore.getSampleMaxRPM();    // 0 = not tested
+  cfg["titrate_max_rpm"] = configStore.getTitrateMaxRPM();  // 0 = not tested
+
   const char* th = getTubeHealth();
   if (th) doc["tubeHealth"] = th;
 
@@ -718,7 +749,7 @@ void broadcastState() {
     sched.add(configStore.getScheduleTime(i));
   }
 
-  static char buf[1280];
+  static char buf[2048];
   serializeJson(doc, buf, sizeof(buf));
   ws.textAll(buf);
 }

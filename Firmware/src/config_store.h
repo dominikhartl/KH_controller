@@ -60,10 +60,12 @@ public:
   void setBufferPH10(float v);
   int getSlopeWindowHours();      // KH slope lookback window in hours (default 72, range 24-168)
   void setSlopeWindowHours(int h);
-  int getStirrerSpeed();           // Stirrer speed in percent (default 90, range 10-100)
+  int getStirrerSpeed();           // Stirrer speed in percent (default 90, range 80-100)
   void setStirrerSpeed(int pct);
-  float getSamplePumpRPM();        // Sample pump speed in RPM (default MOTOR_TARGET_RPM, range 20-150)
+  float getSamplePumpRPM();        // Sample pump speed in RPM (default MOTOR_TARGET_RPM, range 20-400)
   void setSamplePumpRPM(float rpm);
+  float getSampleCalRevsPerML();   // Sample pump calibration: revolutions per mL (default ~4.55)
+  void setSampleCalRevsPerML(float v);
 
   // ADS1115 external ADC
   bool getUseADS1115();             // Use external ADC for pH (default false)
@@ -89,6 +91,12 @@ public:
   int getTitrateSGBaseline();          // New-tube SG baseline for titration pump (default 0 = not set)
   void setTitrateSGBaseline(int v);
 
+  // Motor max speed from diagnostics (RPM, 0 = not tested)
+  float getSampleMaxRPM();
+  void setSampleMaxRPM(float rpm);
+  float getTitrateMaxRPM();
+  void setTitrateMaxRPM(float rpm);
+
   // Last measurement results (persistent across reboots)
   float getLastKH();
   float getLastStartPH();
@@ -111,9 +119,13 @@ public:
   uint16_t getAnchorTime();          // minutes from midnight
   void setAnchorTime(uint16_t mins);
 
-  // Calibration timestamp (Unix epoch)
+  // Calibration timestamps (Unix epoch)
   uint32_t getCalTimestamp();
   void setCalTimestamp(uint32_t ts);
+  uint32_t getSampleCalTimestamp();
+  void setSampleCalTimestamp(uint32_t ts);
+  uint32_t getTitrationCalTimestamp();
+  void setTitrationCalTimestamp(uint32_t ts);
 
   // Slope history (up to 10 entries, newest last)
   static const int MAX_SLOPE_HISTORY = 10;

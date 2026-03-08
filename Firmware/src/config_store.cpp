@@ -189,12 +189,12 @@ void ConfigStore::setSlopeWindowHours(int h) {
 // Stirrer speed (percent)
 int ConfigStore::getStirrerSpeed() {
   int pct = prefs.getInt("stir_spd", 90);
-  if (pct < 10) pct = 10;
+  if (pct < 80) pct = 80;
   if (pct > 100) pct = 100;
   return pct;
 }
 void ConfigStore::setStirrerSpeed(int pct) {
-  if (pct < 10) pct = 10;
+  if (pct < 80) pct = 80;
   if (pct > 100) pct = 100;
   prefs.putInt("stir_spd", pct);
 }
@@ -210,6 +210,19 @@ void ConfigStore::setSamplePumpRPM(float rpm) {
   if (rpm < 20.0) rpm = 20.0;
   if (rpm > 400.0) rpm = 400.0;
   prefs.putFloat("samp_rpm", rpm);
+}
+
+// Sample pump calibration factor (revolutions per mL)
+float ConfigStore::getSampleCalRevsPerML() {
+  float v = prefs.getFloat("samp_cal", 4.55f);  // default: SAMPLE_PUMP_VOLUME / 77.0
+  if (v < 0.5f) v = 0.5f;
+  if (v > 100.0f) v = 100.0f;
+  return v;
+}
+void ConfigStore::setSampleCalRevsPerML(float v) {
+  if (v < 0.5f) v = 0.5f;
+  if (v > 100.0f) v = 100.0f;
+  prefs.putFloat("samp_cal", v);
 }
 
 // ADS1115 external ADC
@@ -309,9 +322,19 @@ void ConfigStore::setAnchorTime(uint16_t mins) {
   prefs.putUShort("sched_anch", mins);
 }
 
-// Calibration timestamp
+// Calibration timestamps
 uint32_t ConfigStore::getCalTimestamp() { return prefs.getULong("cal_ts", 0); }
 void ConfigStore::setCalTimestamp(uint32_t ts) { prefs.putULong("cal_ts", ts); }
+uint32_t ConfigStore::getSampleCalTimestamp() { return prefs.getULong("samp_cal_ts", 0); }
+void ConfigStore::setSampleCalTimestamp(uint32_t ts) { prefs.putULong("samp_cal_ts", ts); }
+uint32_t ConfigStore::getTitrationCalTimestamp() { return prefs.getULong("tit_cal_ts", 0); }
+void ConfigStore::setTitrationCalTimestamp(uint32_t ts) { prefs.putULong("tit_cal_ts", ts); }
+
+// Motor max speed from diagnostics
+float ConfigStore::getSampleMaxRPM() { return prefs.getFloat("samp_max_rpm", 0.0f); }
+void ConfigStore::setSampleMaxRPM(float rpm) { prefs.putFloat("samp_max_rpm", rpm); }
+float ConfigStore::getTitrateMaxRPM() { return prefs.getFloat("tit_max_rpm", 0.0f); }
+void ConfigStore::setTitrateMaxRPM(float rpm) { prefs.putFloat("tit_max_rpm", rpm); }
 
 // Slope history
 int ConfigStore::getSlopeHistory(SlopeEntry* entries, int maxEntries) {

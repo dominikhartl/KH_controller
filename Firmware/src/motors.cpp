@@ -208,6 +208,36 @@ bool washSample(float remPart, float fillPart, float speedRpm) {
   return ok;
 }
 
+bool washSampleVol(int removeRevs, int fillRevs, float speedRpm) {
+  washTotalVol = removeRevs + fillRevs;
+  washBaseVol = 0;
+
+  if (progressCb) {
+    if (multiWashTotal > 0) {
+      progressCb((multiWashIndex * 100) / multiWashTotal);
+    } else {
+      progressCb(0);
+    }
+  }
+
+  bool ok = removeSample(removeRevs, speedRpm);
+
+  if (ok) {
+    washBaseVol = removeRevs;
+    ok = takeSample(fillRevs, speedRpm);
+  }
+
+  washTotalVol = 0;
+
+  if (multiWashTotal > 0) {
+    if (ok) multiWashIndex++;
+    if (progressCb) progressCb((multiWashIndex * 100) / multiWashTotal);
+  } else {
+    if (progressCb) progressCb(ok ? 100 : 0);
+  }
+  return ok;
+}
+
 bool titrate(int volume, float speedRpm, bool noAccel) {
   clearStallFlag();
   titrateSGSum = 0; titrateSGCount = 0; titrateSGMin = 65535;
@@ -371,9 +401,22 @@ float diagStallRamp(float startRPM, float maxRPM, float stepRPM, int revsPerStep
   int nSamples = 0;
   int stallSG = configStore.getSampleStallSG();
 
+  clearStallFlag();
   digitalWrite(EN_PIN1, LOW);
   delay(MOTOR_ENABLE_DELAY_MS);
   digitalWrite(DIR_PIN1, dirForward ? HIGH : LOW);
+  delay(100);
+
+  // Warm-up: run 3 revolutions at start speed so StallGuard stabilizes in new direction
+  {
+    float warmupUs = rpmToHalfPeriodUs(startRPM);
+    for (int rev = 0; rev < 3; rev++) {
+      for (int step = 0; step < STEPS_PER_REVOLUTION; step++) {
+        stepPulseJittered(STEP_PIN1, warmupUs);
+      }
+    }
+    clearStallFlag();  // discard any transient stall during warm-up
+  }
 
   for (float rpm = startRPM; rpm <= maxRPM; rpm += stepRPM) {
     if (rpmCb) rpmCb(rpm);
@@ -419,6 +462,75 @@ float diagStallRamp(float startRPM, float maxRPM, float stepRPM, int revsPerStep
   *totalSamples = nSamples;
   delay(MOTOR_HOLD_MS);
   digitalWrite(EN_PIN1, HIGH);
+  return 0.0f;
+}
+
+float diagStallRampTitrate(float startRPM, float maxRPM, float stepRPM, int revsPerStep,
+                    SGSample* samples, int maxSamples, int* totalSamples,
+                    bool dirForward, StallRampCallback rpmCb) {
+  if (!isTMCDetected()) { *totalSamples = 0; return 0.0f; }
+
+  int nSamples = 0;
+  int stallSG = configStore.getTitrateStallSG();
+
+  clearStallFlag();
+  digitalWrite(EN_PIN2, LOW);
+  delay(MOTOR_ENABLE_DELAY_MS);
+  digitalWrite(DIR_PIN2, dirForward ? LOW : HIGH);
+  delay(100);
+
+  // Warm-up: run 3 revolutions at start speed so StallGuard stabilizes
+  {
+    float warmupUs = rpmToHalfPeriodUs(startRPM);
+    for (int rev = 0; rev < 3; rev++) {
+      for (int step = 0; step < STEPS_PER_REVOLUTION; step++) {
+        stepPulse(STEP_PIN2, warmupUs);
+      }
+    }
+    clearStallFlag();
+  }
+
+  for (float rpm = startRPM; rpm <= maxRPM; rpm += stepRPM) {
+    if (rpmCb) rpmCb(rpm);
+    float halfPeriodUs = rpmToHalfPeriodUs(rpm);
+
+    for (int rev = 0; rev < revsPerStep; rev++) {
+      for (int step = 0; step < STEPS_PER_REVOLUTION; step++) {
+        stepPulse(STEP_PIN2, halfPeriodUs);
+      }
+      if (nSamples < maxSamples) {
+        samples[nSamples].sg = getTitrateSG();
+        samples[nSamples].diag = digitalRead(DIAG_TITRATE);
+        nSamples++;
+      }
+      if (isTitrateStalled()) {
+        *totalSamples = nSamples;
+        delay(MOTOR_HOLD_MS);
+        digitalWrite(EN_PIN2, HIGH);
+        return rpm;
+      }
+    }
+
+    int startIdx = nSamples - revsPerStep;
+    if (startIdx < 0) startIdx = 0;
+    uint32_t sgSum = 0;
+    for (int i = startIdx; i < nSamples; i++) {
+      sgSum += samples[i].sg;
+    }
+    uint16_t sgAvg = sgSum / (nSamples - startIdx);
+    if (sgAvg <= (uint16_t)stallSG) {
+      *totalSamples = nSamples;
+      delay(MOTOR_HOLD_MS);
+      digitalWrite(EN_PIN2, HIGH);
+      return rpm;
+    }
+
+    delay(50);
+  }
+
+  *totalSamples = nSamples;
+  delay(MOTOR_HOLD_MS);
+  digitalWrite(EN_PIN2, HIGH);
   return 0.0f;
 }
 
