@@ -673,25 +673,9 @@ void calibrateSamplePump() {
 }
 
 void calibrateTitrationPump() {
-  // Compute dynamic target: HCl volume needed for 7.5 dKH at configured sample volume
-  int targetUnits = CALIBRATION_TARGET_UNITS;  // fallback 6000
-  float calU = (float)configStore.getCalUnits();
-  float titV = configStore.getTitrationVolume();
-  float samVol = configStore.getSampleVolume();
-  float hclMol = configStore.getHClMolarity();
-  float corrF = configStore.getCorrectionFactor();
-
-  if (calU > 0 && titV > 0 && hclMol > 0) {
-    float hclNeeded = 7.5f * samVol / (2800.0f * hclMol * corrF);
-    int computed = (int)round(hclNeeded * calU / titV);
-    if (computed >= 1000 && computed <= 20000) {
-      targetUnits = computed;
-    }
-  }
-
-  float expectedML = (float)targetUnits / calU * titV;
+  int targetUnits = CALIBRATION_TARGET_UNITS;
   char buf[80];
-  snprintf(buf, sizeof(buf), "Calibrating pump (target: %d units, ~%.1f mL for 7.5 dKH)", targetUnits, expectedML);
+  snprintf(buf, sizeof(buf), "Calibrating pump (%d units)", targetUnits);
   publishMessage(buf);
 
   units = 0;
@@ -836,7 +820,6 @@ KHResult measureKH() {
   }
   // Keep titration motor enabled after prefill to prevent suckback
   publishMessage("Taking sample");
-  // Compute sample pump revolutions from volume config and calibration
   float sampVolML = configStore.getSampleVolume();
   float revsPerML = configStore.getSampleCalRevsPerML();
   int sampleFillRevs = (int)round(sampVolML * revsPerML);

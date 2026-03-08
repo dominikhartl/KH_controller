@@ -212,6 +212,7 @@
       setInput('cfg-drop_ul', d.config.drop_ul);
       setInput('cfg-titration_rpm', d.config.titration_rpm);
       setInput('cfg-sample_pump_rpm', d.config.sample_pump_rpm);
+      if (d.config.sample_cal_vol > 0) setInput('cfg-sample_cal_vol', d.config.sample_cal_vol.toFixed(1));
       setInput('cfg-prefill_ul', d.config.prefill_ul);
       setInput('cfg-meas_temp_c', d.config.meas_temp_c);
       setInput('cfg-buf_ph4', d.config.buf_ph4);

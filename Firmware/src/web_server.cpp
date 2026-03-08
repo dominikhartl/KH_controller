@@ -709,6 +709,9 @@ void broadcastState() {
   cfg["titration_rpm"] = configStore.getTitrationRPM();
   cfg["sample_pump_rpm"] = configStore.getSamplePumpRPM();
   cfg["sample_cal_revs_per_ml"] = configStore.getSampleCalRevsPerML();
+  { float rpm = configStore.getSampleCalRevsPerML();
+    cfg["sample_cal_vol"] = (rpm > 0) ? (float)SAMPLE_CAL_REVOLUTIONS / rpm : 0;
+  }
   cfg["prefill_ul"] = configStore.getPrefillVolumeUL();
   cfg["meas_temp_c"] = configStore.getMeasTempC();
   cfg["buf_ph4"] = configStore.getBufferPH4();

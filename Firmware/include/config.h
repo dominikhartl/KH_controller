@@ -163,7 +163,7 @@ static const int TMC_SAMPLE_RMS_MA  = 800;   // Sample pump RMS current (mA)
 static const int TMC_TITRATE_RMS_MA = 600;   // Titration pump RMS current (mA)
 static const float TMC_R_SENSE      = 0.11f; // Current sense resistor (ohms)
 static const int TMC_MICROSTEPS     = 8;     // Must match STEPS_PER_REVOLUTION / 200
-static const int TMC_STALL_THRESHOLD = 50;   // SGTHRS (0-255), higher = more sensitive
+static const int TMC_STALL_THRESHOLD = 15;   // SGTHRS: DIAG triggers at SG ≤ SGTHRS*2 (=30)
 static const int TMC_SAMPLE_STALL_SG = 30;  // Sample pump SG stall threshold (normal ~96-258)
 
 // MQTT_MAX_PACKET_SIZE and MQTT_KEEPALIVE are set via build_flags in platformio.ini

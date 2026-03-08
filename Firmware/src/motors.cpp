@@ -127,10 +127,17 @@ static bool runSamplePump(int volume, bool forward, float speedRpm) {
         sampleSGSum += sg; sampleSGCount++;
         if (sg < sampleSGMin) sampleSGMin = sg;
         if (sg < (uint16_t)configStore.getSampleStallSG()) {
-          Serial.printf("ERROR: Sample pump stall (SG=%d)\n", sg);
-          setStallFlag();
-          timedOut = true;
-          break;
+          // Possible stall — run 256 more steps then confirm
+          for (int c = 0; c < 256 && stepsDone < decelStart; c++) {
+            stepPulseJittered(STEP_PIN1, targetUs); stepsDone++;
+          }
+          sg = getSampleSG();
+          if (sg < (uint16_t)configStore.getSampleStallSG()) {
+            Serial.printf("ERROR: Sample pump stall (SG=%d)\n", sg);
+            setStallFlag();
+            timedOut = true;
+            break;
+          }
         }
       }
       if (washTotalVol > 0 && progressCb) {
@@ -286,16 +293,20 @@ bool titrate(int volume, float speedRpm, bool noAccel) {
       speedReached = speedUs;
       if (stepsDone % (MOTOR_STEPS_PER_UNIT * MOTOR_YIELD_INTERVAL * 50) == 0) {
         if (yieldCb) yieldCb();
-        if (isTitrateStalled()) {
-          Serial.println("ERROR: Titration pump stall detected (DIAG)!");
-          setStallFlag();
-          return false;
-        }
         { uint16_t sg = getTitrateSG();
           titrateSGSum += sg; titrateSGCount++;
           if (sg < titrateSGMin) titrateSGMin = sg;
-          if (sg < (uint16_t)configStore.getTitrateStallSG()) {
-            Serial.printf("ERROR: Titration pump stall (SG=%d)\n", sg);
+          // Stall check: SG value (reliable) or DIAG pin (debounced)
+          bool stallDetected = (sg < (uint16_t)configStore.getTitrateStallSG());
+          if (!stallDetected && isTitrateStalled()) {
+            // DIAG asserted — run 256 more steps then confirm
+            for (int c = 0; c < 256 && stepsDone < decelStart; c++) {
+              stepPulse(STEP_PIN2, speedUs); stepsDone++;
+            }
+            stallDetected = isTitrateStalled(); // still stalled after 256 steps?
+          }
+          if (stallDetected) {
+            Serial.printf("ERROR: Titration pump stall (SG=%d DIAG=%d)\n", sg, isTitrateStalled());
             setStallFlag();
             return false;
           }
@@ -327,11 +338,23 @@ bool titrate(int volume, float speedRpm, bool noAccel) {
       t += halfPeriod;
       digitalWrite(STEP_PIN2, LOW);
       while ((long)(micros() - t) < 0) {}
-      // Check DIAG pin every 128 steps for stall detection
+      // Check DIAG pin every 128 steps for stall detection (debounced)
       if ((i & 0x7F) == 0x7F && isTitrateStalled()) {
-        Serial.println("ERROR: Titration pump stall detected (DIAG)!");
-        setStallFlag();
-        return false;
+        // DIAG asserted — run 256 more steps then confirm (handles transient preemption)
+        for (int c = 0; c < 256 && (i + c + 1) < totalSteps; c++) {
+          t += halfPeriod;
+          digitalWrite(STEP_PIN2, HIGH);
+          while ((long)(micros() - t) < 0) {}
+          t += halfPeriod;
+          digitalWrite(STEP_PIN2, LOW);
+          while ((long)(micros() - t) < 0) {}
+        }
+        i += 256;
+        if (isTitrateStalled()) {
+          Serial.println("ERROR: Titration pump stall detected (DIAG)!");
+          setStallFlag();
+          return false;
+        }
       }
     }
   }
