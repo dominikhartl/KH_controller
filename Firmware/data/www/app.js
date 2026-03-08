@@ -98,6 +98,7 @@
     else if (d.type === 'granData') updateGranChart(d);
     else if (d.type === 'progress') updateProgress(d.pct);
     else if (d.type === 'motorDiag') showMotorDiag(d);
+    else if (d.type === 'hwDiagDone') showHWDiagDone();
   }
 
   function clearLiveChart() {
@@ -1258,6 +1259,112 @@
     }
   }
 
+  function showHWDiagDone() {
+    var status = document.getElementById('hw-diag-status');
+    var results = document.getElementById('hw-diag-results');
+    var btn = document.getElementById('btn-hw-diag');
+    if (status) status.style.display = 'none';
+    if (results) results.style.display = 'block';
+    if (btn) btn.disabled = false;
+
+    // Fetch the report to show a summary
+    fetch('/api/hwdiag').then(function(r) { return r.json(); }).then(function(d) {
+      var el = document.getElementById('hw-diag-summary');
+      if (!el) return;
+      var rows = [];
+      rows.push('<table style="width:100%;font-size:0.85em;border-collapse:collapse">');
+      rows.push('<thead><tr><th style="text-align:left">Test</th><th>Result</th></tr></thead><tbody>');
+
+      var ok = function(v) { return '<span style="color:#30d158">OK</span>'; };
+      var warn = function(t) { return '<span style="color:#ff9f0a">' + t + '</span>'; };
+      var fail = function(t) { return '<span style="color:#ff453a">' + t + '</span>'; };
+      var skip = function() { return '<span style="color:var(--text-secondary)">Skipped</span>'; };
+
+      // System
+      rows.push('<tr><td>System</td><td>' + ok() + ' (heap ' + Math.round(d.system.free_heap/1024) + 'kB)</td></tr>');
+
+      // I2C
+      if (d.i2c && !d.i2c.skipped) {
+        var i2cOk = d.i2c.config_readback_ok && d.i2c.conversions_ok === d.i2c.conversions_total;
+        rows.push('<tr><td>I2C / ADS1115</td><td>' + (i2cOk ? ok() : fail('Errors: ' + d.i2c.nak_count + ' NAK')) + '</td></tr>');
+      } else {
+        rows.push('<tr><td>I2C / ADS1115</td><td>' + skip() + '</td></tr>');
+      }
+
+      // ADC Noise
+      var an = d.adc_noise;
+      if (an && an.ph_channel) {
+        var noiseMv = an.ph_channel.stddev_mv;
+        var nStatus = noiseMv < 0.5 ? ok() : noiseMv < 2.0 ? warn(noiseMv.toFixed(2) + ' mV') : fail(noiseMv.toFixed(2) + ' mV');
+        rows.push('<tr><td>ADC Noise (pH)</td><td>' + nStatus + ' stddev</td></tr>');
+      }
+      if (an && an.baseline && !an.baseline.skipped) {
+        rows.push('<tr><td>Noise Ratio</td><td>' + (an.noise_ratio ? an.noise_ratio.toFixed(1) + 'x' : '--') + '</td></tr>');
+      }
+
+      // Internal ADC
+      if (d.internal_adc && !d.internal_adc.skipped && d.internal_adc.n_samples > 0) {
+        rows.push('<tr><td>Internal ADC</td><td>stddev ' + d.internal_adc.stddev_mv.toFixed(1) + ' mV</td></tr>');
+      }
+
+      // Temperature
+      if (d.temperature && !d.temperature.skipped) {
+        var tErr = d.temperature.crc_errors || d.temperature.power_on_reset;
+        rows.push('<tr><td>Temperature</td><td>' + (tErr ? fail('sensor error') : ok() + ' (' + d.temperature.mean_c.toFixed(1) + '&deg;C)') + '</td></tr>');
+      } else {
+        rows.push('<tr><td>Temperature</td><td>' + skip() + '</td></tr>');
+      }
+
+      // TMC
+      if (d.tmc_drivers && !d.tmc_drivers.skipped) {
+        var tmcOk = d.tmc_drivers.sample.ioin_ok && d.tmc_drivers.titrate.ioin_ok;
+        var tmcOT = d.tmc_drivers.sample.overtemp || d.tmc_drivers.titrate.overtemp;
+        rows.push('<tr><td>TMC2209</td><td>' + (tmcOT ? fail('overtemp') : tmcOk ? ok() : fail('UART error')) + '</td></tr>');
+      } else {
+        rows.push('<tr><td>TMC2209</td><td>' + skip() + '</td></tr>');
+      }
+
+      // Motors
+      if (d.motors && !d.motors.skipped) {
+        rows.push('<tr><td>Motors</td><td>' + ok() + '</td></tr>');
+      } else {
+        rows.push('<tr><td>Motors</td><td>' + skip() + '</td></tr>');
+      }
+
+      // GPIO
+      if (d.gpio) {
+        var gpioOk = true;
+        for (var k in d.gpio) { if (!d.gpio[k].ok) gpioOk = false; }
+        rows.push('<tr><td>GPIO</td><td>' + (gpioOk ? ok() : warn('unexpected pin states')) + '</td></tr>');
+      }
+
+      // Probe
+      if (d.probe) {
+        if (d.probe.calibrated) {
+          rows.push('<tr><td>pH Probe</td><td>' + (d.probe.health === 'Good' ? ok() : d.probe.health === 'Fair' ? warn('Fair') : fail('Replace')) + '</td></tr>');
+        } else {
+          rows.push('<tr><td>pH Probe</td><td>' + warn('uncalibrated') + '</td></tr>');
+        }
+      }
+
+      rows.push('</tbody></table>');
+      el.innerHTML = rows.join('');
+    }).catch(function() {});
+  }
+
+  function initHWDiag() {
+    var btn = document.getElementById('btn-hw-diag');
+    if (btn) {
+      btn.addEventListener('click', function() {
+        var status = document.getElementById('hw-diag-status');
+        var results = document.getElementById('hw-diag-results');
+        if (status) status.style.display = 'block';
+        if (results) results.style.display = 'none';
+        btn.disabled = true;
+      });
+    }
+  }
+
   function init() {
     initCharts();
     initTabs();
@@ -1269,6 +1376,7 @@
     initKHMethodToggle();
     initMotorDiag();
     initMotorCharts();
+    initHWDiag();
     connect();
   }
 

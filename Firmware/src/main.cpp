@@ -18,6 +18,7 @@
 #include "web_server.h"
 #include "temperature.h"
 #include "tmc_driver.h"
+#include "hw_diagnostics.h"
 
 // --- Global state ---
 // These are accessed from both loopTask and AsyncTCP task — marked volatile
@@ -310,6 +311,14 @@ void processPendingCommand() {
     case 'd':
       runMotorDiagnostic();
       broadcastState();
+      break;
+    case 'H':
+      if (isHWDiagRunning()) {
+        publishMessage("Hardware diagnostics already running");
+      } else {
+        runHardwareDiagnostics();
+        broadcastState();
+      }
       break;
   }
 }

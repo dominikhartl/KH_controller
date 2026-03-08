@@ -61,6 +61,18 @@ float getProbeAsymmetry();               // % difference between acid/base slope
 const char* getProbeHealth();            // "Good", "Fair", or "Replace"
 const char* getProbeHealthDetail(char* reasonBuf, size_t reasonLen);  // Same, with reason string
 
+// Diagnostic ADC reads (for hardware diagnostics module)
+// Read ADS1115 with configurable MUX and data rate (returns raw 16-bit value, or INT16_MIN on error)
+// muxBits: 100=AIN0/GND (pH), 101=AIN1/GND (baseline), etc.
+// drBits:  000=8SPS, 001=16SPS, 010=32SPS, 011=64SPS, 100=128SPS, 101=250SPS, 110=475SPS, 111=860SPS
+int16_t readADS1115RawDiag(uint8_t muxBits, uint8_t drBits);
+
+// Read ESP32 internal ADC in millivolts (single sample, no oversampling)
+float readInternalADCmV();
+
+// Check if ADS1115 hardware is available (regardless of config)
+bool isADS1115Available();
+
 // Gran transformation endpoint detection
 struct TitrationPoint {
   float units;

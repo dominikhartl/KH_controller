@@ -590,6 +590,56 @@ float measureVoltage(int nreadings) {
   return avgVoltage;
 }
 
+// --- Diagnostic ADC reads (for hardware diagnostics module) ---
+
+bool isADS1115Available() { return adsAvailable; }
+
+int16_t readADS1115RawDiag(uint8_t muxBits, uint8_t drBits) {
+  if (!adsAvailable) return INT16_MIN;
+
+  // Build config: OS=1, MUX=muxBits, PGA=001 (±4.096V), MODE=1, DR=drBits, COMP_QUE=00
+  uint16_t config = 0x8000                  // OS=1 (start conversion)
+                  | ((uint16_t)(muxBits & 0x07) << 12)  // MUX
+                  | (0x01 << 9)             // PGA=001 (GAIN_ONE)
+                  | (0x01 << 8)             // MODE=1 (single-shot)
+                  | ((uint16_t)(drBits & 0x07) << 5)    // DR
+                  | 0x00;                   // COMP_QUE=00
+
+  Wire.beginTransmission(ADS1115_I2C_ADDR);
+  Wire.write(ADS_REG_CONFIG);
+  Wire.write((uint8_t)(config >> 8));
+  Wire.write((uint8_t)(config & 0xFF));
+  if (Wire.endTransmission() != 0) return INT16_MIN;
+
+  // Compute max wait time based on data rate
+  static const uint16_t spsTable[] = {8, 16, 32, 64, 128, 250, 475, 860};
+  uint16_t sps = spsTable[drBits & 0x07];
+  unsigned long maxWaitMs = (1000 / sps) + 20;  // conversion time + margin
+
+  if (adsRdyAvailable) {
+    unsigned long t0 = millis();
+    while (digitalRead(ADS_RDY_PIN) && (millis() - t0 < maxWaitMs)) {
+      delay(1);
+    }
+    if (millis() - t0 >= maxWaitMs) return INT16_MIN;
+  } else {
+    delay(maxWaitMs);
+  }
+
+  Wire.beginTransmission(ADS1115_I2C_ADDR);
+  Wire.write(ADS_REG_CONVERSION);
+  if (Wire.endTransmission() != 0) return INT16_MIN;
+
+  if (Wire.requestFrom((uint8_t)ADS1115_I2C_ADDR, (uint8_t)2) != 2) return INT16_MIN;
+  if (Wire.available() < 2) return INT16_MIN;
+  int16_t raw = ((int16_t)Wire.read() << 8) | Wire.read();
+  return raw;
+}
+
+float readInternalADCmV() {
+  return (float)analogReadMilliVolts(PH_PIN);
+}
+
 // --- Gran transformation endpoint detection ---
 
 // Internal: weighted linear regression on Gran function values within a pH window.

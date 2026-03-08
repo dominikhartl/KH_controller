@@ -9,6 +9,7 @@
 #include "stirrer.h"
 #include "temperature.h"
 #include "tmc_driver.h"
+#include "hw_diagnostics.h"
 #include <ArduinoJson.h>
 #include <LittleFS.h>
 #include <config.h>
@@ -550,6 +551,10 @@ void executeCommand(const char* cmd) {
   } else if (strcmp(cmd, "d") == 0) {
     // Defer motor diagnostics to loopTask — runs motors for ~30s
     queueCommand('d');
+    return;
+  } else if (strcmp(cmd, "H") == 0) {
+    // Defer hardware diagnostics to loopTask — runs ~90-120s
+    queueCommand('H');
     return;
   } else if (strcmp(cmd, "o") == 0) {
     publishMessage("Restarting...");
@@ -1536,6 +1541,31 @@ void setupWebServer() {
     char buf[256];
     serializeJson(doc, buf, sizeof(buf));
     request->send(200, "application/json", buf);
+  });
+
+  // Hardware diagnostics JSON download
+  server.on("/api/hwdiag", HTTP_GET, [](AsyncWebServerRequest* request) {
+    if (!isHWDiagReportReady()) {
+      request->send(404, "application/json", "{\"error\":\"No diagnostics report available. Run diagnostics first.\"}");
+      return;
+    }
+
+    static int hwds;
+    hwds = 0;
+
+    AsyncWebServerResponse* response = request->beginChunkedResponse(
+      "application/json",
+      [](uint8_t* buffer, size_t maxLen, size_t /* index */) -> size_t {
+        if (maxLen < 64) return 0;
+        if (hwds >= getHWDiagSectionCount()) return 0;  // done
+
+        size_t written = 0;
+        serveHWDiagChunk(hwds, (char*)buffer, maxLen, &written);
+        hwds++;
+        return written;
+      });
+    response->addHeader("Content-Disposition", "attachment; filename=\"khpro_hw_diagnostics.json\"");
+    request->send(response);
   });
 
   server.begin();

@@ -91,6 +91,7 @@ The web interface provides:
 - **Event log** with timestamped messages and errors
 - **Status indicators** for WiFi, MQTT, NTP, WebSocket, and probe health
 - **CSV export** of measurement history
+- **Hardware diagnostics** with comprehensive ADC noise analysis, I2C bus health, motor tests, temperature sensor validation, GPIO state checks, and downloadable JSON report for troubleshooting and data-driven hardware improvements
 
 ## Home Assistant Integration
 
@@ -149,6 +150,8 @@ Commands can be sent via MQTT (`KHpro/cmd`), the web interface, or Home Assistan
 | Remove sample | `r` | Empty the sample chamber |
 | Restart | `o` | Reboot the device |
 | Measure voltage | `v` | Raw pH probe voltage reading |
+| Motor diagnostics | `d` | Test both motor drivers in StealthChop and SpreadCycle modes |
+| Hardware diagnostics | `H` | Run full hardware diagnostic suite (~90s) |
 | Calibrate pH 4 | `4` | Calibrate with pH 4 buffer |
 | Calibrate pH 7 | `7` | Calibrate with pH 7 buffer |
 | Calibrate pH 10 | `10` | Calibrate with pH 10 buffer |
@@ -198,9 +201,30 @@ For best results, calibrate the pump (`t`) and carefully measure the dispensed v
 | `src/mqtt_manager.cpp` | MQTT connection with LWT and exponential backoff |
 | `src/wifi_manager.cpp` | Non-blocking WiFi state machine |
 | `src/stirrer.cpp` | PWM stirrer motor control |
+| `src/hw_diagnostics.cpp` | Comprehensive hardware diagnostics (ADC noise, I2C, motors, GPIO, probe) |
+| `src/tmc_driver.cpp` | TMC2209 stepper driver UART interface |
 | `include/config.h` | All tuning parameters and constants |
 | `include/pins.h` | GPIO pin assignments |
 | `data/www/` | Web dashboard (HTML, CSS, JavaScript, Chart.js) |
+
+## Hardware Diagnostics
+
+The device includes a comprehensive hardware diagnostic suite accessible from the web interface under **Configuration > Advanced > Hardware Diagnostics**. Run it by clicking "Run Full Diagnostics" (~90 seconds). The results are downloadable as a JSON report (`/api/hwdiag`).
+
+Tests performed:
+
+- **ADC noise analysis**: Rapid sampling (500 readings) on the pH channel with histogram and time series. Multi-rate noise test across all 8 ADS1115 data rates (8–860 SPS) to characterize noise vs bandwidth tradeoffs. Baseline noise measurement on an unconnected ADS1115 channel (AIN1) to separate circuit noise from inherent ADC noise. Internal ESP32 ADC noise test always runs for comparison.
+- **I2C bus health**: Config register readback verification, NAK count, conversion timing, RDY pin check, bus scan.
+- **Temperature sensor**: DS18B20 consistency check (5 readings), CRC error and power-on-reset detection.
+- **TMC2209 motor drivers**: UART communication test, DRV_STATUS flags (overtemp, open load, short circuit).
+- **Motor performance**: StealthChop vs SpreadCycle StallGuard comparison for both pumps.
+- **GPIO pin states**: Motor enables, DIAG pins, RDY pin — expected vs actual state.
+- **pH probe health**: Nernst efficiency, asymmetry, noise stats, calibration age (from cached data, no new measurement).
+- **System health**: Heap usage, uptime, reset reason, flash usage, WiFi RSSI.
+
+All tests gracefully handle missing hardware (ADS1115, TMC2209, DS18B20) — absent components are reported as `"skipped": true` in the JSON.
+
+The noise data is designed for data-driven hardware improvements: the noise ratio (circuit noise / ADC baseline noise) quantifies how much noise the pH probe and signal conditioning board add, informing decisions about capacitors, low-pass filters, and shielding.
 
 ## ADS1115 External ADC (Optional)
 

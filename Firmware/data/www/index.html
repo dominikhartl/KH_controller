@@ -238,6 +238,18 @@
             </div>
           </div>
         </details>
+        <details class="config-advanced" style="margin-top:0.5em">
+          <summary>Hardware Diagnostics</summary>
+          <div style="padding:0.5em 0">
+            <p style="font-size:0.85em;color:var(--text-secondary);margin:0 0 0.5em">Comprehensive hardware tests: ADC noise, I2C, temperature, motors, GPIO, probe. ~90s runtime. Results downloadable as JSON.</p>
+            <button class="cmd-btn" data-cmd="H" id="btn-hw-diag">Run Full Diagnostics</button>
+            <div id="hw-diag-status" style="display:none;margin-top:0.5em;font-size:0.9em;color:var(--text-secondary)">Running hardware diagnostics...</div>
+            <div id="hw-diag-results" style="display:none;margin-top:0.5em">
+              <a class="export-btn" href="/api/hwdiag" download="khpro_hw_diagnostics.json" style="display:inline-block;margin-bottom:0.5em">Download Report (JSON)</a>
+              <div id="hw-diag-summary" style="font-size:0.85em"></div>
+            </div>
+          </div>
+        </details>
       </details>
     </div>
   </section>

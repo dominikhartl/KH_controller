@@ -83,6 +83,22 @@ void setTitrateSpreadCycle(bool enable) {
   if (titrateDriver) titrateDriver->en_spreadCycle(enable);
 }
 
+uint32_t getSampleDrvStatus() {
+  return sampleDriver ? sampleDriver->DRV_STATUS() : 0;
+}
+
+uint32_t getTitrateDrvStatus() {
+  return titrateDriver ? titrateDriver->DRV_STATUS() : 0;
+}
+
+uint32_t getSampleIOIN() {
+  return sampleDriver ? sampleDriver->IOIN() : 0;
+}
+
+uint32_t getTitrateIOIN() {
+  return titrateDriver ? titrateDriver->IOIN() : 0;
+}
+
 void printTMCDebug() {
   if (!tmcDetected) { Serial.println("TMC: not detected"); return; }
   uint32_t gconf_s = sampleDriver->GCONF();
