@@ -15,6 +15,9 @@ void WifiManager::begin(const char* ssid, const char* password) {
 void WifiManager::startConnection() {
   Serial.print("Connecting to WiFi: ");
   Serial.println(ssid);
+  String hostname = String(deviceName);
+  hostname.toLowerCase();
+  WiFi.setHostname(hostname.c_str());
   WiFi.begin(ssid, password);
   state = CONNECTING;
   connectStartTime = millis();

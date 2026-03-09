@@ -367,6 +367,12 @@ bool titrate(int volume, float speedRpm, bool noAccel) {
         }
       }
     }
+    // Collect SG after small-volume titration (register retains last stepping value)
+    if (isTMCDetected()) {
+      uint16_t sg = getTitrateSG();
+      titrateSGSum += sg; titrateSGCount++;
+      if (sg < titrateSGMin) titrateSGMin = sg;
+    }
   }
 
   // No hold/disable here — caller manages EN_PIN2 to avoid
