@@ -27,7 +27,9 @@ uint8_t Scheduler::computeIntervalSlots(uint16_t* outSlots, uint8_t maxSlots) {
 }
 
 uint8_t Scheduler::buildEffectiveSlots(uint16_t* slots, uint8_t maxSlots) {
-  if (configStore.getScheduleMode() == 1) {
+  uint8_t mode = configStore.getScheduleMode();
+  if (mode == 2) return 0;  // Never — scheduling disabled
+  if (mode == 1) {
     return computeIntervalSlots(slots, maxSlots);
   }
   // Custom mode
@@ -94,8 +96,8 @@ void Scheduler::loop() {
         callback();
       }
     }
-  } else {
-    // Fallback: interval-based
+  } else if (configStore.getScheduleMode() != 2) {
+    // Fallback: interval-based (skip if scheduling disabled)
     if (millis() - lastMeasurementTime >= FALLBACK_INTERVAL_MS) {
       Serial.println("Fallback interval measurement triggered");
       lastMeasurementTime = millis();
@@ -113,6 +115,7 @@ void Scheduler::onMeasurementDue(MeasurementCallback cb) {
 }
 
 String Scheduler::getNextMeasurementTime() {
+  if (configStore.getScheduleMode() == 2) return "disabled";
   if (!timeSynced) return "NTP not synced";
 
   struct tm timeinfo;

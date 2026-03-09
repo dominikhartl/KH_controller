@@ -422,10 +422,10 @@ void publishAllDiscovery() {
 
   // Schedule mode select
   {
-    const char* modeOpts[] = {"custom", "interval"};
+    const char* modeOpts[] = {"custom", "interval", "never"};
     publishSelectDiscovery("khv3_sched_mode", "Schedule Mode",
                             topicCfgSchedMode, topicCfgSchedModeSet,
-                            modeOpts, 2);
+                            modeOpts, 3);
   }
 
   // Interval hours select
@@ -511,8 +511,11 @@ void publishAllConfigStates() {
   }
 
   // Schedule mode
-  mqttManager.publish(topicCfgSchedMode,
-                      (configStore.getScheduleMode() == 1) ? "interval" : "custom", true);
+  {
+    uint8_t m = configStore.getScheduleMode();
+    const char* ms = (m == 2) ? "never" : (m == 1) ? "interval" : "custom";
+    mqttManager.publish(topicCfgSchedMode, ms, true);
+  }
   mqttManager.publish(topicCfgIntervalHours,
                       String(configStore.getIntervalHours()).c_str(), true);
   {
@@ -608,14 +611,17 @@ void handleConfigSet(const char* topic, const char* payload) {
     configStore.setMeasTempC(val);
     mqttManager.publish(topicCfgMeasTemp, String(val, 1).c_str(), true);
   } else if (strcmp(topic, topicCfgSchedModeSet) == 0) {
-    uint8_t mode = (strcmp(payload, "interval") == 0) ? 1 : 0;
+    uint8_t mode = (strcmp(payload, "interval") == 0) ? 1 :
+                    (strcmp(payload, "never") == 0) ? 2 : 0;
     configStore.setScheduleMode(mode);
     scheduler.resetDailyFlags();
-    mqttManager.publish(topicCfgSchedMode, (mode == 1) ? "interval" : "custom", true);
+    const char* modeStr = (mode == 2) ? "never" : (mode == 1) ? "interval" : "custom";
+    mqttManager.publish(topicCfgSchedMode, modeStr, true);
   } else if (strcmp(topic, topicCfgIntervalHoursSet) == 0) {
     uint8_t h = (uint8_t)atoi(payload);
-    configStore.setIntervalHours(h);
-    scheduler.resetDailyFlags();
+    if (configStore.setIntervalHours(h)) {
+      scheduler.resetDailyFlags();
+    }
     mqttManager.publish(topicCfgIntervalHours, String(configStore.getIntervalHours()).c_str(), true);
   } else if (strcmp(topic, topicCfgAnchorTimeSet) == 0) {
     uint16_t mins = timeStrToMins(payload);

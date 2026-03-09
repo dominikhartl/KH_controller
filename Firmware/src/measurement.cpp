@@ -228,7 +228,7 @@ static float readADS1115MilliVolts() {
 // Oversampled ADC read with trimmed mean to reject noise spikes.
 // Sorts raw samples and discards top/bottom 25% before averaging.
 static float readADCTrimmed(int nSamples, int interSampleDelayMs) {
-  if (nSamples <= 0) return 0;
+  if (nSamples <= 0) return NAN;
   static float adcBuf[ADC_OVERSAMPLING];  // 64 elements — always large enough
   int maxSamples = adsActive() ? ADS_OVERSAMPLING : ADC_OVERSAMPLING;
   if (nSamples > maxSamples) nSamples = maxSamples;
@@ -243,14 +243,14 @@ static float readADCTrimmed(int nSamples, int interSampleDelayMs) {
       sample = (float)analogReadMilliVolts(PH_PIN);
       delay(interSampleDelayMs);
     } else {
-      return 0;  // TMC owns DIAG pins; no analog pH without ADS1115
+      return NAN;  // TMC owns DIAG pins; no analog pH without ADS1115
     }
     if (!isnan(sample)) {
       adcBuf[valid++] = sample;
     }
   }
 
-  if (valid == 0) return 0;
+  if (valid == 0) return NAN;
   sortFloats(adcBuf, valid);
   int trim = valid / 4;
   float sum = 0;
@@ -504,21 +504,26 @@ static void waitForStabilization() {
   unsigned long start = millis();
   bool converged = false;
   int goodCount = 0;    // readings within threshold in sliding window
-  int windowSize = 0;   // total readings in window
+  // Circular buffer to track which readings in the window were good
+  static const int WINDOW_SIZE = STAB_CONSEC_REQUIRED + 1;
+  bool goodHistory[WINDOW_SIZE];
+  memset(goodHistory, false, sizeof(goodHistory));
+  int windowIdx = 0;    // next slot in circular buffer
+  int windowFilled = 0; // how many slots have been written
   while (millis() - start < (unsigned long)stabilizationTimeoutMs) {
     float curr = readADCTrimmed(stabSamples, ADC_INTER_SAMPLE_DELAY_MS);
     if (nReadings < MAX_STAB_READINGS) stabReadings[nReadings++] = curr;
-    windowSize++;
-    if (fabs(curr - prev) < stabThresh) {
-      goodCount++;
+    bool isGood = fabs(curr - prev) < stabThresh;
+    // Evict oldest entry from sliding window if full
+    if (windowFilled >= WINDOW_SIZE) {
+      if (goodHistory[windowIdx]) goodCount--;
+    } else {
+      windowFilled++;
     }
-    // Sliding window: require STAB_CONSEC_REQUIRED good readings out of STAB_CONSEC_REQUIRED+1
-    // This allows one transient spike without restarting the entire convergence counter
-    if (windowSize > STAB_CONSEC_REQUIRED + 1) {
-      // Shrink window — we only track count, so reset when window grows too large
-      windowSize = 0;
-      goodCount = 0;
-    }
+    // Record current reading
+    goodHistory[windowIdx] = isGood;
+    if (isGood) goodCount++;
+    windowIdx = (windowIdx + 1) % WINDOW_SIZE;
     if (goodCount >= STAB_CONSEC_REQUIRED) {
       unsigned long elapsed = millis() - start;
       lastStabilizationMs = elapsed;

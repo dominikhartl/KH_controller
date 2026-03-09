@@ -32,7 +32,7 @@ float getWaterTemperatureC() {
   if (!sensorFound || !sensors) return DEFAULT_MEASUREMENT_TEMP_C;
   sensors->requestTemperatures();
   float t = sensors->getTempCByIndex(0);
-  if (t == DEVICE_DISCONNECTED_C) return DEFAULT_MEASUREMENT_TEMP_C;
+  if (t <= DEVICE_DISCONNECTED_C + 1.0f) return DEFAULT_MEASUREMENT_TEMP_C;
   return t;
 }
 

@@ -398,6 +398,10 @@ void subtractHCl(int unitsUsed) {
     return;
   }
   float titVol = configStore.getTitrationVolume();
+  if (titVol <= 0) {
+    publishError("Error: titration volume is zero, cannot track HCl!");
+    return;
+  }
   float hclVol = configStore.getHClVolume();
   float used = ((float)unitsUsed / calUnits) * titVol;
   float remaining = hclVol - used;
@@ -814,6 +818,11 @@ KHResult measureKH() {
   float prefillUL = configStore.getPrefillVolumeUL();
   float calU = (float)configStore.getCalUnits();
   float titV = configStore.getTitrationVolume();
+  if (titV <= 0 || calU <= 0) {
+    publishError("Error: invalid calibration or titration volume config");
+    measuring = false;
+    return result;
+  }
   int prefillUnits = max(2, (int)round(prefillUL * calU / (titV * 1000.0f)));
 
   // Validate calibration before starting

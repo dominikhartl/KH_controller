@@ -22,6 +22,7 @@ private:
   PubSubClient client;
   bool needsResubscribe = false;
   bool wasConnected = false;
+  bool wifiWasDown = false;
   unsigned long lastReconnectAttempt = 0;
   unsigned long lastHeartbeat = 0;
   char clientId[20] = {};

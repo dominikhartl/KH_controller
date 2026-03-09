@@ -327,18 +327,19 @@ void ConfigStore::setScheduleTime(uint8_t index, uint16_t minutesFromMidnight) {
 // Schedule mode
 uint8_t ConfigStore::getScheduleMode() { return prefs.getUChar("sched_mode", 1); }
 void ConfigStore::setScheduleMode(uint8_t mode) {
-  if (mode > 1) mode = 0;
+  if (mode > 2) mode = 0;  // 0=custom, 1=interval, 2=never
   prefs.putUChar("sched_mode", mode);
 }
 
 // Interval mode parameters
 uint8_t ConfigStore::getIntervalHours() { return prefs.getUChar("sched_intv", 6); }
-void ConfigStore::setIntervalHours(uint8_t h) {
+bool ConfigStore::setIntervalHours(uint8_t h) {
   const uint8_t valid[] = {1, 2, 3, 4, 6, 8, 12, 24};
   bool ok = false;
   for (int i = 0; i < 8; i++) { if (h == valid[i]) { ok = true; break; } }
-  if (!ok) h = 6;
+  if (!ok) return false;
   prefs.putUChar("sched_intv", h);
+  return true;
 }
 
 uint16_t ConfigStore::getAnchorTime() { return prefs.getUShort("sched_anch", 1200); }
@@ -365,9 +366,6 @@ void ConfigStore::setTitrateMaxRPM(float rpm) { prefs.putFloat("tit_max_rpm", rp
 bool ConfigStore::hasWifiCredentials() {
   return prefs.getString("wifi_ssid", "").length() > 0;
 }
-
-static char wifiSSIDBuf[33];
-static char wifiPassBuf[65];
 
 void ConfigStore::getWifiSSID(char* buf, size_t len) {
   String s = prefs.getString("wifi_ssid", "");

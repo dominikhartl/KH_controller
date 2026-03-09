@@ -38,7 +38,15 @@ void MQTTManager::loop() {
       wasConnected = false;
       if (onDisconnectCb) onDisconnectCb();
     }
+    wifiWasDown = true;
     return;
+  }
+
+  // Reset backoff when WiFi comes back (so MQTT reconnects quickly after brief dropout)
+  if (wifiWasDown) {
+    wifiWasDown = false;
+    currentReconnectInterval = RECONNECT_INTERVAL_MS;
+    lastReconnectAttempt = 0;
   }
 
   if (client.connected()) {

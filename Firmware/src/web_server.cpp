@@ -334,17 +334,26 @@ static void handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
       else if (strcmp(key, "titrate_sg_baseline") == 0) {
         configStore.setTitrateSGBaseline((int)value);
       }
+      else {
+        char warnBuf[80];
+        snprintf(warnBuf, sizeof(warnBuf), "Unknown or invalid config: %s", key);
+        broadcastMessage(warnBuf);
+        return;
+      }
 
       broadcastState(); // Confirm the update
     } else if (strcmp(type, "schedule") == 0) {
-      // Schedule mode (0=custom, 1=interval)
+      // Schedule mode (0=custom, 1=interval, 2=never)
       if (doc["mode"].is<JsonVariant>()) {
         configStore.setScheduleMode(doc["mode"].as<uint8_t>());
         scheduler.resetDailyFlags();
       }
       if (doc["intervalHours"].is<JsonVariant>()) {
-        configStore.setIntervalHours(doc["intervalHours"].as<uint8_t>());
-        scheduler.resetDailyFlags();
+        if (configStore.setIntervalHours(doc["intervalHours"].as<uint8_t>())) {
+          scheduler.resetDailyFlags();
+        } else {
+          broadcastMessage("Invalid interval hours value");
+        }
       }
       if (doc["anchorTime"].is<JsonVariant>()) {
         configStore.setAnchorTime(doc["anchorTime"].as<uint16_t>());

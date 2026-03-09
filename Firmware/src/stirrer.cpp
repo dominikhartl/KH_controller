@@ -13,6 +13,7 @@ void initStirrer() {
 void startStirrer() {
   int pct = configStore.getStirrerSpeed();  // 80-100%
   int duty = (pct * 255) / 100;
+  if (duty > 255) duty = 255;
   analogWrite(STIRRER_PIN, duty);
   stirrerRunning = true;
 }

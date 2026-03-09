@@ -32,7 +32,9 @@
       setDot('ws', false);
     };
     ws.onmessage = function(e) {
-      try { handleMsg(JSON.parse(e.data)); } catch(ex) { console.error('WS parse error:', ex, e.data); }
+      var msg;
+      try { msg = JSON.parse(e.data); } catch(ex) { console.error('WS JSON parse error:', ex, e.data); return; }
+      try { handleMsg(msg); } catch(ex) { console.error('WS handler error:', ex); }
     };
   }
 
@@ -1297,7 +1299,11 @@
           parts.push('Titration: no stall (30\u2013150 RPM)');
         }
       }
-      stallEl.innerHTML = parts.join('<br>');
+      stallEl.textContent = '';
+      parts.forEach(function(p, i) {
+        if (i > 0) stallEl.appendChild(document.createElement('br'));
+        stallEl.appendChild(document.createTextNode(p));
+      });
       stallEl.style.display = parts.length > 0 ? '' : 'none';
     }
 
