@@ -1,4 +1,5 @@
 #include "mqtt_manager.h"
+#include "config_store.h"
 #include <config.h>
 #include <WiFi.h>
 
@@ -9,9 +10,18 @@ MQTTManager mqttManager;
 // MQTT topic buffers
 char topicAvailability[50];
 
+// Static buffers for MQTT credentials (PubSubClient stores pointers, not copies)
+static char mqttServerBuf[65];
+static char mqttUserBuf[33];
+static char mqttPassBuf[33];
+
 void MQTTManager::begin() {
   client.setClient(espClient);
-  client.setServer(mqtt_server, mqtt_port);
+
+  // Load MQTT config from NVS
+  configStore.getMqttServer(mqttServerBuf, sizeof(mqttServerBuf));
+  int mqttPort = configStore.getMqttPort();
+  client.setServer(mqttServerBuf, mqttPort);
   client.setBufferSize(768);
 
   // Build fixed client ID from MAC address
@@ -83,11 +93,15 @@ void MQTTManager::loop() {
 }
 
 bool MQTTManager::tryConnect() {
+  // Load MQTT credentials from NVS (refreshed on each connect attempt)
+  configStore.getMqttUsername(mqttUserBuf, sizeof(mqttUserBuf));
+  configStore.getMqttPassword(mqttPassBuf, sizeof(mqttPassBuf));
+
   // Connect with LWT (Last Will and Testament) using fixed client ID
   return client.connect(
     clientId,
-    mqtt_username,
-    mqtt_password,
+    mqttUserBuf,
+    mqttPassBuf,
     topicAvailability,  // LWT topic
     0,                  // LWT QoS
     true,               // LWT retain

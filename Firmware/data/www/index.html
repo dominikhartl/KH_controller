@@ -367,6 +367,29 @@
     </div>
   </section>
 
+  <section class="config collapsible collapsed">
+    <h2 class="section-header">Firmware Update <span class="chevron"></span></h2>
+    <div class="section-body">
+      <div class="ota-upload">
+        <label>Firmware (.bin)
+          <input type="file" id="ota-firmware" accept=".bin">
+        </label>
+        <button class="cmd-btn" id="btn-upload-fw" style="margin-top:8px">Upload Firmware</button>
+      </div>
+      <div class="ota-upload" style="margin-top:12px">
+        <label>Filesystem Image (.bin)
+          <input type="file" id="ota-fs" accept=".bin">
+        </label>
+        <button class="cmd-btn" id="btn-upload-fs" style="margin-top:8px">Upload Filesystem</button>
+      </div>
+      <div id="ota-progress-section" style="display:none;margin-top:12px">
+        <div class="progress-bar"><div class="progress-fill" id="ota-progress-fill"></div></div>
+        <div class="progress-label" id="ota-progress-label">0%</div>
+      </div>
+      <div id="ota-status" style="margin-top:8px;font-size:0.85em;color:var(--text-secondary)"></div>
+    </div>
+  </section>
+
   <section class="schedule collapsible">
     <h2 class="section-header">Schedule <span class="chevron"></span></h2>
     <div class="section-body">
@@ -412,6 +435,6 @@
 
 
   <script src="chart.min.js?v=2"></script>
-  <script src="app.js?v=21"></script>
+  <script src="app.js?v=23"></script>
 </body>
 </html>

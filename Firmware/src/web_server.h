@@ -35,6 +35,8 @@ void storeLastKHResult(const KHResult& r);
 struct TitrationPoint;
 void storeAnalysisPoints(const TitrationPoint* points, int count);
 void setupWebServer();
+void setupAPWebServer();
+void registerOTAUploadHandler();
 void executeCommand(const char* cmd);
 void calibratePH(int bufferPH);
 void processPendingReplay();

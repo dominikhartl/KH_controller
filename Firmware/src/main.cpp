@@ -36,6 +36,13 @@ volatile uint32_t heapMin = UINT32_MAX;
 // This prevents long operations from blocking the AsyncTCP task
 static std::atomic<char> pendingCmd{0};
 
+// AP mode flag: when true, loop() only processes DNS requests
+static bool apModeActive = false;
+
+// BOOT button (GPIO 0) long-press tracking for WiFi reset
+static unsigned long bootBtnPressStart = 0;
+static const unsigned long BOOT_BTN_HOLD_MS = 5000;  // 5 seconds
+
 // Abort flag: set by WebSocket handler, checked in measurement loops
 static volatile bool abortRequested = false;
 void requestAbort() { abortRequested = true; }
@@ -1463,8 +1470,67 @@ void setup() {
   snprintf(MQkhSlope, sizeof(MQkhSlope), "%s/kh_slope", deviceName);
   snprintf(MQgranR2, sizeof(MQgranR2), "%s/gran_r2", deviceName);
 
-  // Non-blocking WiFi
-  wifiManager.begin(WIFI_SSID, WIFI_PASSWORD);
+  // --- Triple power-cycle detection for WiFi reset ---
+  {
+    uint8_t bootCount = configStore.getBootCount();
+    uint32_t lastBoot = configStore.getLastBootTime();
+    uint32_t now = (uint32_t)(esp_timer_get_time() / 1000ULL);  // ms since boot (always small)
+    // Use millis() for inter-boot timing — but on fresh boot it's ~0,
+    // so we use the stored timestamp and compare with a flag approach:
+    // If last boot was recent (stored as a monotonic counter), detect rapid cycles.
+    // We store the millis() value AFTER setup completes. On next boot, if the stored
+    // value indicates the previous boot was short-lived (<10s uptime), it's a rapid cycle.
+    // Simpler approach: just use the boot count + a timeout that resets in loop().
+    if (bootCount >= 2) {
+      Serial.println("Triple power-cycle detected — clearing WiFi, entering AP mode");
+      configStore.clearBootCount();
+      configStore.clearWifiCredentials();
+      // Fall through to AP mode below (hasWifiCredentials will be false)
+    } else {
+      configStore.setBootCount(bootCount + 1);
+      Serial.printf("Boot count: %d (power-cycle 3x within 10s to reset WiFi)\n", bootCount + 1);
+    }
+  }
+
+  // --- WiFi: AP mode or STA mode ---
+  // BOOT button (GPIO 0) for hardware WiFi reset
+  pinMode(0, INPUT_PULLUP);
+
+  static char wifiSSID[33];
+  static char wifiPass[65];
+  configStore.getWifiSSID(wifiSSID, sizeof(wifiSSID));
+  configStore.getWifiPassword(wifiPass, sizeof(wifiPass));
+
+  if (strlen(wifiSSID) == 0) {
+    // No WiFi credentials — start AP mode with captive portal
+    Serial.println("No WiFi credentials — starting AP mode");
+    wifiManager.beginAP(deviceName);
+    setupAPWebServer();
+    apModeActive = true;
+    return;
+  }
+
+  // Try to connect to WiFi (blocking wait up to 15s for initial connection)
+  wifiManager.begin(wifiSSID, wifiPass);
+  {
+    unsigned long wifiStart = millis();
+    while (!wifiManager.isConnected() && millis() - wifiStart < 15000) {
+      wifiManager.loop();
+      delay(100);
+    }
+  }
+
+  if (!wifiManager.isConnected()) {
+    // STA connection failed — fall back to AP mode
+    Serial.println("WiFi connection failed — starting AP mode");
+    WiFi.disconnect(true);
+    wifiManager.beginAP(deviceName);
+    setupAPWebServer();
+    apModeActive = true;
+    return;
+  }
+
+  // --- STA mode: full operation ---
 
   // MQTT with LWT
   mqttManager.begin();
@@ -1540,11 +1606,41 @@ void setup() {
     mqttManager.publish(MQmsg, "Scheduled measurement starting");
     measureKHWithValidation();
   });
+
+  // Clear boot counter after successful STA setup (prevents false triple-cycle detection)
+  configStore.clearBootCount();
+}
+
+// --- BOOT button (GPIO 0) long-press check ---
+static void checkBootButton() {
+  if (digitalRead(0) == LOW) {
+    if (bootBtnPressStart == 0) {
+      bootBtnPressStart = millis();
+    } else if (millis() - bootBtnPressStart >= BOOT_BTN_HOLD_MS) {
+      Serial.println("BOOT button held 5s — clearing WiFi, entering AP mode");
+      configStore.clearWifiCredentials();
+      configStore.clearBootCount();
+      delay(500);
+      ESP.restart();
+    }
+  } else {
+    bootBtnPressStart = 0;
+  }
 }
 
 // --- Main loop ---
 
 void loop() {
+  // BOOT button check runs in both AP and STA modes
+  checkBootButton();
+
+  if (apModeActive) {
+    // AP mode: only process DNS requests for captive portal
+    wifiManager.loop();
+    return;
+  }
+
+  // --- STA mode: full operation ---
   processPendingCommand();
   processPendingReplay();
   wifiManager.loop();
@@ -1595,4 +1691,10 @@ void loop() {
     publishDiagnostics();
   }
 
+  // Reset boot counter 10s after boot (prevents false triple power-cycle detection)
+  static bool bootCounterCleared = false;
+  if (!bootCounterCleared && millis() > 10000) {
+    configStore.clearBootCount();
+    bootCounterCleared = true;
+  }
 }

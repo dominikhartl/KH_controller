@@ -1532,6 +1532,72 @@
     } catch(e) {}
   }
 
+  // --- OTA Firmware Upload ---
+  function initOTAUpload() {
+    function uploadFile(inputId, type) {
+      var input = document.getElementById(inputId);
+      if (!input || !input.files.length) return;
+      var file = input.files[0];
+      var xhr = new XMLHttpRequest();
+      var progSection = document.getElementById('ota-progress-section');
+      var fillEl = document.getElementById('ota-progress-fill');
+      var labelEl = document.getElementById('ota-progress-label');
+      var statusEl = document.getElementById('ota-status');
+
+      progSection.style.display = 'block';
+      statusEl.textContent = 'Uploading ' + type + '...';
+      statusEl.style.color = 'var(--text-secondary)';
+
+      xhr.upload.onprogress = function(e) {
+        if (e.lengthComputable) {
+          var pct = Math.round(e.loaded / e.total * 100);
+          fillEl.style.width = pct + '%';
+          labelEl.textContent = pct + '%';
+        }
+      };
+      xhr.onload = function() {
+        if (xhr.status === 200) {
+          try {
+            var resp = JSON.parse(xhr.responseText);
+            if (resp.ok) {
+              statusEl.textContent = 'Success! Restarting device...';
+              statusEl.style.color = 'var(--green)';
+              setTimeout(function() { location.reload(); }, 15000);
+            } else {
+              statusEl.textContent = 'Error: ' + (resp.error || 'Unknown');
+              statusEl.style.color = 'var(--red)';
+            }
+          } catch(e) {
+            statusEl.textContent = 'Upload complete';
+          }
+        } else {
+          statusEl.textContent = 'Upload failed (HTTP ' + xhr.status + ')';
+          statusEl.style.color = 'var(--red)';
+        }
+      };
+      xhr.onerror = function() {
+        statusEl.textContent = 'Upload failed (connection error)';
+        statusEl.style.color = 'var(--red)';
+      };
+
+      var formData = new FormData();
+      formData.append('file', file);
+      xhr.open('POST', '/api/update?type=' + type);
+      xhr.send(formData);
+    }
+
+    var btnFw = document.getElementById('btn-upload-fw');
+    if (btnFw) btnFw.addEventListener('click', function() {
+      uploadFile('ota-firmware', 'firmware');
+    });
+
+    var btnFs = document.getElementById('btn-upload-fs');
+    if (btnFs) btnFs.addEventListener('click', function() {
+      if (!confirm('Upload filesystem image? This will overwrite the existing filesystem including history data. Export history first!')) return;
+      uploadFile('ota-fs', 'filesystem');
+    });
+  }
+
   function init() {
     initCharts();
     initTabs();
@@ -1545,6 +1611,7 @@
     initMotorCharts();
     initHWDiag();
     restoreDiagResults();
+    initOTAUpload();
     connect();
   }
 

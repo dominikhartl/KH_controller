@@ -64,7 +64,7 @@ static const int STIRRER_WARMUP_MS = 3000;
 static const int MEASUREMENT_DELAY_MS = 50;
 
 // Measurement defaults
-static const float ENDPOINT_PH = 4.6f;            // Fixed endpoint titration pH
+static const float ENDPOINT_PH = 4.5f;            // Fixed endpoint titration pH
 static const float FIXED_ENDPOINT_STOP_PH = 4.0f; // Stop titrating here in fixed endpoint mode
 static const int SAMPLE_PUMP_VOLUME = 350;        // Legacy: use configStore.getSampleCalRevsPerML() * getSampleVolume()
 static const int SAMPLE_CAL_REVOLUTIONS = 350;    // Revolutions used during sample pump calibration

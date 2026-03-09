@@ -10,8 +10,10 @@
 #include "temperature.h"
 #include "tmc_driver.h"
 #include "hw_diagnostics.h"
+#include "setup_page.h"
 #include <ArduinoJson.h>
 #include <LittleFS.h>
+#include <Update.h>
 #include <config.h>
 #include <pins.h>
 #include <time.h>
@@ -615,6 +617,11 @@ void executeCommand(const char* cmd) {
     // Defer tube cleaning to loopTask
     queueCommand('W');
     return;
+  } else if (strcmp(cmd, "resetwifi") == 0) {
+    configStore.clearWifiCredentials();
+    publishMessage("WiFi credentials cleared. Restarting into AP mode...");
+    delay(500);
+    ESP.restart();
   } else if (strcmp(cmd, "o") == 0) {
     publishMessage("Restarting...");
     delay(100);
@@ -1672,6 +1679,163 @@ void setupWebServer() {
     request->send(response);
   });
 
+  registerOTAUploadHandler();
+
   server.begin();
   Serial.println("Web server started on port 80");
+}
+
+// OTA firmware/filesystem upload via HTTP POST
+void registerOTAUploadHandler() {
+  server.on("/api/update", HTTP_POST,
+    // Response handler (after upload completes)
+    [](AsyncWebServerRequest* request) {
+      bool success = !Update.hasError();
+      request->send(200, "application/json",
+        success ? "{\"ok\":true}" : "{\"ok\":false,\"error\":\"Update failed\"}");
+      if (success) {
+        delay(1000);
+        ESP.restart();
+      }
+    },
+    // Upload handler (called per chunk)
+    [](AsyncWebServerRequest* request, String filename, size_t index, uint8_t* data, size_t len, bool final) {
+      if (index == 0) {
+        String typeParam = request->hasParam("type") ? request->getParam("type")->value() : "firmware";
+        int updateType = (typeParam == "filesystem") ? U_SPIFFS : U_FLASH;
+        size_t updateSize = (updateType == U_SPIFFS) ? 0xF0000 : ESP.getFreeSketchSpace();
+        Serial.printf("OTA upload start: %s (%u bytes max)\n", typeParam.c_str(), updateSize);
+        if (!Update.begin(updateSize, updateType)) {
+          Update.printError(Serial);
+        }
+      }
+      if (Update.isRunning()) {
+        if (Update.write(data, len) != len) {
+          Update.printError(Serial);
+        }
+      }
+      if (final) {
+        if (!Update.end(true)) {
+          Update.printError(Serial);
+        } else {
+          Serial.printf("OTA upload complete: %u bytes\n", index + len);
+        }
+      }
+    }
+  );
+}
+
+// Minimal web server for AP mode (captive portal + setup)
+void setupAPWebServer() {
+  // Serve the captive portal setup page
+  server.on("/setup", HTTP_GET, [](AsyncWebServerRequest* request) {
+    request->send_P(200, "text/html", SETUP_PAGE);
+  });
+
+  // Return current config (for pre-filling the form)
+  server.on("/api/setup", HTTP_GET, [](AsyncWebServerRequest* request) {
+    char mqttSrv[65], mqttUser[33];
+    configStore.getMqttServer(mqttSrv, sizeof(mqttSrv));
+    configStore.getMqttUsername(mqttUser, sizeof(mqttUser));
+    char buf[256];
+    snprintf(buf, sizeof(buf),
+      "{\"device_name\":\"%s\",\"mqtt_server\":\"%s\",\"mqtt_port\":%d,\"mqtt_user\":\"%s\"}",
+      deviceName, mqttSrv, configStore.getMqttPort(), mqttUser);
+    request->send(200, "application/json", buf);
+  });
+
+  // Save WiFi + MQTT credentials
+  server.on("/api/setup", HTTP_POST, [](AsyncWebServerRequest* request) {},
+    NULL,
+    [](AsyncWebServerRequest* request, uint8_t* data, size_t len, size_t index, size_t total) {
+      // Accumulate body (small JSON, single chunk expected)
+      if (index + len > 512) {
+        request->send(400, "application/json", "{\"ok\":false,\"error\":\"Too large\"}");
+        return;
+      }
+      if (index == 0 && (index + len) == total) {
+        // Complete body in one chunk
+        JsonDocument doc;
+        DeserializationError err = deserializeJson(doc, (const char*)data, len);
+        if (err) {
+          request->send(400, "application/json", "{\"ok\":false,\"error\":\"Invalid JSON\"}");
+          return;
+        }
+        const char* ssid = doc["ssid"] | "";
+        const char* password = doc["password"] | "";
+        if (strlen(ssid) == 0) {
+          request->send(400, "application/json", "{\"ok\":false,\"error\":\"SSID required\"}");
+          return;
+        }
+        configStore.setWifiCredentials(ssid, password);
+
+        // MQTT config (optional)
+        const char* mqttSrv = doc["mqtt_server"] | "homeassistant.local";
+        int mqttPort = doc["mqtt_port"] | 1883;
+        const char* mqttUser = doc["mqtt_user"] | "";
+        const char* mqttPass = doc["mqtt_pass"] | "";
+        configStore.setMqttConfig(mqttSrv, mqttPort, mqttUser, mqttPass);
+
+        request->send(200, "application/json", "{\"ok\":true}");
+        Serial.println("WiFi credentials saved. Restarting...");
+        delay(1000);
+        ESP.restart();
+      }
+    }
+  );
+
+  // WiFi network scan
+  server.on("/api/scan", HTTP_GET, [](AsyncWebServerRequest* request) {
+    int n = WiFi.scanComplete();
+    if (n == WIFI_SCAN_FAILED) {
+      WiFi.scanNetworks(true);  // Start async scan
+      request->send(200, "application/json", "[]");
+      return;
+    }
+    if (n == WIFI_SCAN_RUNNING) {
+      request->send(200, "application/json", "[]");
+      return;
+    }
+    // Scan complete — build JSON response
+    String json = "[";
+    for (int i = 0; i < n; i++) {
+      if (i > 0) json += ",";
+      json += "{\"ssid\":\"";
+      // Escape quotes in SSID
+      String ssid = WiFi.SSID(i);
+      ssid.replace("\"", "\\\"");
+      json += ssid;
+      json += "\",\"rssi\":";
+      json += WiFi.RSSI(i);
+      json += ",\"open\":";
+      json += (WiFi.encryptionType(i) == WIFI_AUTH_OPEN) ? "true" : "false";
+      json += "}";
+    }
+    json += "]";
+    WiFi.scanDelete();
+    request->send(200, "application/json", json);
+  });
+
+  // OTA upload also available in AP mode
+  registerOTAUploadHandler();
+
+  // Captive portal redirects — redirect all unknown requests to /setup
+  server.on("/generate_204", HTTP_GET, [](AsyncWebServerRequest* request) {
+    request->redirect("http://192.168.4.1/setup");
+  });
+  server.on("/hotspot-detect.html", HTTP_GET, [](AsyncWebServerRequest* request) {
+    request->redirect("http://192.168.4.1/setup");
+  });
+  server.on("/connecttest.txt", HTTP_GET, [](AsyncWebServerRequest* request) {
+    request->redirect("http://192.168.4.1/setup");
+  });
+  server.on("/redirect", HTTP_GET, [](AsyncWebServerRequest* request) {
+    request->redirect("http://192.168.4.1/setup");
+  });
+  server.onNotFound([](AsyncWebServerRequest* request) {
+    request->redirect("http://192.168.4.1/setup");
+  });
+
+  server.begin();
+  Serial.println("AP web server started (captive portal)");
 }

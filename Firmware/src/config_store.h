@@ -97,6 +97,27 @@ public:
   float getTitrateMaxRPM();
   void setTitrateMaxRPM(float rpm);
 
+  // WiFi credentials (stored in NVS, migrated from credentials.h on first boot)
+  bool hasWifiCredentials();
+  void getWifiSSID(char* buf, size_t len);
+  void getWifiPassword(char* buf, size_t len);
+  void setWifiCredentials(const char* ssid, const char* password);
+  void clearWifiCredentials();
+
+  // MQTT broker config (stored in NVS, migrated from config.h defaults on first boot)
+  void getMqttServer(char* buf, size_t len);
+  int getMqttPort();
+  void getMqttUsername(char* buf, size_t len);
+  void getMqttPassword(char* buf, size_t len);
+  void setMqttConfig(const char* server, int port, const char* user, const char* pass);
+
+  // Boot counter for triple power-cycle WiFi reset detection
+  uint8_t getBootCount();
+  void setBootCount(uint8_t count);
+  uint32_t getLastBootTime();
+  void setLastBootTime(uint32_t ms);
+  void clearBootCount();
+
   // Last measurement results (persistent across reboots)
   float getLastKH();
   float getLastStartPH();

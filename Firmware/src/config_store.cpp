@@ -12,6 +12,17 @@ void ConfigStore::begin() {
     migrateFromEEPROM();
     prefs.putBool("migrated", true);
   }
+
+  // One-time migration: import hardcoded WiFi/MQTT credentials into NVS
+  if (!prefs.getBool("wifi_migrated", false)) {
+    prefs.putString("wifi_ssid", WIFI_SSID);
+    prefs.putString("wifi_pass", WIFI_PASSWORD);
+    prefs.putString("mqtt_srv", mqtt_server);
+    prefs.putUShort("mqtt_port", mqtt_port);
+    prefs.putString("mqtt_user", mqtt_username);
+    prefs.putString("mqtt_pass", mqtt_password);
+    prefs.putBool("wifi_migrated", true);
+  }
 }
 
 void ConfigStore::migrateFromEEPROM() {
@@ -349,6 +360,80 @@ float ConfigStore::getSampleMaxRPM() { return prefs.getFloat("samp_max_rpm", 0.0
 void ConfigStore::setSampleMaxRPM(float rpm) { prefs.putFloat("samp_max_rpm", rpm); }
 float ConfigStore::getTitrateMaxRPM() { return prefs.getFloat("tit_max_rpm", 0.0f); }
 void ConfigStore::setTitrateMaxRPM(float rpm) { prefs.putFloat("tit_max_rpm", rpm); }
+
+// WiFi credentials
+bool ConfigStore::hasWifiCredentials() {
+  return prefs.getString("wifi_ssid", "").length() > 0;
+}
+
+static char wifiSSIDBuf[33];
+static char wifiPassBuf[65];
+
+void ConfigStore::getWifiSSID(char* buf, size_t len) {
+  String s = prefs.getString("wifi_ssid", "");
+  strncpy(buf, s.c_str(), len - 1);
+  buf[len - 1] = '\0';
+}
+
+void ConfigStore::getWifiPassword(char* buf, size_t len) {
+  String s = prefs.getString("wifi_pass", "");
+  strncpy(buf, s.c_str(), len - 1);
+  buf[len - 1] = '\0';
+}
+
+void ConfigStore::setWifiCredentials(const char* ssid, const char* password) {
+  prefs.putString("wifi_ssid", ssid);
+  prefs.putString("wifi_pass", password);
+}
+
+void ConfigStore::clearWifiCredentials() {
+  prefs.putString("wifi_ssid", "");
+  prefs.putString("wifi_pass", "");
+}
+
+// MQTT broker config
+static char mqttServerBuf[65];
+static char mqttUserBuf[33];
+static char mqttPassBuf[33];
+
+void ConfigStore::getMqttServer(char* buf, size_t len) {
+  String s = prefs.getString("mqtt_srv", "homeassistant.local");
+  strncpy(buf, s.c_str(), len - 1);
+  buf[len - 1] = '\0';
+}
+
+int ConfigStore::getMqttPort() {
+  return prefs.getUShort("mqtt_port", 1883);
+}
+
+void ConfigStore::getMqttUsername(char* buf, size_t len) {
+  String s = prefs.getString("mqtt_user", "");
+  strncpy(buf, s.c_str(), len - 1);
+  buf[len - 1] = '\0';
+}
+
+void ConfigStore::getMqttPassword(char* buf, size_t len) {
+  String s = prefs.getString("mqtt_pass", "");
+  strncpy(buf, s.c_str(), len - 1);
+  buf[len - 1] = '\0';
+}
+
+void ConfigStore::setMqttConfig(const char* server, int port, const char* user, const char* pass) {
+  prefs.putString("mqtt_srv", server);
+  prefs.putUShort("mqtt_port", (uint16_t)port);
+  prefs.putString("mqtt_user", user);
+  prefs.putString("mqtt_pass", pass);
+}
+
+// Boot counter for triple power-cycle detection
+uint8_t ConfigStore::getBootCount() { return prefs.getUChar("boot_cnt", 0); }
+void ConfigStore::setBootCount(uint8_t count) { prefs.putUChar("boot_cnt", count); }
+uint32_t ConfigStore::getLastBootTime() { return prefs.getULong("last_boot", 0); }
+void ConfigStore::setLastBootTime(uint32_t ms) { prefs.putULong("last_boot", ms); }
+void ConfigStore::clearBootCount() {
+  prefs.putUChar("boot_cnt", 0);
+  prefs.putULong("last_boot", 0);
+}
 
 // Slope history
 int ConfigStore::getSlopeHistory(SlopeEntry* entries, int maxEntries) {

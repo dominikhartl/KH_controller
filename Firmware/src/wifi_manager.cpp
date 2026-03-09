@@ -12,6 +12,21 @@ void WifiManager::begin(const char* ssid, const char* password) {
   startConnection();
 }
 
+void WifiManager::beginAP(const char* apSSID) {
+  WiFi.disconnect(true);
+  WiFi.mode(WIFI_AP);
+  WiFi.softAPConfig(IPAddress(192,168,4,1), IPAddress(192,168,4,1), IPAddress(255,255,255,0));
+  WiFi.softAP(apSSID);
+  Serial.print("AP mode started. SSID: ");
+  Serial.println(apSSID);
+  Serial.print("AP IP: ");
+  Serial.println(WiFi.softAPIP());
+
+  // DNS server redirects all domains to our IP (captive portal)
+  dnsServer.start(53, "*", IPAddress(192,168,4,1));
+  state = AP_ACTIVE;
+}
+
 void WifiManager::startConnection() {
   Serial.print("Connecting to WiFi: ");
   Serial.println(ssid);
@@ -25,6 +40,10 @@ void WifiManager::startConnection() {
 
 void WifiManager::loop() {
   switch (state) {
+    case AP_ACTIVE:
+      dnsServer.processNextRequest();
+      break;
+
     case CONNECTING:
       if (WiFi.status() == WL_CONNECTED) {
         state = CONNECTED;
@@ -65,6 +84,10 @@ void WifiManager::loop() {
 
 bool WifiManager::isConnected() {
   return state == CONNECTED && WiFi.status() == WL_CONNECTED;
+}
+
+bool WifiManager::isAPMode() const {
+  return state == AP_ACTIVE;
 }
 
 int8_t WifiManager::getRSSI() {
