@@ -49,9 +49,10 @@ The device takes a water sample from the aquarium and titrates it with dilute hy
 | Wemos D1 Mini ESP32 | 1 | Main controller |
 | DF-Robot pH Meter V2 | 1 | Analog pH probe |
 | NEMA 17 stepper motor (42Ncm, 1.5A) | 2 | For peristaltic pumps |
-| TMC2208 stepper driver | 2 | Silent stepper drivers |
+| TMC2208 or TMC2209 stepper driver | 2 | TMC2209 enables UART interface with stall detection (auto-detected) |
 | NEMA 17 peristaltic pump | 2 | Sample and titration pumps |
-| ADS1115 ADC module | 1 | Optional: 16-bit external ADC for higher pH resolution |
+| ADS1115 ADC module | 1 | Optional: 16-bit external ADC for higher pH resolution (auto-detected) |
+| DS18B20 temperature sensor | 1 | Optional: water temperature compensation (auto-detected) |
 | LM2596S buck converter | 1 | Set to 5V output |
 | TIP120 transistor | 1 | Stirrer motor driver |
 | 2.2k resistor | 1 | TIP120 base resistor |
@@ -78,6 +79,8 @@ The PCB connects the ESP32, pH meter, stepper drivers, stirrer, and all peripher
 
 ### Pin Configuration
 
+> **Note:** The pH sensor pin changed from GPIO 35 to GPIO 34 in the latest firmware release. The PCB layout image still shows the old assignment — use the table below as the authoritative reference.
+
 | Function | GPIO | Notes |
 |----------|------|-------|
 | Sample pump ENABLE | 25 | Stepper motor 1 |
@@ -87,10 +90,15 @@ The PCB connects the ESP32, pH meter, stepper drivers, stirrer, and all peripher
 | Titration pump DIR | 27 | Stepper motor 2 |
 | Titration pump STEP | 4 | Stepper motor 2 |
 | Stirrer motor | 16 | PWM via TIP120 |
-| pH sensor (ADC) | 35 | Analog input |
-| ADS1115 SDA (I2C) | 26 | Optional external ADC |
-| ADS1115 SCL (I2C) | 33 | Optional external ADC |
-| ADS1115 ALRT | 34 | Optional external ADC |
+| pH sensor / ADS1115 RDY | 34 | Analog input (internal ADC) or ADS1115 RDY (digital) |
+| ADS1115 SDA (I2C) | 26 | External 16-bit ADC |
+| ADS1115 SCL (I2C) | 33 | External 16-bit ADC |
+| TMC2209 UART TX | 18 | Optional: shared UART bus (TMC2209 only) |
+| TMC2209 UART RX | 19 | Optional: shared UART bus (TMC2209 only) |
+| Sample pump DIAG | 23 | Optional: TMC2209 stall detection |
+| Titration pump DIAG | 35 | Optional: TMC2209 stall detection |
+| DS18B20 temperature | 5 | OneWire temperature sensor |
+| Noise reference | 36 | Unconnected ADC pin for EMI measurement |
 
 ### 3D Printed Parts
 
