@@ -1,5 +1,6 @@
 #include <Arduino.h>
 #include <Wire.h>
+#include <esp_task_wdt.h>
 #include "measurement.h"
 #include "config_store.h"
 #include <pins.h>
@@ -511,6 +512,7 @@ static void waitForStabilization() {
   int windowIdx = 0;    // next slot in circular buffer
   int windowFilled = 0; // how many slots have been written
   while (millis() - start < (unsigned long)stabilizationTimeoutMs) {
+    esp_task_wdt_reset();  // Feed watchdog — stabilization can take up to 30s
     float curr = readADCTrimmed(stabSamples, ADC_INTER_SAMPLE_DELAY_MS);
     if (nReadings < MAX_STAB_READINGS) stabReadings[nReadings++] = curr;
     bool isGood = fabs(curr - prev) < stabThresh;
@@ -723,7 +725,10 @@ static bool granRegression(TitrationPoint* points, int nPoints,
                            float sampleVol, float k, bool* excluded,
                            float pHLow, float pHHigh,
                            float* outSlope, float* outIntercept,
-                           float* outR2, float* outSsRes, int* outCount) {
+                           float* outR2, float* outSsRes, int* outCount,
+                           float* outVarSlope = nullptr,
+                           float* outVarIntercept = nullptr,
+                           float* outCovSI = nullptr) {
   float sumW = 0, sumWX = 0, sumWY = 0, sumWXX = 0, sumWXY = 0, sumWYY = 0;
   int count = 0;
 
@@ -771,6 +776,14 @@ static bool granRegression(TitrationPoint* points, int nPoints,
   }
   *outR2 = (ssTot > 1e-12f) ? 1.0f - ssRes / ssTot : 0.0f;
   *outSsRes = ssRes;
+
+  // Parameter variances for confidence interval computation
+  if (count > 2 && (outVarSlope || outVarIntercept || outCovSI)) {
+    float s2 = ssRes / (float)(count - 2);
+    if (outVarSlope) *outVarSlope = sumW / denom * s2;
+    if (outVarIntercept) *outVarIntercept = sumWXX / denom * s2;
+    if (outCovSI) *outCovSI = -sumWX / denom * s2;
+  }
   return true;
 }
 
@@ -781,16 +794,19 @@ static float tryGranWindow(TitrationPoint* points, int nPoints,
                            float pHLow, float pHHigh,
                            float* outR2,
                            float* outSlope = nullptr,
-                           float* outIntercept = nullptr) {
+                           float* outIntercept = nullptr,
+                           float* outEqSE = nullptr) {
   bool excluded[MAX_TITRATION_POINTS];
   for (int i = 0; i < nPoints; i++) excluded[i] = false;
 
   float slope, intercept, r2, ssRes;
+  float varSlope = 0, varIntercept = 0, covSI = 0;
   int count;
 
   if (!granRegression(points, nPoints, sampleVol, k, excluded,
                       pHLow, pHHigh,
-                      &slope, &intercept, &r2, &ssRes, &count))
+                      &slope, &intercept, &r2, &ssRes, &count,
+                      &varSlope, &varIntercept, &covSI))
     return NAN;
 
   // Iterative outlier rejection: up to 2 rounds, remove worst 2σ weighted outlier
@@ -820,7 +836,8 @@ static float tryGranWindow(TitrationPoint* points, int nPoints,
     excluded[worstIdx] = true;
     if (!granRegression(points, nPoints, sampleVol, k, excluded,
                         pHLow, pHHigh,
-                        &slope, &intercept, &r2, &ssRes, &count))
+                        &slope, &intercept, &r2, &ssRes, &count,
+                        &varSlope, &varIntercept, &covSI))
       return NAN;
   }
 
@@ -832,6 +849,15 @@ static float tryGranWindow(TitrationPoint* points, int nPoints,
   if (outR2) *outR2 = r2;
   if (outSlope) *outSlope = slope;
   if (outIntercept) *outIntercept = intercept;
+
+  // Compute standard error of equivalence point via error propagation
+  if (outEqSE) {
+    float s2inv = 1.0f / (slope * slope);
+    float varEq = s2inv * varIntercept
+                + eqUnits * eqUnits * s2inv * varSlope
+                - 2.0f * eqUnits * s2inv * covSI;
+    *outEqSE = (varEq > 0) ? sqrtf(varEq) : 0;
+  }
   return eqUnits;
 }
 
@@ -841,7 +867,8 @@ float granAnalysis(TitrationPoint* points, int nPoints,
                    float* outWinLow, float* outWinHigh,
                    char* reasonBuf, size_t reasonLen,
                    float* outSlope, float* outIntercept,
-                   GranWindowResult* windowResults, int* nWindowResults) {
+                   GranWindowResult* windowResults, int* nWindowResults,
+                   float* outEqUnitsSE) {
   auto fail = [&](const char* reason) -> float {
     if (reasonBuf && reasonLen > 0) snprintf(reasonBuf, reasonLen, "%s", reason);
     return NAN;
@@ -905,15 +932,16 @@ float granAnalysis(TitrationPoint* points, int nPoints,
   float bestEqUnits = NAN;
   float bestLow = GRAN_STOP_PH, bestHigh = 0;
   float bestSlope = 0, bestIntercept = 0;
+  float bestEqSE = 0;
   int winCount = 0;
 
   for (int lb = 0; lb < nLower; lb++) {
     for (int b = 0; b < nBounds; b++) {
       if (upperBounds[b] <= lowerBounds[lb]) continue;
       if (upperBounds[b] - lowerBounds[lb] < 0.15f) continue;
-      float r2 = 0, s = 0, ic = 0;
+      float r2 = 0, s = 0, ic = 0, eqSE = 0;
       float eq = tryGranWindow(points, nPoints, sampleVol, k,
-                               lowerBounds[lb], upperBounds[b], &r2, &s, &ic);
+                               lowerBounds[lb], upperBounds[b], &r2, &s, &ic, &eqSE);
       if (windowResults && winCount < MAX_GRAN_WINDOWS) {
         windowResults[winCount] = {lowerBounds[lb], upperBounds[b], r2, !isnan(eq), eq};
         winCount++;
@@ -925,6 +953,7 @@ float granAnalysis(TitrationPoint* points, int nPoints,
         bestHigh = upperBounds[b];
         bestSlope = s;
         bestIntercept = ic;
+        bestEqSE = eqSE;
       }
     }
   }
@@ -936,6 +965,7 @@ float granAnalysis(TitrationPoint* points, int nPoints,
   if (outWinHigh) *outWinHigh = bestHigh;
   if (outSlope) *outSlope = bestSlope;
   if (outIntercept) *outIntercept = bestIntercept;
+  if (outEqUnitsSE) *outEqUnitsSE = bestEqSE;
 
   if (outR2) {
     *outR2 = bestR2;

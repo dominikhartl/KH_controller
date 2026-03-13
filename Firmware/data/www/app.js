@@ -154,6 +154,10 @@
     if (d.confidence != null) {
       setText('val-confidence', (d.confidence != null && !isNaN(d.confidence)) ? (d.confidence * 100).toFixed(0) + '%' : '--');
     }
+    if (d.khCI != null && !isNaN(parseFloat(d.khCI))) {
+      var ciEl = document.getElementById('val-kh-ci');
+      if (ciEl) ciEl.textContent = '\u00b1' + parseFloat(d.khCI).toFixed(2) + ' dKH';
+    }
 
     // pH gauge (start pH from last KH measurement)
     var phVal = (d.lastStartPh > 0) ? d.lastStartPh : 0;
@@ -591,6 +595,8 @@
       khChart.data.datasets[1].data = [];
       khChart.data.datasets[2].data = [];
       khChart.data.datasets[3].data = [];
+      khChart.data.datasets[4].data = [];
+      khChart.data.datasets[5].data = [];
       khChart.update();
       setText('val-kh-slope', '--');
       return;
@@ -599,16 +605,15 @@
     // Dataset 0: scatter points
     khChart.data.datasets[0].data = data.map(function(p) { return p[1]; });
 
-    // Dataset 1: moving-average smooth line (window of 5 points)
-    var raw = data.map(function(p) { return p[1]; });
+    // Dataset 1: EMA smooth line (12h half-life, time-aware)
     var smooth = [];
-    var w = Math.min(5, Math.floor(raw.length / 2)) || 1;
-    var half = Math.floor(w / 2);
-    for (var i = 0; i < raw.length; i++) {
-      var lo = Math.max(0, i - half), hi = Math.min(raw.length - 1, i + half);
-      var sum = 0, cnt = 0;
-      for (var j = lo; j <= hi; j++) { sum += raw[j]; cnt++; }
-      smooth.push(sum / cnt);
+    var emaVal = data[0][1];
+    smooth.push(emaVal);
+    for (var i = 1; i < data.length; i++) {
+      var dtH = (data[i][0] - data[i-1][0]) / 3600;
+      var alpha = 1 - Math.pow(0.5, dtH / 12);
+      emaVal = alpha * data[i][1] + (1 - alpha) * emaVal;
+      smooth.push(Math.round(emaVal * 1000) / 1000);
     }
     khChart.data.datasets[1].data = smooth;
 
@@ -628,41 +633,97 @@
       khChart.data.datasets[3].data = [];
     }
 
-    // Dataset 2: regression trend line from configured slope window
+    // Per-point error bars from Gran regression CI (index 10 in gran history)
+    khErrorBars = [];
+    if (granHistoryData) {
+      var ciByTs = {};
+      for (var i = 0; i < granHistoryData.length; i++) {
+        var ciVal = granHistoryData[i][10];
+        if (ciVal > 0) ciByTs[granHistoryData[i][0]] = ciVal;
+      }
+      for (var i = 0; i < data.length; i++) {
+        var ci = ciByTs[data[i][0]];
+        if (ci > 0) khErrorBars.push({idx: i, val: data[i][1], ci: ci});
+      }
+    }
+
+    // Dataset 2: daily-median regression trend line
+    // Groups measurements by calendar day, takes median per day, regresses on medians.
+    // This eliminates diurnal cycle bias from the slope calculation.
     var slopeHoursEl = document.getElementById('cfg-slope_hours');
     var slopeHours = slopeHoursEl ? (parseInt(slopeHoursEl.value) || 72) : 72;
     var now = data[data.length - 1][0];
     var cutoff = now - slopeHours * 3600;
     var recent = data.filter(function(p) { return p[0] >= cutoff; });
+    var trendOk = false;
     if (recent.length >= 3) {
-      var n = recent.length;
-      var t0 = recent[0][0];
-      var sx = 0, sy = 0, sxx = 0, sxy = 0;
-      for (var i = 0; i < n; i++) {
-        var x = (recent[i][0] - t0) / 3600;
-        var y = recent[i][1];
-        sx += x; sy += y; sxx += x * x; sxy += x * y;
+      // Group by calendar day
+      var dayBuckets = {};
+      for (var i = 0; i < recent.length; i++) {
+        var dayIdx = Math.floor(recent[i][0] / 86400);
+        if (!dayBuckets[dayIdx]) dayBuckets[dayIdx] = [];
+        dayBuckets[dayIdx].push(recent[i][1]);
       }
-      var denom = n * sxx - sx * sx;
-      if (Math.abs(denom) > 1e-12) {
-        var slope = (n * sxy - sx * sy) / denom;
-        var intercept = (sy - slope * sx) / n;
-        khChart.data.datasets[2].data = data.map(function(p) {
-          if (p[0] < cutoff) return null;
-          var x = (p[0] - t0) / 3600;
-          return slope * x + intercept;
-        });
-        // For gran/endpoint views, show per-method slope (firmware only sends combined)
-        if (khMethod !== 'combined') {
-          var slopePerDay = slope * 24;
-          setText('val-kh-slope', (slopePerDay >= 0 ? '+' : '') + slopePerDay.toFixed(2));
+      var dayKeys = Object.keys(dayBuckets).map(Number).sort(function(a,b){return a-b;});
+      if (dayKeys.length >= 3) {
+        // Compute median per day and regress
+        var d0 = dayKeys[0];
+        var nD = dayKeys.length;
+        var sx = 0, sy = 0, sxx = 0, sxy = 0;
+        var dayMedians = [];
+        for (var di = 0; di < nD; di++) {
+          var vals = dayBuckets[dayKeys[di]].slice().sort(function(a,b){return a-b;});
+          var med = vals[Math.floor(vals.length / 2)];
+          dayMedians.push({day: dayKeys[di], med: med});
+          var x = dayKeys[di] - d0;
+          sx += x; sy += med; sxx += x * x; sxy += x * med;
         }
-      } else {
-        khChart.data.datasets[2].data = [];
-        if (khMethod !== 'combined') setText('val-kh-slope', '--');
+        var denom = nD * sxx - sx * sx;
+        if (Math.abs(denom) > 1e-12) {
+          var slopePerDay = (nD * sxy - sx * sy) / denom;
+          var interceptDay = (sy - slopePerDay * sx) / nD;
+          var xMean = sx / nD;
+          // Residual SE for prediction interval
+          var ssRes = 0;
+          for (var di = 0; di < nD; di++) {
+            var pred = slopePerDay * (dayKeys[di] - d0) + interceptDay;
+            var r = dayMedians[di].med - pred;
+            ssRes += r * r;
+          }
+          var se = (nD > 2) ? Math.sqrt(ssRes / (nD - 2)) : 0;
+          khChart.data.datasets[2].data = data.map(function(p) {
+            if (p[0] < cutoff) return null;
+            var x = Math.floor(p[0] / 86400) - d0 + (p[0] % 86400) / 86400;
+            return slopePerDay * x + interceptDay;
+          });
+          // Datasets 4+5: trend prediction interval band (±t×SE×√(1+1/n+(x-x̄)²/Sxx))
+          var tCrit = 1.96;  // approximate for small n
+          var Sxx = sxx - sx * sx / nD;
+          khChart.data.datasets[4].data = data.map(function(p) {
+            if (p[0] < cutoff || se === 0) return null;
+            var x = Math.floor(p[0] / 86400) - d0 + (p[0] % 86400) / 86400;
+            var yHat = slopePerDay * x + interceptDay;
+            var h = 1.0 / nD + (x - xMean) * (x - xMean) / Sxx;
+            return yHat + tCrit * se * Math.sqrt(1 + h);
+          });
+          khChart.data.datasets[5].data = data.map(function(p) {
+            if (p[0] < cutoff || se === 0) return null;
+            var x = Math.floor(p[0] / 86400) - d0 + (p[0] % 86400) / 86400;
+            var yHat = slopePerDay * x + interceptDay;
+            var h = 1.0 / nD + (x - xMean) * (x - xMean) / Sxx;
+            return yHat - tCrit * se * Math.sqrt(1 + h);
+          });
+          trendOk = true;
+          if (khMethod !== 'combined') {
+            setText('val-kh-slope', (slopePerDay >= 0 ? '+' : '') + slopePerDay.toFixed(2));
+          }
+        }
       }
-    } else {
+    }
+    if (!trendOk) {
       khChart.data.datasets[2].data = [];
+      khChart.data.datasets[4].data = [];
+      khChart.data.datasets[5].data = [];
       if (khMethod !== 'combined') setText('val-kh-slope', '--');
     }
     // Enforce minimum 1.5 dKH span on y-axis
@@ -707,6 +768,41 @@
 
   // --- Charts ---
   var khChart, phChart, liveChart, granChart, granHistChart, granWinChart, effChart, noiseChart;
+  var khErrorBars = [];  // [{x: index, ci: ±dKH}, ...] for per-point error bars
+  var khErrorBarsVisible = false;
+
+  // Custom Chart.js plugin: draws vertical error bars on dataset 0 (KH points)
+  var errorBarPlugin = {
+    id: 'khErrorBars',
+    afterDatasetsDraw: function(chart) {
+      if (!khErrorBarsVisible || khErrorBars.length === 0) return;
+      if (chart !== khChart) return;
+      var meta = chart.getDatasetMeta(0);
+      if (meta.hidden) return;
+      var ctx = chart.ctx;
+      var yScale = chart.scales.y;
+      ctx.save();
+      ctx.strokeStyle = 'rgba(10,132,255,0.5)';
+      ctx.lineWidth = 1.5;
+      for (var i = 0; i < khErrorBars.length; i++) {
+        var eb = khErrorBars[i];
+        var pt = meta.data[eb.idx];
+        if (!pt) continue;
+        var yTop = yScale.getPixelForValue(eb.val + eb.ci);
+        var yBot = yScale.getPixelForValue(eb.val - eb.ci);
+        var x = pt.x;
+        ctx.beginPath();
+        ctx.moveTo(x, yTop); ctx.lineTo(x, yBot);
+        ctx.stroke();
+        // Caps
+        ctx.beginPath();
+        ctx.moveTo(x - 3, yTop); ctx.lineTo(x + 3, yTop);
+        ctx.moveTo(x - 3, yBot); ctx.lineTo(x + 3, yBot);
+        ctx.stroke();
+      }
+      ctx.restore();
+    }
+  };
   var sgSampleChart, sgTitrateChart;
   var granView = 'last'; // 'last' or 'history'
   var khMethod = 'combined'; // 'combined', 'gran', 'endpoint'
@@ -728,15 +824,18 @@
   function initCharts() {
     khChart = new Chart(document.getElementById('chart-kh'), {
       type: 'line',
+      plugins: [errorBarPlugin],
       data: { labels: [], datasets: [
         { label: 'KH', data: [], backgroundColor: '#0a84ff', borderColor: '#0a84ff', borderWidth: 0, pointRadius: 3, pointBackgroundColor: '#0a84ff', pointBorderColor: '#0a84ff', showLine: false, yAxisID: 'y', order: 1 },
         { label: 'Smooth', data: [], borderColor: '#0a84ff', borderWidth: 3, pointRadius: 0, cubicInterpolationMode: 'monotone', tension: 0.4, yAxisID: 'y', order: 2 },
         { label: 'Trend', data: [], borderColor: 'rgba(255,159,10,0.6)', borderWidth: 2, borderDash: [6,3], pointRadius: 0, tension: 0, yAxisID: 'y', order: 0 },
-        { label: 'Conf', type: 'bar', data: [], backgroundColor: 'rgba(48,209,88,0.13)', borderColor: 'rgba(48,209,88,0.3)', borderWidth: 1, yAxisID: 'yConf', order: 3 }
+        { label: 'Conf', type: 'bar', data: [], backgroundColor: 'rgba(48,209,88,0.13)', borderColor: 'rgba(48,209,88,0.3)', borderWidth: 1, yAxisID: 'yConf', order: 3 },
+        { label: '_trendUpper', data: [], borderColor: 'rgba(255,159,10,0.2)', borderWidth: 1, pointRadius: 0, fill: 5, backgroundColor: 'rgba(255,159,10,0.08)', yAxisID: 'y', order: 6 },
+        { label: '_trendLower', data: [], borderColor: 'rgba(255,159,10,0.2)', borderWidth: 1, pointRadius: 0, fill: false, yAxisID: 'y', order: 6 }
       ] },
       options: {
         responsive: true, maintainAspectRatio: false, animation: false,
-        plugins: { legend: { display: true, labels: { color: '#8e8e93', font: { size: 10 }, boxWidth: 12, filter: function(item) { return item.text !== 'Smooth'; } } } },
+        plugins: { legend: { display: true, labels: { color: '#8e8e93', font: { size: 10 }, boxWidth: 12, filter: function(item) { return item.text !== 'Smooth' && (!item.text || item.text.charAt(0) !== '_'); } } } },
         scales: {
           x: { ticks: { color: '#8e8e93', maxTicksLimit: 6, font: { size: 10 } }, grid: { color: '#38383a' } },
           y: { ticks: { color: '#8e8e93', font: { size: 10 } }, grid: { color: '#38383a' } },
@@ -855,6 +954,43 @@
     });
   }
 
+  // --- KH Chart Layer Toggles ---
+  function initKHLayers() {
+    // Datasets: 0=Points, 1=Smooth, 2=Trend, 3=Conf, 4=CIupper, 5=CIlower
+    var map = [
+      ['kh-show-points', [0]],
+      ['kh-show-smooth', [1]],
+      ['kh-show-trend', [2]],
+      ['kh-show-ci', [4, 5]],
+      ['kh-show-score', [3]]
+    ];
+    // CI hidden by default (checkbox unchecked), Score hidden by default
+    if (khChart) {
+      khChart.data.datasets[4].hidden = true;
+      khChart.data.datasets[5].hidden = true;
+      khChart.data.datasets[3].hidden = false;
+    }
+    map.forEach(function(entry) {
+      var el = document.getElementById(entry[0]);
+      if (!el) return;
+      // Sync initial state
+      if (khChart) {
+        entry[1].forEach(function(idx) {
+          khChart.data.datasets[idx].hidden = !el.checked;
+        });
+      }
+      if (entry[0] === 'kh-show-ci') khErrorBarsVisible = el.checked;
+      el.addEventListener('change', function() {
+        if (!khChart) return;
+        entry[1].forEach(function(idx) {
+          khChart.data.datasets[idx].hidden = !el.checked;
+        });
+        if (entry[0] === 'kh-show-ci') khErrorBarsVisible = el.checked;
+        khChart.update();
+      });
+    });
+  }
+
   // --- Tabs ---
   function initTabs() {
     var tabs = document.querySelectorAll('.tab');
@@ -878,6 +1014,8 @@
         // KH trend info and method toggle
         var khTrend = document.getElementById('kh-trend');
         if (khTrend) khTrend.style.display = (sel === 'kh') ? '' : 'none';
+        var khLayers = document.getElementById('kh-layers');
+        if (khLayers) khLayers.style.display = (sel === 'kh') ? 'flex' : 'none';
         var khToggle = document.getElementById('kh-method-toggle');
         if (khToggle) khToggle.style.display = (sel === 'kh') ? 'flex' : 'none';
         // Gran sub-tabs visibility
@@ -1606,6 +1744,7 @@
 
   function init() {
     initCharts();
+    initKHLayers();
     initTabs();
     initCollapsible();
     initButtons();

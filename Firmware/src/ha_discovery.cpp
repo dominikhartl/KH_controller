@@ -258,6 +258,8 @@ void publishAllDiscovery() {
   // Quality metrics
   { char t[50]; snprintf(t, sizeof(t), "%s/gran_r2", deviceName);
     publishSensorDiscovery("khv3_gran_r2", "Gran R\u00b2", t, nullptr, nullptr, nullptr, "diagnostic"); }
+  { char t[50]; snprintf(t, sizeof(t), "%s/kh_ci", deviceName);
+    publishSensorDiscovery("khv3_kh_ci", "KH \u00b195% CI", t, "dKH", nullptr, nullptr, "diagnostic"); }
 
   publishSensorDiscovery("khv3_mes_ph", "Measured pH", mesPhTopic, "pH", nullptr, nullptr, nullptr);
   publishSensorDiscovery("khv3_rssi", "WiFi Signal", topicDiagnostics, "dBm", "signal_strength",

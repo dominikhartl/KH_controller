@@ -29,6 +29,7 @@ struct KHResult {
   float granWinHigh;   // Selected Gran window upper pH bound
   float maxNoiseMv;    // Peak noise StdDev across all stabilizations
   int highNoiseCount;  // Count of stabilizations with noise > PROBE_NOISE_GOOD_MV
+  float khCI;          // ±dKH 95% confidence interval from Gran regression
 };
 
 void storeLastKHResult(const KHResult& r);
@@ -52,7 +53,7 @@ void broadcastGranData(float r2, float eqML, bool usedGran,
                        float slopeML = 0, float intercept = 0,
                        GranWindowResult* windows = nullptr, int nWindows = 0);
 void appendHistory(const char* sensor, float value, uint32_t ts);
-void appendGranHistory(float r2, float eqML, float endpointPH, bool usedGran, float confidence, float khGran, float khEndpoint, float probeNoiseMv, int phReversals, float dropUL, float titrationRPM, uint32_t ts);
+void appendGranHistory(float r2, float eqML, float endpointPH, bool usedGran, float confidence, float khGran, float khEndpoint, float probeNoiseMv, int phReversals, float dropUL, float titrationRPM, float khCI, uint32_t ts);
 void appendMotorHealth(uint32_t ts, int sampleAvg, int sampleMin, int titrateAvg, int titrateMin);
 const char* getTubeHealth();
 int getRecentKHValues(float* outValues, int maxCount);

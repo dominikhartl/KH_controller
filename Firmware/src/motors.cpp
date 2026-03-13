@@ -1,4 +1,5 @@
 #include <Arduino.h>
+#include <esp_task_wdt.h>
 #include "motors.h"
 #include "tmc_driver.h"
 #include "config_store.h"
@@ -127,6 +128,7 @@ static bool runSamplePump(int volume, bool forward, float speedRpm) {
     stepPulseJittered(STEP_PIN1, targetUs);
     stepsDone++;
     if (stepsDone % (STEPS_PER_REVOLUTION * MOTOR_YIELD_INTERVAL) == 0) {
+      esp_task_wdt_reset();
       if (yieldCb) yieldCb();
       { uint16_t sg = getSampleSG();
         sampleSGSum += sg; sampleSGCount++;
@@ -178,6 +180,7 @@ static bool runSamplePump(int volume, bool forward, float speedRpm) {
       if (acc > startUs) acc = startUs;
       stepsDone++;
     }
+    esp_task_wdt_reset();
   }
 
   delay(MOTOR_HOLD_MS);
@@ -302,6 +305,7 @@ bool titrate(int volume, float speedRpm, bool noAccel) {
       stepsDone++;
       speedReached = speedUs;
       if (stepsDone % (MOTOR_STEPS_PER_UNIT * MOTOR_YIELD_INTERVAL * 50) == 0) {
+        esp_task_wdt_reset();
         if (yieldCb) yieldCb();
         { uint16_t sg = getTitrateSG();
           titrateSGSum += sg; titrateSGCount++;
@@ -336,12 +340,14 @@ bool titrate(int volume, float speedRpm, bool noAccel) {
       if (acc > startUs) acc = startUs;
       stepsDone++;
     }
+    esp_task_wdt_reset();
   } else {
     // Small volume: absolute-time stepping immune to interrupt jitter.
     // No spread-spectrum here — titration motor needs precise timing for volume accuracy.
     unsigned int halfPeriod = (unsigned int)(speedUs + 0.5f);
     unsigned long t = micros();
     for (int i = 0; i < totalSteps; i++) {
+      if ((i & 0x7F) == 0) esp_task_wdt_reset();  // Feed watchdog every 128 steps
       t += halfPeriod;
       digitalWrite(STEP_PIN2, HIGH);
       while ((long)(micros() - t) < 0) {}
@@ -393,10 +399,13 @@ int diagStepSample(int revolutions, float rpm, SGSample* samples, int maxSamples
 
   for (int i = 0; i < totalSteps; i++) {
     stepPulseJittered(STEP_PIN1, halfPeriodUs);
-    if ((i + 1) % STEPS_PER_REVOLUTION == 0 && nSamples < maxSamples) {
-      samples[nSamples].sg = getSampleSG();
-      samples[nSamples].diag = digitalRead(DIAG_SAMPLE);
-      nSamples++;
+    if ((i + 1) % STEPS_PER_REVOLUTION == 0) {
+      esp_task_wdt_reset();
+      if (nSamples < maxSamples) {
+        samples[nSamples].sg = getSampleSG();
+        samples[nSamples].diag = digitalRead(DIAG_SAMPLE);
+        nSamples++;
+      }
     }
   }
 
@@ -418,10 +427,13 @@ int diagStepTitrate(int revolutions, float rpm, SGSample* samples, int maxSample
 
   for (int i = 0; i < totalSteps; i++) {
     stepPulse(STEP_PIN2, halfPeriodUs);
-    if ((i + 1) % STEPS_PER_REVOLUTION == 0 && nSamples < maxSamples) {
-      samples[nSamples].sg = getTitrateSG();
-      samples[nSamples].diag = digitalRead(DIAG_TITRATE);
-      nSamples++;
+    if ((i + 1) % STEPS_PER_REVOLUTION == 0) {
+      esp_task_wdt_reset();
+      if (nSamples < maxSamples) {
+        samples[nSamples].sg = getTitrateSG();
+        samples[nSamples].diag = digitalRead(DIAG_TITRATE);
+        nSamples++;
+      }
     }
   }
 
@@ -489,6 +501,7 @@ float diagStallRamp(float startRPM, float maxRPM, float stepRPM, int revsPerStep
     }
     stepCount++;
 
+    esp_task_wdt_reset();
     delay(50); // settle between speed changes
   }
 
@@ -553,6 +566,7 @@ float diagStallRampTitrate(float startRPM, float maxRPM, float stepRPM, int revs
     }
     stepCount++;
 
+    esp_task_wdt_reset();
     delay(50);
   }
 

@@ -2,6 +2,7 @@
 #include "config_store.h"
 #include <config.h>
 #include <WiFi.h>
+#include <esp_task_wdt.h>
 
 extern char deviceName[];
 
@@ -23,6 +24,7 @@ void MQTTManager::begin() {
   int mqttPort = configStore.getMqttPort();
   client.setServer(mqttServerBuf, mqttPort);
   client.setBufferSize(768);
+  client.setSocketTimeout(3);  // 3s TCP timeout (default 15s can trigger watchdog)
 
   // Build fixed client ID from MAC address
   uint8_t mac[6];
@@ -76,6 +78,7 @@ void MQTTManager::loop() {
     return;
   }
   lastReconnectAttempt = now;
+  esp_task_wdt_reset();  // Feed watchdog before potentially blocking TCP connect
 
   if (tryConnect()) {
     Serial.println("MQTT connected");

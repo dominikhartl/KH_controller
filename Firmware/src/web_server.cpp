@@ -440,10 +440,10 @@ static void handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
           float r2  = line.substring(c1 + 1, c2).toFloat();
           float eq  = line.substring(c2 + 1, c3).toFloat();
           float eph = line.substring(c3 + 1, c4).toFloat();
-          // Parse remaining fields: method, confidence, khGran, khEndpoint
+          // Parse remaining fields: method, confidence, khGran, khEndpoint, noise, reversals, dropUL, titRPM, khCI
           int c5 = line.indexOf(',', c4 + 1);
           int mth = 0;
-          float conf = 0, khG = 0, khE = 0, noiseMv = 0;
+          float conf = 0, khG = 0, khE = 0, noiseMv = 0, ci = 0;
           int reversals = 0;
           if (c5 > 0) {
             mth = line.substring(c4 + 1, c5).toInt();
@@ -459,7 +459,20 @@ static void handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
                   int c9 = line.indexOf(',', c8 + 1);
                   if (c9 > 0) {
                     noiseMv = line.substring(c8 + 1, c9).toFloat();
-                    reversals = line.substring(c9 + 1).toInt();
+                    int c10 = line.indexOf(',', c9 + 1);
+                    if (c10 > 0) {
+                      reversals = line.substring(c9 + 1, c10).toInt();
+                      // Skip dropUL (c10), titrationRPM (c11), read khCI (c12)
+                      int c11 = line.indexOf(',', c10 + 1);
+                      if (c11 > 0) {
+                        int c12 = line.indexOf(',', c11 + 1);
+                        if (c12 > 0) {
+                          ci = line.substring(c12 + 1).toFloat();
+                        }
+                      }
+                    } else {
+                      reversals = line.substring(c9 + 1).toInt();
+                    }
                   } else {
                     noiseMv = line.substring(c8 + 1).toFloat();
                   }
@@ -482,6 +495,7 @@ static void handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
           pt.add(noiseMv);
           pt.add(reversals);
           pt.add(conf);
+          pt.add(ci);
         }
         f.close();
 
@@ -682,6 +696,7 @@ void broadcastState() {
   // KH trend slope (dKH/day) and measurement confidence
   if (!isnan(cachedKHSlope)) doc["khSlope"] = serialized(String(cachedKHSlope, 3));
   if (!isnan(lastConfidence)) doc["confidence"] = lastConfidence;
+  if (!isnan(lastKHResult.khCI)) doc["khCI"] = serialized(String(lastKHResult.khCI, 3));
 
   // Probe health
   JsonObject probe = doc["probe"].to<JsonObject>();
@@ -980,7 +995,7 @@ void appendHistory(const char* sensor, float value, uint32_t ts) {
   }
 }
 
-void appendGranHistory(float r2, float eqML, float endpointPH, bool usedGran, float confidence, float khGran, float khEndpoint, float probeNoiseMv, int phReversals, float dropUL, float titrationRPM, uint32_t ts) {
+void appendGranHistory(float r2, float eqML, float endpointPH, bool usedGran, float confidence, float khGran, float khEndpoint, float probeNoiseMv, int phReversals, float dropUL, float titrationRPM, float khCI, uint32_t ts) {
   const char* filename = "/history/gran.csv";
 
   if (!LittleFS.exists("/history")) {
@@ -1018,9 +1033,10 @@ void appendGranHistory(float r2, float eqML, float endpointPH, bool usedGran, fl
 
   File f = LittleFS.open(filename, "a");
   if (f) {
-    f.printf("%u,%.4f,%.3f,%.2f,%d,%.2f,%.2f,%.2f,%.2f,%d,%.1f,%.1f\n", ts, r2, eqML, endpointPH, usedGran ? 1 : 0, confidence,
+    f.printf("%u,%.4f,%.3f,%.2f,%d,%.2f,%.2f,%.2f,%.2f,%d,%.1f,%.1f,%.3f\n", ts, r2, eqML, endpointPH, usedGran ? 1 : 0, confidence,
              isnan(khGran) ? 0.0f : khGran, isnan(khEndpoint) ? 0.0f : khEndpoint,
-             isnan(probeNoiseMv) ? 0.0f : probeNoiseMv, phReversals, dropUL, titrationRPM);
+             isnan(probeNoiseMv) ? 0.0f : probeNoiseMv, phReversals, dropUL, titrationRPM,
+             isnan(khCI) ? 0.0f : khCI);
     f.close();
   } else {
     Serial.println("Warning: failed to append to gran.csv");
@@ -1164,20 +1180,56 @@ float computeKHSlope() {
 
   if (n < 3) return NAN;
 
-  // Linear regression: kh = slope * t + intercept
-  // Normalize timestamps to hours from first point to avoid overflow
-  double sx = 0, sy = 0, sxx = 0, sxy = 0;
-  double t0 = (double)ts[0];
+  // Group measurements by calendar day and compute median per day.
+  // This eliminates diurnal cycle bias that plagued raw regression.
+  struct DayBucket { float vals[30]; int cnt; uint32_t dayIdx; };
+  DayBucket days[8];
+  int nDays = 0;
+
   for (int i = 0; i < n; i++) {
-    double x = ((double)ts[i] - t0) / 3600.0;  // hours
-    double y = (double)kh[i];
+    uint32_t dayIdx = ts[i] / 86400;
+    int d = -1;
+    for (int j = 0; j < nDays; j++) {
+      if (days[j].dayIdx == dayIdx) { d = j; break; }
+    }
+    if (d < 0) {
+      if (nDays >= 8) continue;
+      d = nDays++;
+      days[d].dayIdx = dayIdx;
+      days[d].cnt = 0;
+    }
+    if (days[d].cnt < 30) {
+      days[d].vals[days[d].cnt++] = kh[i];
+    }
+  }
+
+  if (nDays < 3) return NAN;
+
+  // Compute median of each day bucket and regress on (dayIdx, median)
+  double sx = 0, sy = 0, sxx = 0, sxy = 0;
+  double d0 = (double)days[0].dayIdx;
+  for (int d = 0; d < nDays; d++) {
+    // Sort values to find median
+    for (int i = 1; i < days[d].cnt; i++) {
+      float key = days[d].vals[i];
+      int j = i - 1;
+      while (j >= 0 && days[d].vals[j] > key) {
+        days[d].vals[j + 1] = days[d].vals[j];
+        j--;
+      }
+      days[d].vals[j + 1] = key;
+    }
+    float median = days[d].vals[days[d].cnt / 2];
+
+    double x = (double)days[d].dayIdx - d0;  // days from first
+    double y = (double)median;
     sx += x; sy += y; sxx += x * x; sxy += x * y;
   }
-  double denom = (double)n * sxx - sx * sx;
+  double denom = (double)nDays * sxx - sx * sx;
   if (fabs(denom) < 1e-12) return NAN;
 
-  double slopePerHour = ((double)n * sxy - sx * sy) / denom;
-  cachedKHSlope = (float)(slopePerHour * 24.0);  // Convert to dKH/day
+  // Slope is already in dKH/day (x-axis is days)
+  cachedKHSlope = (float)(((double)nDays * sxy - sx * sy) / denom);
   return cachedKHSlope;
 }
 
@@ -1203,7 +1255,7 @@ void setupWebServer() {
   // CSV export: merge kh, ph, gran history into one download
   server.on("/api/export.csv", HTTP_GET, [](AsyncWebServerRequest* request) {
     // Collect entries keyed by timestamp
-    struct Row { float kh; float ph; float r2; float eqML; float epPH; int method; float confidence; float khGran; float khEndpoint; float probeNoiseMv; int phReversals; bool hasGran; };
+    struct Row { float kh; float ph; float r2; float eqML; float epPH; int method; float confidence; float khGran; float khEndpoint; float probeNoiseMv; int phReversals; float khCI; bool hasGran; };
     static const int MAX_ROWS = 200;
     static uint32_t timestamps[200];
     static Row rows[200];
@@ -1213,7 +1265,7 @@ void setupWebServer() {
       for (int i = 0; i < nRows; i++) { if (timestamps[i] == ts) return i; }
       if (nRows >= MAX_ROWS) return -1;
       timestamps[nRows] = ts;
-      rows[nRows] = {NAN, NAN, NAN, NAN, NAN, -1, NAN, NAN, NAN, NAN, -1, false};
+      rows[nRows] = {NAN, NAN, NAN, NAN, NAN, -1, NAN, NAN, NAN, NAN, -1, NAN, false};
       return nRows++;
     };
 
@@ -1274,11 +1326,25 @@ void setupWebServer() {
                   float e = line.substring(c7 + 1, c8).toFloat();
                   if (g > 0) rows[idx].khGran = g;
                   if (e > 0) rows[idx].khEndpoint = e;
-                  // Parse noise fields (probeNoiseMv, phReversals) if present
+                  // Parse noise fields (probeNoiseMv, phReversals, dropUL, titRPM, khCI) if present
                   int c9 = line.indexOf(',', c8 + 1);
                   if (c9 > 0) {
                     rows[idx].probeNoiseMv = line.substring(c8 + 1, c9).toFloat();
-                    rows[idx].phReversals = line.substring(c9 + 1).toInt();
+                    int c10 = line.indexOf(',', c9 + 1);
+                    if (c10 > 0) {
+                      rows[idx].phReversals = line.substring(c9 + 1, c10).toInt();
+                      // Skip dropUL (c10), titRPM (c11), read khCI (c12)
+                      int c11 = line.indexOf(',', c10 + 1);
+                      if (c11 > 0) {
+                        int c12 = line.indexOf(',', c11 + 1);
+                        if (c12 > 0) {
+                          float ciVal = line.substring(c12 + 1).toFloat();
+                          if (ciVal > 0) rows[idx].khCI = ciVal;
+                        }
+                      }
+                    } else {
+                      rows[idx].phReversals = line.substring(c9 + 1).toInt();
+                    }
                   }
                 } else {
                   float e = line.substring(c7 + 1).toFloat();
@@ -1309,7 +1375,7 @@ void setupWebServer() {
     // Stream response
     String csv;
     csv.reserve(nRows * 80 + 80);
-    csv += "timestamp,datetime,kh,ph,r2,eq_ml,endpoint_ph,method,confidence,kh_gran,kh_endpoint,probe_noise_mv,ph_reversals\n";
+    csv += "timestamp,datetime,kh,ph,r2,eq_ml,endpoint_ph,method,confidence,kh_gran,kh_endpoint,probe_noise_mv,ph_reversals,kh_ci\n";
     for (int i = 0; i < nRows; i++) {
       time_t t = (time_t)timestamps[i];
       struct tm tm;
@@ -1327,8 +1393,9 @@ void setupWebServer() {
         csv += isnan(rows[i].khEndpoint) ? "," : ("," + String(rows[i].khEndpoint, 2));
         csv += isnan(rows[i].probeNoiseMv) ? "," : ("," + String(rows[i].probeNoiseMv, 2));
         csv += (rows[i].phReversals >= 0) ? ("," + String(rows[i].phReversals)) : ",";
+        csv += isnan(rows[i].khCI) ? "," : ("," + String(rows[i].khCI, 3));
       } else {
-        csv += ",,,,,,,,,";
+        csv += ",,,,,,,,,,";
       }
       csv += "\n";
     }

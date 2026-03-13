@@ -1,5 +1,6 @@
 #include <Arduino.h>
 #include <esp_system.h>
+#include <esp_task_wdt.h>
 #include <FS.h>
 #include <ArduinoOTA.h>
 #include <config.h>
@@ -50,6 +51,7 @@ bool isAbortRequested() { return abortRequested; }
 
 // Yield during measurement: keeps UI responsive
 static void measurementYield() {
+  esp_task_wdt_reset();  // Feed watchdog during long measurement operations
   broadcastState();
   ws.cleanupClients();
   wifiManager.loop();
@@ -68,6 +70,7 @@ char MQkhValue[50];
 char MQconfidence[50];
 char MQkhSlope[50];
 char MQgranR2[50];
+char MQkhCI[50];
 
 // --- Deferred command execution ---
 // Long-running commands (measureKH, calibrate) must run on loopTask, not AsyncTCP.
@@ -99,7 +102,7 @@ static void publishKHResult(const KHResult& r) {
   uint32_t ts = (uint32_t)time(nullptr);
   appendHistory("kh", r.khValue, ts);
   appendHistory("ph", r.startPH, ts);
-  appendGranHistory(r.granR2, r.hclUsed, r.endpointPH, r.usedGran, r.confidence, r.khGran, r.khEndpoint, r.probeNoiseMv, r.phReversals, configStore.getDropVolumeUL(), configStore.getTitrationRPM(), ts);
+  appendGranHistory(r.granR2, r.hclUsed, r.endpointPH, r.usedGran, r.confidence, r.khGran, r.khEndpoint, r.probeNoiseMv, r.phReversals, configStore.getDropVolumeUL(), configStore.getTitrationRPM(), r.khCI, ts);
 
   // Motor health (SG stats from this measurement's pump operations)
   if (isTMCDetected()) {
@@ -114,6 +117,10 @@ static void publishKHResult(const KHResult& r) {
   // Quality metrics
   { char mqBuf[16]; snprintf(mqBuf, sizeof(mqBuf), "%.4f", r.granR2);
     mqttManager.publish(MQgranR2, mqBuf, true); }
+  if (!isnan(r.khCI)) {
+    char mqBuf[16]; snprintf(mqBuf, sizeof(mqBuf), "%.3f", r.khCI);
+    mqttManager.publish(MQkhCI, mqBuf, true);
+  }
 
   // Compute and publish KH trend slope (dKH/day) from configured window
   float slope = computeKHSlope();
@@ -1125,12 +1132,13 @@ KHResult measureKH() {
         int nGranWindows = 0;
         float exactUnits;
         bool usedGran = false;
+        float eqUnitsSE = 0;
 
         if (epMethod == 0) {
           // Gran mode: try Gran analysis, fall back to endpoint if it fails
           if (granCount >= MIN_GRAN_POINTS) {
             char granReason[64] = "";
-            exactUnits = granAnalysis(dataPoints, nPoints, samVol, titVol, calUnits, &granR2, &result.granWinLow, &result.granWinHigh, granReason, sizeof(granReason), &granSlope, &granIntercept, granWindows, &nGranWindows);
+            exactUnits = granAnalysis(dataPoints, nPoints, samVol, titVol, calUnits, &granR2, &result.granWinLow, &result.granWinHigh, granReason, sizeof(granReason), &granSlope, &granIntercept, granWindows, &nGranWindows, &eqUnitsSE);
             if (!isnan(exactUnits)) {
               usedGran = true;
             } else {
@@ -1232,6 +1240,12 @@ KHResult measureKH() {
           float hclUsed = (exactUnits / calUnits) * titVol;
           float khValue = (hclUsed / samVol) * 2800.0f * hclMol * corrF;
 
+          // Compute 95% confidence interval from Gran regression SE
+          float khCI = NAN;
+          if (usedGran && eqUnitsSE > 0 && exactUnits > 0) {
+            khCI = 1.96f * eqUnitsSE * (khValue / exactUnits);
+          }
+
           // Interpolate pH at equivalence point
           float endpointPHVal = ENDPOINT_PH;
           if (usedGran) {
@@ -1321,6 +1335,7 @@ KHResult measureKH() {
                                                  result.stabTimeouts, getProbeHealth(),
                                                  crossValDiff, result.probeNoiseMv,
                                                  phReversals, granStepCount);
+          result.khCI = khCI;
 
           // KH value deferred to publishKHResult() after validation
         }
@@ -1478,6 +1493,7 @@ void setup() {
   snprintf(MQconfidence, sizeof(MQconfidence), "%s/confidence", deviceName);
   snprintf(MQkhSlope, sizeof(MQkhSlope), "%s/kh_slope", deviceName);
   snprintf(MQgranR2, sizeof(MQgranR2), "%s/gran_r2", deviceName);
+  snprintf(MQkhCI, sizeof(MQkhCI), "%s/kh_ci", deviceName);
 
   // --- Triple power-cycle detection for WiFi reset ---
   {

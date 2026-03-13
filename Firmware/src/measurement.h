@@ -107,7 +107,8 @@ float granAnalysis(TitrationPoint* points, int nPoints,
                    float* outWinLow = nullptr, float* outWinHigh = nullptr,
                    char* reasonBuf = nullptr, size_t reasonLen = 0,
                    float* outSlope = nullptr, float* outIntercept = nullptr,
-                   GranWindowResult* windowResults = nullptr, int* nWindowResults = nullptr);
+                   GranWindowResult* windowResults = nullptr, int* nWindowResults = nullptr,
+                   float* outEqUnitsSE = nullptr);
 
 // Fallback: linear interpolation to find where pH crosses targetPH
 float interpolateAtPH(TitrationPoint* points, int nPoints, float targetPH);
