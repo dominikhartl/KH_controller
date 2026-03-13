@@ -115,7 +115,7 @@ static void publishKHResult(const KHResult& r) {
   }
 
   // Quality metrics
-  { char mqBuf[16]; snprintf(mqBuf, sizeof(mqBuf), "%.4f", r.granR2);
+  { char mqBuf[16]; snprintf(mqBuf, sizeof(mqBuf), "%.5f", r.granR2);
     mqttManager.publish(MQgranR2, mqBuf, true); }
   if (!isnan(r.khCI)) {
     char mqBuf[16]; snprintf(mqBuf, sizeof(mqBuf), "%.3f", r.khCI);

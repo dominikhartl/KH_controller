@@ -95,6 +95,7 @@ struct GranWindowResult {
     float low, high, r2;
     bool valid;
     float eqUnits;  // equivalence point in stepper units (NAN if invalid)
+    float eqSE;     // standard error of equivalence point (0 if invalid)
 };
 
 // Determine equivalence point via Gran function linearization

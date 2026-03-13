@@ -926,6 +926,7 @@ void broadcastGranData(float r2, float eqML, bool usedGran,
       w.add(windows[i].r2);
       w.add(windows[i].valid ? 1 : 0);
       w.add(serialized(String(windows[i].eqUnits, 2))); // KH value (reused field)
+      w.add(serialized(String(windows[i].eqSE, 4)));   // SE of equivalence point
     }
   }
 
@@ -1033,7 +1034,7 @@ void appendGranHistory(float r2, float eqML, float endpointPH, bool usedGran, fl
 
   File f = LittleFS.open(filename, "a");
   if (f) {
-    f.printf("%u,%.4f,%.3f,%.2f,%d,%.2f,%.2f,%.2f,%.2f,%d,%.1f,%.1f,%.3f\n", ts, r2, eqML, endpointPH, usedGran ? 1 : 0, confidence,
+    f.printf("%u,%.5f,%.3f,%.2f,%d,%.2f,%.2f,%.2f,%.2f,%d,%.1f,%.1f,%.3f\n", ts, r2, eqML, endpointPH, usedGran ? 1 : 0, confidence,
              isnan(khGran) ? 0.0f : khGran, isnan(khEndpoint) ? 0.0f : khEndpoint,
              isnan(probeNoiseMv) ? 0.0f : probeNoiseMv, phReversals, dropUL, titrationRPM,
              isnan(khCI) ? 0.0f : khCI);
@@ -1386,7 +1387,7 @@ void setupWebServer() {
       csv += isnan(rows[i].kh) ? ",": ("," + String(rows[i].kh, 2));
       csv += isnan(rows[i].ph) ? "," : ("," + String(rows[i].ph, 2));
       if (rows[i].hasGran) {
-        csv += "," + String(rows[i].r2, 4) + "," + String(rows[i].eqML, 3)
+        csv += "," + String(rows[i].r2, 5) + "," + String(rows[i].eqML, 3)
              + "," + String(rows[i].epPH, 2) + "," + String(rows[i].method);
         csv += isnan(rows[i].confidence) ? "," : ("," + String(rows[i].confidence, 2));
         csv += isnan(rows[i].khGran) ? "," : ("," + String(rows[i].khGran, 2));
@@ -1513,7 +1514,7 @@ void setupWebServer() {
               diagFloat(se, 16, r.khEndpoint, 2);
               diagFloat(sp, 16, r.startPH, 2);
               diagFloat(sh, 16, r.hclUsed, 3);
-              diagFloat(sr, 16, r.granR2, 4);
+              diagFloat(sr, 16, r.granR2, 5);
               diagFloat(ep, 16, r.endpointPH, 2);
               diagFloat(co, 16, r.confidence, 2);
               diagFloat(cv, 16, r.crossValDiff, 2);

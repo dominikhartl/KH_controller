@@ -149,7 +149,9 @@
     // KH slope and confidence
     if (d.khSlope != null) {
       var s = parseFloat(d.khSlope);
-      setText('val-kh-slope', isNaN(s) ? '--' : (s >= 0 ? '+' : '') + s.toFixed(2));
+      var st = isNaN(s) ? '--' : (s >= 0 ? '+' : '') + s.toFixed(2);
+      if (!isNaN(s) && lastSlopeCI > 0) st += ' \u00b1' + lastSlopeCI.toFixed(2);
+      setText('val-kh-slope', st);
     }
     if (d.confidence != null) {
       setText('val-confidence', (d.confidence != null && !isNaN(d.confidence)) ? (d.confidence * 100).toFixed(0) + '%' : '--');
@@ -484,7 +486,7 @@
     var info = document.getElementById('gran-info');
     if (info) {
       var method = d.used ? 'Gran' : 'Interpolation';
-      var r2Text = d.r2 > 0 ? d.r2.toFixed(4) : '--';
+      var r2Text = d.r2 > 0 ? d.r2.toFixed(5) : '--';
       var txt = 'R\u00b2 = ' + r2Text + '  \u2502  Method: ' + method;
       if (d.eqML > 0) txt += '  \u2502  Eq: ' + d.eqML.toFixed(2) + ' mL';
       if (d.winLowML > 0 && d.winHighML > 0)
@@ -713,9 +715,13 @@
             var h = 1.0 / nD + (x - xMean) * (x - xMean) / Sxx;
             return yHat - tCrit * se * Math.sqrt(1 + h);
           });
+          var slopeCI = (Sxx > 0) ? 1.96 * se / Math.sqrt(Sxx) : 0;
+          lastSlopeCI = slopeCI;
           trendOk = true;
           if (khMethod !== 'combined') {
-            setText('val-kh-slope', (slopePerDay >= 0 ? '+' : '') + slopePerDay.toFixed(2));
+            var slopeTxt = (slopePerDay >= 0 ? '+' : '') + slopePerDay.toFixed(2);
+            if (slopeCI > 0) slopeTxt += ' \u00b1' + slopeCI.toFixed(2);
+            setText('val-kh-slope', slopeTxt);
           }
         }
       }
@@ -749,6 +755,7 @@
     granHistChart.data.labels = granHistoryData.map(function(p) { return fmtDate(p[0]); });
     granHistChart.data.datasets[0].data = granHistoryData.map(function(p) { return p[1]; }); // R2
     granHistChart.data.datasets[1].data = granHistoryData.map(function(p) { return p[3]; }); // endpointPH
+    granHistChart.data.datasets[2].data = granHistoryData.map(function(p) { return p[10] > 0 ? p[10] : null; }); // CI
     // Color interpolation points red
     var r2Colors = granHistoryData.map(function(p) { return p[4] === 1 ? '#0a84ff' : '#ff453a'; });
     var phColors = granHistoryData.map(function(p) { return p[4] === 1 ? '#ff9f0a' : '#ff453a'; });
@@ -770,6 +777,7 @@
   var khChart, phChart, liveChart, granChart, granHistChart, granWinChart, effChart, noiseChart;
   var khErrorBars = [];  // [{x: index, ci: ±dKH}, ...] for per-point error bars
   var khErrorBarsVisible = false;
+  var lastSlopeCI = 0;
 
   // Custom Chart.js plugin: draws vertical error bars on dataset 0 (KH points)
   var errorBarPlugin = {
@@ -835,7 +843,7 @@
       ] },
       options: {
         responsive: true, maintainAspectRatio: false, animation: false,
-        plugins: { legend: { display: true, labels: { color: '#8e8e93', font: { size: 10 }, boxWidth: 12, filter: function(item) { return item.text !== 'Smooth' && (!item.text || item.text.charAt(0) !== '_'); } } } },
+        plugins: { legend: { display: false } },
         scales: {
           x: { ticks: { color: '#8e8e93', maxTicksLimit: 6, font: { size: 10 } }, grid: { color: '#38383a' } },
           y: { ticks: { color: '#8e8e93', font: { size: 10 } }, grid: { color: '#38383a' } },
@@ -886,7 +894,8 @@
         labels: [],
         datasets: [
           { label: 'R\u00b2', data: [], borderColor: '#0a84ff', backgroundColor: 'rgba(10,132,255,0.15)', borderWidth: 2, pointRadius: 4, yAxisID: 'yR2', tension: 0.1 },
-          { label: 'End pH', data: [], borderColor: '#ff9f0a', backgroundColor: 'rgba(255,159,10,0.15)', borderWidth: 2, pointRadius: 4, yAxisID: 'yRight', tension: 0.1 }
+          { label: 'End pH', data: [], borderColor: '#ff9f0a', backgroundColor: 'rgba(255,159,10,0.15)', borderWidth: 2, pointRadius: 4, yAxisID: 'yRight', tension: 0.1 },
+          { label: '\u00b1CI', data: [], borderColor: '#30d158', backgroundColor: 'rgba(48,209,88,0.15)', borderWidth: 2, pointRadius: 4, yAxisID: 'yCI', tension: 0.1 }
         ]
       },
       options: {
@@ -895,7 +904,8 @@
         scales: {
           x: { ticks: { color: '#8e8e93', maxTicksLimit: 6, font: { size: 10 } }, grid: { color: '#38383a' } },
           yR2: { type: 'linear', position: 'left', min: 0.98, max: 1.0, ticks: { color: '#0a84ff', font: { size: 9 } }, grid: { color: '#38383a' }, title: { display: true, text: 'R\u00b2', color: '#0a84ff', font: { size: 10 } } },
-          yRight: { type: 'linear', position: 'right', ticks: { color: '#ff9f0a', font: { size: 9 } }, grid: { drawOnChartArea: false }, title: { display: true, text: 'pH', color: '#ff9f0a', font: { size: 10 } } }
+          yRight: { type: 'linear', position: 'right', ticks: { color: '#ff9f0a', font: { size: 9 } }, grid: { drawOnChartArea: false }, title: { display: true, text: 'pH', color: '#ff9f0a', font: { size: 10 } } },
+          yCI: { type: 'linear', position: 'right', ticks: { color: '#30d158', font: { size: 9 } }, grid: { drawOnChartArea: false }, title: { display: true, text: '\u00b1dKH', color: '#30d158', font: { size: 10 } } }
         }
       }
     });
@@ -956,7 +966,7 @@
 
   // --- KH Chart Layer Toggles ---
   function initKHLayers() {
-    // Datasets: 0=Points, 1=Smooth, 2=Trend, 3=Conf, 4=CIupper, 5=CIlower
+    // Datasets: 0=Points, 1=Smooth, 2=Trend, 3=Conf, 4=TrendUpper, 5=TrendLower
     var map = [
       ['kh-show-points', [0]],
       ['kh-show-smooth', [1]],
@@ -964,16 +974,15 @@
       ['kh-show-ci', [4, 5]],
       ['kh-show-score', [3]]
     ];
-    // CI hidden by default (checkbox unchecked), Score hidden by default
-    if (khChart) {
-      khChart.data.datasets[4].hidden = true;
-      khChart.data.datasets[5].hidden = true;
-      khChart.data.datasets[3].hidden = false;
-    }
+    // Restore saved state from localStorage
+    var saved = {};
+    try { saved = JSON.parse(localStorage.getItem('khLayers') || '{}'); } catch(e) {}
     map.forEach(function(entry) {
       var el = document.getElementById(entry[0]);
       if (!el) return;
-      // Sync initial state
+      // Apply saved state if available
+      if (saved.hasOwnProperty(entry[0])) el.checked = saved[entry[0]];
+      // Sync chart datasets to checkbox state
       if (khChart) {
         entry[1].forEach(function(idx) {
           khChart.data.datasets[idx].hidden = !el.checked;
@@ -986,6 +995,11 @@
           khChart.data.datasets[idx].hidden = !el.checked;
         });
         if (entry[0] === 'kh-show-ci') khErrorBarsVisible = el.checked;
+        // Persist to localStorage
+        var state = {};
+        try { state = JSON.parse(localStorage.getItem('khLayers') || '{}'); } catch(e) {}
+        state[entry[0]] = el.checked;
+        localStorage.setItem('khLayers', JSON.stringify(state));
         khChart.update();
       });
     });
