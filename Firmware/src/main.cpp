@@ -44,6 +44,9 @@ static bool apModeActive = false;
 static unsigned long bootBtnPressStart = 0;
 static const unsigned long BOOT_BTN_HOLD_MS = 5000;  // 5 seconds
 
+// Measuring flag: true while measureKH() is running (any trigger: UI, schedule, precision test)
+volatile bool isMeasuringKH = false;
+
 // Abort flag: set by WebSocket handler, checked in measurement loops
 static volatile bool abortRequested = false;
 void requestAbort() { abortRequested = true; }
@@ -102,7 +105,7 @@ static void publishKHResult(const KHResult& r) {
   uint32_t ts = (uint32_t)time(nullptr);
   appendHistory("kh", r.khValue, ts);
   appendHistory("ph", r.startPH, ts);
-  appendGranHistory(r.granR2, r.hclUsed, r.endpointPH, r.usedGran, r.confidence, r.khGran, r.khEndpoint, r.probeNoiseMv, r.phReversals, configStore.getDropVolumeUL(), configStore.getTitrationRPM(), r.khCI, ts);
+  appendGranHistory(r.granR2, r.hclUsed, r.endpointPH, r.usedGran, r.confidence, r.khGran, r.khEndpoint, r.probeNoiseMv, r.phReversals, configStore.getDropVolumeUL(), configStore.getTitrationRPM(), r.khCI, ts, r.startPH, getAcidEfficiency());
 
   // Motor health (SG stats from this measurement's pump operations)
   if (isTMCDetected()) {
@@ -222,6 +225,80 @@ void measureKHWithValidation() {
   snprintf(buf, sizeof(buf), "Both suspect. Using %.2f dKH (better of two)", best.khValue);
   publishMessage(buf);
   publishKHResult(best);
+}
+
+// Precision Test: run N consecutive full measurement cycles, report SD
+static const int PRECISION_TEST_COUNT = 3;
+
+static void measureKHPrecisionTest() {
+  float results[PRECISION_TEST_COUNT];
+  int validCount = 0;
+  unsigned long testStart = millis();
+
+  char buf[128];
+  snprintf(buf, sizeof(buf), "Precision test: %d consecutive measurements", PRECISION_TEST_COUNT);
+  publishMessage(buf);
+
+  for (int i = 0; i < PRECISION_TEST_COUNT; i++) {
+    if (isAbortRequested()) {
+      publishMessage("Precision test aborted");
+      return;
+    }
+    snprintf(buf, sizeof(buf), "Precision test %d/%d starting...", i + 1, PRECISION_TEST_COUNT);
+    publishMessage(buf);
+    broadcastProgress((i * 100) / PRECISION_TEST_COUNT);
+
+    KHResult r = measureKH();
+    if (isnan(r.khValue)) {
+      snprintf(buf, sizeof(buf), "Measurement %d/%d failed, skipping", i + 1, PRECISION_TEST_COUNT);
+      publishError(buf);
+      continue;
+    }
+
+    // Publish and log like a normal measurement
+    publishKHResult(r);
+    results[validCount++] = r.khValue;
+
+    snprintf(buf, sizeof(buf), "Precision test %d/%d: %.2f dKH", i + 1, PRECISION_TEST_COUNT, r.khValue);
+    publishMessage(buf);
+  }
+
+  broadcastProgress(100);
+
+  if (validCount < 2) {
+    publishError("Precision test: not enough valid measurements for statistics");
+    return;
+  }
+
+  // Compute mean
+  float sum = 0;
+  for (int i = 0; i < validCount; i++) sum += results[i];
+  float mean = sum / validCount;
+
+  // Compute SD
+  float ssq = 0;
+  for (int i = 0; i < validCount; i++) {
+    float d = results[i] - mean;
+    ssq += d * d;
+  }
+  float sd = sqrtf(ssq / (validCount - 1));
+
+  // Find min/max
+  float vmin = results[0], vmax = results[0];
+  for (int i = 1; i < validCount; i++) {
+    if (results[i] < vmin) vmin = results[i];
+    if (results[i] > vmax) vmax = results[i];
+  }
+
+  unsigned long elapsed = (millis() - testStart) / 1000;
+  snprintf(buf, sizeof(buf),
+    "Precision: ±%.3f dKH SD (n=%d, mean=%.2f, range=%.2f–%.2f, %lum%lus)",
+    sd, validCount, mean, vmin, vmax, elapsed / 60, elapsed % 60);
+  publishMessage(buf);
+
+  // Store persistently
+  uint32_t ts = (uint32_t)time(nullptr);
+  appendPrecisionHistory(ts, validCount, mean, sd, vmin, vmax, elapsed);
 }
 
 void runMotorDiagnostic(char mode = 'd');  // forward declaration
@@ -380,6 +457,10 @@ void processPendingCommand() {
         runHardwareDiagnostics();
         broadcastState();
       }
+      break;
+    case 'P':
+      measureKHPrecisionTest();
+      broadcastState();
       break;
   }
 }
@@ -790,12 +871,11 @@ KHResult measureKH() {
   result.crossValDiff = NAN;
 
   // Re-entrancy guard: prevent concurrent measurements
-  static bool measuring = false;
-  if (measuring) {
+  if (isMeasuringKH) {
     publishError("Measurement already in progress");
     return result;
   }
-  measuring = true;
+  isMeasuringKH = true;
   abortRequested = false;  // Clear any stale abort
 
   // Read water temperature from sensor (or use default if no sensor)
@@ -827,7 +907,7 @@ KHResult measureKH() {
   float titV = configStore.getTitrationVolume();
   if (titV <= 0 || calU <= 0) {
     publishError("Error: invalid calibration or titration volume config");
-    measuring = false;
+    isMeasuringKH = false;
     return result;
   }
   int prefillUnits = max(2, (int)round(prefillUL * calU / (titV * 1000.0f)));
@@ -835,14 +915,14 @@ KHResult measureKH() {
   // Validate calibration before starting
   if (!isCalibrationValid()) {
     publishError("Error: pH calibration invalid. Re-calibrate with pH 4/7/10 buffers.");
-    measuring = false;
+    isMeasuringKH = false;
     return result;
   }
 
   if (!titrate(prefillUnits, configStore.getTitrationRPM(), true)) {
     publishError(wasMotorStall() ? "Error: titration pump stall during prefill" : "Error: titration pump timeout during prefill");
     digitalWrite(EN_PIN2, HIGH);
-    measuring = false;
+    isMeasuringKH = false;
     return result;
   }
   // Keep titration motor enabled after prefill to prevent suckback
@@ -857,21 +937,21 @@ KHResult measureKH() {
   if (!washSampleVol(sampleRemoveRevs, sampleFillRevs, sampRpm)) {
     clearMultiWashContext();
     publishError("Error: sample pump timeout during wash (1st rinse)");
-    measuring = false;
+    isMeasuringKH = false;
     return result;
   }
   measurementYield();
-  if (abortRequested) { abortRequested = false; stopStirrer(); digitalWrite(EN_PIN2, HIGH); clearMultiWashContext(); publishError("Measurement aborted"); measuring = false; return result; }
+  if (abortRequested) { abortRequested = false; stopStirrer(); digitalWrite(EN_PIN2, HIGH); clearMultiWashContext(); publishError("Measurement aborted"); isMeasuringKH = false; return result; }
   delay(1000);
   if (!washSampleVol(sampleRemoveRevs, sampleFillRevs, sampRpm)) {
     clearMultiWashContext();
     publishError("Error: sample pump timeout during wash (2nd rinse)");
-    measuring = false;
+    isMeasuringKH = false;
     return result;
   }
   clearMultiWashContext();
   measurementYield();
-  if (abortRequested) { abortRequested = false; stopStirrer(); digitalWrite(EN_PIN2, HIGH); publishError("Measurement aborted"); measuring = false; return result; }
+  if (abortRequested) { abortRequested = false; stopStirrer(); digitalWrite(EN_PIN2, HIGH); publishError("Measurement aborted"); isMeasuringKH = false; return result; }
   delay(100);
   startStirrer();
   delay(STIRRER_WARMUP_MS);  // Wait for solution to homogenize
@@ -1403,7 +1483,7 @@ KHResult measureKH() {
   }
   publishMessage(doneBuf);
   abortRequested = false;
-  measuring = false;
+  isMeasuringKH = false;
   return result;
 }
 

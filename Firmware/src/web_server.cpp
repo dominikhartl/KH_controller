@@ -62,6 +62,10 @@ static uint8_t granBufNWindows = 0;
 
 // Cached KH slope — updated after each measurement, avoids filesystem reads in broadcastState()
 static float cachedKHSlope = NAN;
+static float cachedKHIntercept = NAN;
+static uint32_t cachedKHSlopeDay0 = 0;
+static float cachedSlopeCI = NAN;
+static int cachedSlopeNDays = 0;
 
 // Last measurement result (for diagnostics download)
 static KHResult lastKHResult = {};
@@ -419,6 +423,39 @@ static void handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
         static char buf[4096];
         size_t written = serializeJson(resp, buf, sizeof(buf));
         if (written > 0) ws.textAll(buf);
+      } else if (strcmp(sensor, "precision") == 0) {
+        // Precision CSV: timestamp,n,mean,sd,min,max,elapsedSec
+        JsonDocument resp;
+        resp["type"] = "history";
+        resp["sensor"] = "precision";
+        JsonArray dataArr = resp["data"].to<JsonArray>();
+
+        while (f.available() && dataArr.size() < 100) {
+          String line = f.readStringUntil('\n');
+          if (line.length() == 0) continue;
+          int c1 = line.indexOf(',');
+          if (c1 < 0) continue;
+          uint32_t ts = line.substring(0, c1).toInt();
+          int c2 = line.indexOf(',', c1 + 1);
+          int c3 = line.indexOf(',', c2 + 1);
+          int c4 = line.indexOf(',', c3 + 1);
+          int c5 = line.indexOf(',', c4 + 1);
+          int c6 = line.indexOf(',', c5 + 1);
+          if (c2 < 0 || c3 < 0 || c4 < 0 || c5 < 0 || c6 < 0) continue;
+          JsonArray pt = dataArr.add<JsonArray>();
+          pt.add(ts);
+          pt.add(line.substring(c1 + 1, c2).toInt());    // n
+          pt.add(line.substring(c2 + 1, c3).toFloat());  // mean
+          pt.add(line.substring(c3 + 1, c4).toFloat());  // sd
+          pt.add(line.substring(c4 + 1, c5).toFloat());  // min
+          pt.add(line.substring(c5 + 1, c6).toFloat());  // max
+          pt.add(line.substring(c6 + 1).toInt());         // elapsedSec
+        }
+        f.close();
+
+        String out;
+        serializeJson(resp, out);
+        if (out.length() > 0) ws.textAll(out);
       } else if (isGran) {
         // Gran CSV: timestamp,r2,eqML,endpointPH,method,confidence,khGran,khEndpoint
         JsonDocument resp;
@@ -628,6 +665,10 @@ void executeCommand(const char* cmd) {
     // Defer hardware diagnostics to loopTask — runs ~90-120s
     queueCommand('H');
     return;
+  } else if (strcmp(cmd, "precision") == 0) {
+    // Defer precision test to loopTask — runs 3 full measurements (~2+ hours)
+    queueCommand('P');
+    return;
   } else if (strcmp(cmd, "abort") == 0) {
     requestAbort();
     publishMessage("Aborting measurement...");
@@ -692,9 +733,16 @@ void broadcastState() {
   doc["temp_sensor"] = hasTemperatureSensor();
   doc["tmc"] = isTMCDetected();
   doc["stirrer"] = isStirrerRunning();
+  doc["measuring"] = isMeasuringKH;
 
-  // KH trend slope (dKH/day) and measurement confidence
-  if (!isnan(cachedKHSlope)) doc["khSlope"] = serialized(String(cachedKHSlope, 3));
+  // KH trend slope (dKH/day) and regression parameters for client trend line
+  if (!isnan(cachedKHSlope)) {
+    doc["khSlope"] = serialized(String(cachedKHSlope, 4));
+    doc["khIntercept"] = serialized(String(cachedKHIntercept, 3));
+    doc["khSlopeDay0"] = cachedKHSlopeDay0;
+    doc["slopeNDays"] = cachedSlopeNDays;
+    if (!isnan(cachedSlopeCI)) doc["slopeCI"] = serialized(String(cachedSlopeCI, 3));
+  }
   if (!isnan(lastConfidence)) doc["confidence"] = lastConfidence;
   if (!isnan(lastKHResult.khCI)) doc["khCI"] = serialized(String(lastKHResult.khCI, 3));
 
@@ -996,7 +1044,7 @@ void appendHistory(const char* sensor, float value, uint32_t ts) {
   }
 }
 
-void appendGranHistory(float r2, float eqML, float endpointPH, bool usedGran, float confidence, float khGran, float khEndpoint, float probeNoiseMv, int phReversals, float dropUL, float titrationRPM, float khCI, uint32_t ts) {
+void appendGranHistory(float r2, float eqML, float endpointPH, bool usedGran, float confidence, float khGran, float khEndpoint, float probeNoiseMv, int phReversals, float dropUL, float titrationRPM, float khCI, uint32_t ts, float startPH, float acidEff) {
   const char* filename = "/history/gran.csv";
 
   if (!LittleFS.exists("/history")) {
@@ -1034,10 +1082,12 @@ void appendGranHistory(float r2, float eqML, float endpointPH, bool usedGran, fl
 
   File f = LittleFS.open(filename, "a");
   if (f) {
-    f.printf("%u,%.5f,%.3f,%.2f,%d,%.2f,%.2f,%.2f,%.2f,%d,%.1f,%.1f,%.3f\n", ts, r2, eqML, endpointPH, usedGran ? 1 : 0, confidence,
+    f.printf("%u,%.5f,%.3f,%.2f,%d,%.2f,%.2f,%.2f,%.2f,%d,%.1f,%.1f,%.3f,%.2f,%.1f\n", ts, r2, eqML, endpointPH, usedGran ? 1 : 0, confidence,
              isnan(khGran) ? 0.0f : khGran, isnan(khEndpoint) ? 0.0f : khEndpoint,
              isnan(probeNoiseMv) ? 0.0f : probeNoiseMv, phReversals, dropUL, titrationRPM,
-             isnan(khCI) ? 0.0f : khCI);
+             isnan(khCI) ? 0.0f : khCI,
+             isnan(startPH) ? 0.0f : startPH,
+             isnan(acidEff) ? 0.0f : acidEff);
     f.close();
   } else {
     Serial.println("Warning: failed to append to gran.csv");
@@ -1085,6 +1135,43 @@ void appendMotorHealth(uint32_t ts, int sampleAvg, int sampleMin, int titrateAvg
   File f = LittleFS.open(filename, "a");
   if (f) {
     f.printf("%u,%d,%d,%d,%d\n", ts, sampleAvg, sampleMin, titrateAvg, titrateMin);
+    f.close();
+  }
+}
+
+void appendPrecisionHistory(uint32_t ts, int n, float mean, float sd, float vmin, float vmax, unsigned long elapsedSec) {
+  const char* filename = "/history/precision.csv";
+
+  if (!LittleFS.exists("/history")) {
+    if (!LittleFS.mkdir("/history")) return;
+  }
+
+  // Keep last 90 days (precision tests are infrequent)
+  if (LittleFS.exists(filename)) {
+    uint32_t cutoff = ts - (90UL * 86400UL);
+    File f = LittleFS.open(filename, "r");
+    if (f) {
+      String kept;
+      kept.reserve(f.size());
+      while (f.available()) {
+        String line = f.readStringUntil('\n');
+        if (line.length() == 0) continue;
+        int comma = line.indexOf(',');
+        if (comma < 0) continue;
+        uint32_t lineTs = line.substring(0, comma).toInt();
+        if (lineTs >= cutoff) kept += line + "\n";
+      }
+      f.close();
+      File fw = LittleFS.open(filename, "w");
+      if (fw) { fw.print(kept); fw.close(); }
+    }
+  }
+
+  if (ts < MIN_VALID_EPOCH) return;
+
+  File f = LittleFS.open(filename, "a");
+  if (f) {
+    f.printf("%u,%d,%.2f,%.3f,%.2f,%.2f,%lu\n", ts, n, mean, sd, vmin, vmax, elapsedSec);
     f.close();
   }
 }
@@ -1209,6 +1296,8 @@ float computeKHSlope() {
   // Compute median of each day bucket and regress on (dayIdx, median)
   double sx = 0, sy = 0, sxx = 0, sxy = 0;
   double d0 = (double)days[0].dayIdx;
+  double medians[8];
+  double xvals[8];
   for (int d = 0; d < nDays; d++) {
     // Sort values to find median
     for (int i = 1; i < days[d].cnt; i++) {
@@ -1220,17 +1309,33 @@ float computeKHSlope() {
       }
       days[d].vals[j + 1] = key;
     }
-    float median = days[d].vals[days[d].cnt / 2];
+    medians[d] = (double)days[d].vals[days[d].cnt / 2];
+    xvals[d] = (double)days[d].dayIdx - d0;
 
-    double x = (double)days[d].dayIdx - d0;  // days from first
-    double y = (double)median;
-    sx += x; sy += y; sxx += x * x; sxy += x * y;
+    sx += xvals[d]; sy += medians[d]; sxx += xvals[d] * xvals[d]; sxy += xvals[d] * medians[d];
   }
   double denom = (double)nDays * sxx - sx * sx;
   if (fabs(denom) < 1e-12) return NAN;
 
-  // Slope is already in dKH/day (x-axis is days)
-  cachedKHSlope = (float)(((double)nDays * sxy - sx * sy) / denom);
+  // Slope and intercept (dKH/day, x-axis is days)
+  double slope = ((double)nDays * sxy - sx * sy) / denom;
+  double intercept = (sy - slope * sx) / nDays;
+
+  // Residual SE and slope CI
+  double Sxx = sxx - sx * sx / nDays;
+  double ssRes = 0;
+  for (int d = 0; d < nDays; d++) {
+    double pred = slope * xvals[d] + intercept;
+    double r = medians[d] - pred;
+    ssRes += r * r;
+  }
+  double se = (nDays > 2) ? sqrt(ssRes / (nDays - 2)) : 0;
+
+  cachedKHSlope = (float)slope;
+  cachedKHIntercept = (float)intercept;
+  cachedKHSlopeDay0 = (uint32_t)days[0].dayIdx;
+  cachedSlopeNDays = nDays;
+  cachedSlopeCI = (Sxx > 0 && se > 0) ? (float)(1.96 * se / sqrt(Sxx)) : NAN;
   return cachedKHSlope;
 }
 
@@ -1415,8 +1520,8 @@ void setupWebServer() {
 
   // Raw history file download (used by backup script before uploadfs)
   // Captures filename at registration time to prevent path traversal via URL parsing
-  const char* historyFiles[] = {"kh", "ph", "gran"};
-  for (int i = 0; i < 3; i++) {
+  const char* historyFiles[] = {"kh", "ph", "gran", "precision"};
+  for (int i = 0; i < 4; i++) {
     const char* name = historyFiles[i];
     server.on(
       (String("/api/history/") + name).c_str(), HTTP_GET,

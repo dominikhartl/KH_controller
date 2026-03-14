@@ -14,7 +14,7 @@ from SCons.Script import COMMAND_LINE_TARGETS
 
 Import("env")
 
-HISTORY_FILES = ["kh", "ph", "gran"]
+HISTORY_FILES = ["kh", "ph", "gran", "precision"]
 DATA_DIR = os.path.join(env.subst("$PROJECT_DIR"), "data", "history")
 DEVICE_HOST = env.subst("$UPLOAD_PORT") or "khpro.local"
 

@@ -20,6 +20,7 @@
       ws.send(JSON.stringify({type:'getHistory', sensor:'ph'}));
       ws.send(JSON.stringify({type:'getHistory', sensor:'gran'}));
       ws.send(JSON.stringify({type:'getHistory', sensor:'motor'}));
+      ws.send(JSON.stringify({type:'getHistory', sensor:'precision'}));
     };
     ws.onclose = function() {
       wsOk = false;
@@ -96,7 +97,7 @@
     else if (d.type === 'mesStart') { clearLiveChart(); setMeasuringMode(true); }
     else if (d.type === 'mesData') { loadMesData(d); setMeasuringMode(false); }
     else if (d.type === 'history') updateHistory(d);
-    else if (d.type === 'msg') addLogEntry('msg', d.text);
+    else if (d.type === 'msg') { addLogEntry('msg', d.text); checkPrecisionResult(d.text); }
     else if (d.type === 'error') { addLogEntry('error', d.text); updateProgress(100); setMeasuringMode(false); }
     else if (d.type === 'logData') loadLogData(d.entries);
     else if (d.type === 'granData') updateGranChart(d);
@@ -146,12 +147,17 @@
     setGaugeArc('gauge-kh-arc', khVal, 0, 15);
     setText('val-kh', (d.kh > 0) ? d.kh.toFixed(1) : '--');
 
-    // KH slope and confidence
+    // KH slope, intercept, and trend line parameters from server
     if (d.khSlope != null) {
-      var s = parseFloat(d.khSlope);
-      var st = isNaN(s) ? '--' : (s >= 0 ? '+' : '') + s.toFixed(2);
-      if (!isNaN(s) && lastSlopeCI > 0) st += ' \u00b1' + lastSlopeCI.toFixed(2);
+      serverSlope = parseFloat(d.khSlope);
+      if (d.khIntercept != null) serverIntercept = parseFloat(d.khIntercept);
+      if (d.khSlopeDay0 != null) serverSlopeDay0 = d.khSlopeDay0;
+      if (d.slopeNDays != null) serverSlopeNDays = d.slopeNDays;
+      if (d.slopeCI != null) lastSlopeCI = parseFloat(d.slopeCI);
+      var st = isNaN(serverSlope) ? '--' : (serverSlope >= 0 ? '+' : '') + serverSlope.toFixed(2);
+      if (!isNaN(serverSlope) && lastSlopeCI > 0) st += ' \u00b1' + lastSlopeCI.toFixed(2);
       setText('val-kh-slope', st);
+      renderKHChart();  // re-render trend line with updated server params
     }
     if (d.confidence != null) {
       setText('val-confidence', (d.confidence != null && !isNaN(d.confidence)) ? (d.confidence * 100).toFixed(0) + '%' : '--');
@@ -182,6 +188,9 @@
     setDot('wifi', d.wifiOk);
     setDot('mqtt', d.mqttOk);
     setDot('ntp', d.ntpOk);
+
+    // Measuring state sync — shows/hides Abort button for all clients
+    if (d.measuring != null) setMeasuringMode(!!d.measuring);
 
     // Stirrer state sync (from device, not local toggle)
     if (d.stirrer != null && d.stirrer !== stirrerOn) {
@@ -554,6 +563,10 @@
       renderNoiseTrend();
       return;
     }
+    if (d.sensor === 'precision') {
+      renderPrecisionHistory(d.data);
+      return;
+    }
     if (d.sensor === 'motor') {
       motorHistoryData = d.data;
       if (d.data && d.data.length > 0) {
@@ -649,88 +662,58 @@
       }
     }
 
-    // Dataset 2: daily-median regression trend line
-    // Groups measurements by calendar day, takes median per day, regresses on medians.
-    // This eliminates diurnal cycle bias from the slope calculation.
+    // Dataset 2: trend line from server regression (slope, intercept, day0)
+    // Uses exactly the same slope the device reports — guaranteed match, no knee.
     var slopeHoursEl = document.getElementById('cfg-slope_hours');
     var slopeHours = slopeHoursEl ? (parseInt(slopeHoursEl.value) || 72) : 72;
     var now = data[data.length - 1][0];
     var cutoff = now - slopeHours * 3600;
-    var recent = data.filter(function(p) { return p[0] >= cutoff; });
     var trendOk = false;
-    if (recent.length >= 3) {
-      // Group by calendar day
-      var dayBuckets = {};
-      for (var i = 0; i < recent.length; i++) {
-        var dayIdx = Math.floor(recent[i][0] / 86400);
-        if (!dayBuckets[dayIdx]) dayBuckets[dayIdx] = [];
-        dayBuckets[dayIdx].push(recent[i][1]);
+    if (!isNaN(serverSlope) && !isNaN(serverIntercept) && serverSlopeDay0 > 0) {
+      // Find first and last data points within the slope window
+      var firstIdx = -1, lastIdx = -1;
+      for (var i = 0; i < data.length; i++) {
+        if (data[i][0] >= cutoff) {
+          if (firstIdx < 0) firstIdx = i;
+          lastIdx = i;
+        }
       }
-      var dayKeys = Object.keys(dayBuckets).map(Number).sort(function(a,b){return a-b;});
-      if (dayKeys.length >= 3) {
-        // Compute median per day and regress
-        var d0 = dayKeys[0];
-        var nD = dayKeys.length;
-        var sx = 0, sy = 0, sxx = 0, sxy = 0;
-        var dayMedians = [];
-        for (var di = 0; di < nD; di++) {
-          var vals = dayBuckets[dayKeys[di]].slice().sort(function(a,b){return a-b;});
-          var med = vals[Math.floor(vals.length / 2)];
-          dayMedians.push({day: dayKeys[di], med: med});
-          var x = dayKeys[di] - d0;
-          sx += x; sy += med; sxx += x * x; sxy += x * med;
+      if (firstIdx >= 0 && lastIdx > firstIdx) {
+        // 2-point straight line — no intermediate points, no knee
+        var trendData = data.map(function() { return null; });
+        var xFirst = data[firstIdx][0] / 86400 - serverSlopeDay0;
+        var xLast = data[lastIdx][0] / 86400 - serverSlopeDay0;
+        trendData[firstIdx] = serverSlope * xFirst + serverIntercept;
+        trendData[lastIdx] = serverSlope * xLast + serverIntercept;
+        khChart.data.datasets[2].data = trendData;
+
+        // Datasets 4+5: slope CI band (parallel lines offset by ±slopeCI × timespan)
+        if (lastSlopeCI > 0) {
+          var xMid = (xFirst + xLast) / 2;
+          var upperData = data.map(function() { return null; });
+          var lowerData = data.map(function() { return null; });
+          // CI band widens with distance from center
+          [firstIdx, lastIdx].forEach(function(idx) {
+            var x = data[idx][0] / 86400 - serverSlopeDay0;
+            var yHat = serverSlope * x + serverIntercept;
+            var dx = x - xMid;
+            var band = lastSlopeCI * Math.abs(dx);
+            upperData[idx] = yHat + band;
+            lowerData[idx] = yHat - band;
+          });
+          khChart.data.datasets[4].data = upperData;
+          khChart.data.datasets[5].data = lowerData;
+        } else {
+          khChart.data.datasets[4].data = [];
+          khChart.data.datasets[5].data = [];
         }
-        var denom = nD * sxx - sx * sx;
-        if (Math.abs(denom) > 1e-12) {
-          var slopePerDay = (nD * sxy - sx * sy) / denom;
-          var interceptDay = (sy - slopePerDay * sx) / nD;
-          var xMean = sx / nD;
-          // Residual SE for prediction interval
-          var ssRes = 0;
-          for (var di = 0; di < nD; di++) {
-            var pred = slopePerDay * (dayKeys[di] - d0) + interceptDay;
-            var r = dayMedians[di].med - pred;
-            ssRes += r * r;
-          }
-          var se = (nD > 2) ? Math.sqrt(ssRes / (nD - 2)) : 0;
-          khChart.data.datasets[2].data = data.map(function(p) {
-            if (p[0] < cutoff) return null;
-            var x = Math.floor(p[0] / 86400) - d0 + (p[0] % 86400) / 86400;
-            return slopePerDay * x + interceptDay;
-          });
-          // Datasets 4+5: trend prediction interval band (±t×SE×√(1+1/n+(x-x̄)²/Sxx))
-          var tCrit = 1.96;  // approximate for small n
-          var Sxx = sxx - sx * sx / nD;
-          khChart.data.datasets[4].data = data.map(function(p) {
-            if (p[0] < cutoff || se === 0) return null;
-            var x = Math.floor(p[0] / 86400) - d0 + (p[0] % 86400) / 86400;
-            var yHat = slopePerDay * x + interceptDay;
-            var h = 1.0 / nD + (x - xMean) * (x - xMean) / Sxx;
-            return yHat + tCrit * se * Math.sqrt(1 + h);
-          });
-          khChart.data.datasets[5].data = data.map(function(p) {
-            if (p[0] < cutoff || se === 0) return null;
-            var x = Math.floor(p[0] / 86400) - d0 + (p[0] % 86400) / 86400;
-            var yHat = slopePerDay * x + interceptDay;
-            var h = 1.0 / nD + (x - xMean) * (x - xMean) / Sxx;
-            return yHat - tCrit * se * Math.sqrt(1 + h);
-          });
-          var slopeCI = (Sxx > 0) ? 1.96 * se / Math.sqrt(Sxx) : 0;
-          lastSlopeCI = slopeCI;
-          trendOk = true;
-          if (khMethod !== 'combined') {
-            var slopeTxt = (slopePerDay >= 0 ? '+' : '') + slopePerDay.toFixed(2);
-            if (slopeCI > 0) slopeTxt += ' \u00b1' + slopeCI.toFixed(2);
-            setText('val-kh-slope', slopeTxt);
-          }
-        }
+        trendOk = true;
       }
     }
     if (!trendOk) {
       khChart.data.datasets[2].data = [];
       khChart.data.datasets[4].data = [];
       khChart.data.datasets[5].data = [];
-      if (khMethod !== 'combined') setText('val-kh-slope', '--');
     }
     // Enforce minimum 1.5 dKH span on y-axis
     var vals = khChart.data.datasets[0].data.filter(function(v) { return v != null; });
@@ -774,10 +757,11 @@
   }
 
   // --- Charts ---
-  var khChart, phChart, liveChart, granChart, granHistChart, granWinChart, effChart, noiseChart;
+  var khChart, phChart, liveChart, granChart, granHistChart, granWinChart, effChart, noiseChart, precisionChart;
   var khErrorBars = [];  // [{x: index, ci: ±dKH}, ...] for per-point error bars
   var khErrorBarsVisible = false;
   var lastSlopeCI = 0;
+  var serverSlope = NaN, serverIntercept = NaN, serverSlopeDay0 = 0, serverSlopeNDays = 0;
 
   // Custom Chart.js plugin: draws vertical error bars on dataset 0 (KH points)
   var errorBarPlugin = {
@@ -836,10 +820,10 @@
       data: { labels: [], datasets: [
         { label: 'KH', data: [], backgroundColor: '#0a84ff', borderColor: '#0a84ff', borderWidth: 0, pointRadius: 3, pointBackgroundColor: '#0a84ff', pointBorderColor: '#0a84ff', showLine: false, yAxisID: 'y', order: 1 },
         { label: 'Smooth', data: [], borderColor: '#0a84ff', borderWidth: 3, pointRadius: 0, cubicInterpolationMode: 'monotone', tension: 0.4, yAxisID: 'y', order: 2 },
-        { label: 'Trend', data: [], borderColor: 'rgba(255,159,10,0.6)', borderWidth: 2, borderDash: [6,3], pointRadius: 0, tension: 0, yAxisID: 'y', order: 0 },
+        { label: 'Trend', data: [], borderColor: 'rgba(255,159,10,0.6)', borderWidth: 2, borderDash: [6,3], pointRadius: 0, tension: 0, spanGaps: true, yAxisID: 'y', order: 0 },
         { label: 'Conf', type: 'bar', data: [], backgroundColor: 'rgba(48,209,88,0.13)', borderColor: 'rgba(48,209,88,0.3)', borderWidth: 1, yAxisID: 'yConf', order: 3 },
-        { label: '_trendUpper', data: [], borderColor: 'rgba(255,159,10,0.2)', borderWidth: 1, pointRadius: 0, fill: 5, backgroundColor: 'rgba(255,159,10,0.08)', yAxisID: 'y', order: 6 },
-        { label: '_trendLower', data: [], borderColor: 'rgba(255,159,10,0.2)', borderWidth: 1, pointRadius: 0, fill: false, yAxisID: 'y', order: 6 }
+        { label: '_trendUpper', data: [], borderColor: 'rgba(255,159,10,0.2)', borderWidth: 1, pointRadius: 0, fill: 5, backgroundColor: 'rgba(255,159,10,0.08)', spanGaps: true, yAxisID: 'y', order: 6 },
+        { label: '_trendLower', data: [], borderColor: 'rgba(255,159,10,0.2)', borderWidth: 1, pointRadius: 0, fill: false, spanGaps: true, yAxisID: 'y', order: 6 }
       ] },
       options: {
         responsive: true, maintainAspectRatio: false, animation: false,
@@ -962,6 +946,39 @@
       data: { labels: [], datasets: [{ data: [], borderColor: '#30d158', borderWidth: 2, pointRadius: 3, pointBackgroundColor: '#30d158', tension: 0.1 }] },
       options: probeChartOpts('Probe Noise', 'mV')
     });
+
+    var precCanvas = document.getElementById('precision-chart');
+    if (precCanvas) {
+      precisionChart = new Chart(precCanvas, {
+        type: 'bar',
+        data: {
+          labels: [],
+          datasets: [
+            { label: 'SD', data: [], backgroundColor: 'rgba(50,130,240,0.7)', borderRadius: 4, barPercentage: 0.6 },
+            { label: 'Range', data: [], backgroundColor: 'rgba(50,130,240,0.2)', borderColor: 'rgba(50,130,240,0.5)', borderWidth: 1, borderRadius: 4, barPercentage: 0.6 }
+          ]
+        },
+        options: {
+          responsive: true, maintainAspectRatio: false,
+          plugins: {
+            legend: { display: true, labels: { boxWidth: 12, font: { size: 11 } } },
+            title: { display: true, text: 'Precision Test History', font: { size: 13 } },
+            tooltip: {
+              callbacks: {
+                label: function(ctx) {
+                  if (ctx.datasetIndex === 0) return 'SD: \u00B1' + ctx.raw.toFixed(3) + ' dKH';
+                  return 'Range: ' + ctx.raw.toFixed(2) + ' dKH';
+                }
+              }
+            }
+          },
+          scales: {
+            y: { beginAtZero: true, title: { display: true, text: 'dKH' }, ticks: { font: { size: 10 } } },
+            x: { ticks: { font: { size: 10 }, maxRotation: 45 } }
+          }
+        }
+      });
+    }
   }
 
   // --- KH Chart Layer Toggles ---
@@ -1125,6 +1142,68 @@
         btn.style.color = '';
       }
     });
+  }
+
+  // --- Precision test result ---
+  function checkPrecisionResult(text) {
+    if (!text) return;
+    var el = document.getElementById('precision-result');
+    if (!el) return;
+    if (text.indexOf('Precision: ') === 0 || text.indexOf('Precision test') === 0) {
+      // Live update — append to status area
+      var status = document.getElementById('precision-status');
+      if (status) { status.textContent = text; status.style.display = 'block'; }
+      // Refresh history after final result
+      if (text.indexOf('Precision: ') === 0 && ws && ws.readyState === 1) {
+        ws.send(JSON.stringify({type:'getHistory', sensor:'precision'}));
+      }
+    }
+  }
+
+  function renderPrecisionHistory(data) {
+    var el = document.getElementById('precision-result');
+    var chartEl = document.getElementById('precision-chart');
+    if (!el) return;
+    if (!data || data.length === 0) {
+      el.style.display = 'none';
+      if (chartEl) chartEl.style.display = 'none';
+      return;
+    }
+    // data: [[ts, n, mean, sd, min, max, elapsedSec], ...]
+
+    // Update chart
+    if (precisionChart) {
+      precisionChart.data.labels = data.map(function(r) {
+        var d = new Date(r[0] * 1000);
+        return d.toLocaleDateString(undefined, {month:'short', day:'numeric'});
+      });
+      precisionChart.data.datasets[0].data = data.map(function(r) { return r[3]; }); // SD
+      precisionChart.data.datasets[1].data = data.map(function(r) { return r[5] - r[4]; }); // range (max-min)
+      precisionChart.update();
+      if (chartEl) chartEl.style.display = 'block';
+    }
+
+    // Update table
+    var html = '<table style="width:100%;border-collapse:collapse;font-size:0.85em">';
+    html += '<tr style="border-bottom:1px solid var(--border)"><th>Date</th><th>n</th><th>Mean</th><th>SD</th><th>Range</th><th>Duration</th></tr>';
+    for (var i = data.length - 1; i >= 0; i--) {
+      var r = data[i];
+      var d = new Date(r[0] * 1000);
+      var date = d.toLocaleDateString(undefined, {month:'short', day:'numeric'}) + ' ' + d.toLocaleTimeString(undefined, {hour:'2-digit', minute:'2-digit'});
+      var mins = Math.floor(r[6] / 60);
+      var secs = r[6] % 60;
+      html += '<tr style="border-bottom:1px solid var(--border)">';
+      html += '<td>' + date + '</td>';
+      html += '<td style="text-align:center">' + r[1] + '</td>';
+      html += '<td style="text-align:right">' + r[2].toFixed(2) + '</td>';
+      html += '<td style="text-align:right;font-weight:600">\u00B1' + r[3].toFixed(3) + '</td>';
+      html += '<td style="text-align:right">' + r[4].toFixed(2) + '\u2013' + r[5].toFixed(2) + '</td>';
+      html += '<td style="text-align:right">' + mins + 'm' + secs + 's</td>';
+      html += '</tr>';
+    }
+    html += '</table>';
+    el.innerHTML = html;
+    el.style.display = 'block';
   }
 
   // --- Buttons ---

@@ -252,6 +252,13 @@
       <button class="cmd-btn" data-cmd="cw" id="btn-clean-tube">Clean Tube</button>
       <p style="font-size:.75em;color:var(--text-tertiary);margin:4px 0 12px">Flushes 10 mL &times; 5 cycles at max speed</p>
 
+      <h3 class="cal-heading">Precision Test</h3>
+      <button class="cmd-btn" data-cmd="precision" id="btn-precision-test">Run Precision Test</button>
+      <p style="font-size:.75em;color:var(--text-tertiary);margin:4px 0 0">Runs 3 consecutive KH measurements, reports SD</p>
+      <div id="precision-status" style="display:none;margin:6px 0 0;font-size:0.85em;color:var(--text-secondary)"></div>
+      <canvas id="precision-chart" style="display:none;max-height:180px;margin:8px 0 4px"></canvas>
+      <div id="precision-result" style="display:none;margin:4px 0 12px;padding:8px;background:var(--bg-secondary);border-radius:6px;font-size:0.85em"></div>
+
       <h3 class="cal-heading">Motor Diagnostics</h3>
       <div style="display:flex;gap:0.5em;flex-wrap:wrap">
         <button class="cmd-btn" data-cmd="d" id="btn-motor-diag">Both Motors</button>
@@ -444,6 +451,6 @@
 
 
   <script src="chart.min.js?v=2"></script>
-  <script src="app.js?v=31"></script>
+  <script src="app.js?v=36"></script>
 </body>
 </html>

@@ -53,12 +53,14 @@ void broadcastGranData(float r2, float eqML, bool usedGran,
                        float slopeML = 0, float intercept = 0,
                        GranWindowResult* windows = nullptr, int nWindows = 0);
 void appendHistory(const char* sensor, float value, uint32_t ts);
-void appendGranHistory(float r2, float eqML, float endpointPH, bool usedGran, float confidence, float khGran, float khEndpoint, float probeNoiseMv, int phReversals, float dropUL, float titrationRPM, float khCI, uint32_t ts);
+void appendGranHistory(float r2, float eqML, float endpointPH, bool usedGran, float confidence, float khGran, float khEndpoint, float probeNoiseMv, int phReversals, float dropUL, float titrationRPM, float khCI, uint32_t ts, float startPH = NAN, float acidEff = NAN);
 void appendMotorHealth(uint32_t ts, int sampleAvg, int sampleMin, int titrateAvg, int titrateMin);
+void appendPrecisionHistory(uint32_t ts, int n, float mean, float sd, float vmin, float vmax, unsigned long elapsedSec);
 const char* getTubeHealth();
 int getRecentKHValues(float* outValues, int maxCount);
 float computeKHSlope();
 extern float lastConfidence;
+extern volatile bool isMeasuringKH;
 
 extern AsyncWebServer server;
 extern AsyncWebSocket ws;
