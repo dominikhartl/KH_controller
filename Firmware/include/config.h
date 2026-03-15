@@ -108,7 +108,7 @@ static const float POST_WASH_PH_THRESHOLD = 6.0f;  // Warn if post-wash pH is be
 
 // Gran transformation endpoint detection
 static const float GRAN_REGION_PH       = 5.0f;  // Points below this used for Gran regression
-static const float GRAN_STOP_PH         = 3.5f;   // Stop titrating at this pH (literature: 3.0-4.5 optimal)
+static const float GRAN_STOP_PH         = 3.7f;   // Stop titrating at this pH (raised from 3.5 to exclude pathological low-y weight region)
 static const int   MIN_GRAN_POINTS      = 8;       // Minimum points for reliable regression
 static const int   MAX_TITRATION_POINTS = 200;      // Data point buffer size
 static const float GRAN_MIN_R2          = 0.99f;   // Minimum R² for Gran fit acceptance

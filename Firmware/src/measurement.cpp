@@ -728,8 +728,9 @@ float readInternalADCmV() {
 // --- Gran transformation endpoint detection ---
 
 // Internal: weighted linear regression on Gran function values within a pH window.
-// Uses inverse-variance weighting (w = 1/y²) so that noisier high-value points
-// near the equivalence point don't dominate the fit.
+// Uses w = 1/|y| weighting — a compromise between inverse-variance (1/y²) and OLS.
+// 1/y² causes weight explosion near equivalence where y→0; 1/|y| still down-weights
+// large-y points but avoids pathological sensitivity to near-equivalence noise.
 // excluded[] marks points to skip; returns false if regression fails.
 static bool granRegression(TitrationPoint* points, int nPoints,
                            float sampleVol, float k, bool* excluded,
@@ -748,7 +749,7 @@ static bool granRegression(TitrationPoint* points, int nPoints,
       float x = points[i].units;
       float totalVol = sampleVol + x * k;
       float y = totalVol * powf(10.0f, -points[i].pH);
-      float w = 1.0f / (y * y);  // inverse-variance weight
+      float w = 1.0f / fabsf(y);  // sqrt-inverse-variance weight (avoids 1/y² explosion near eq. point)
       sumW += w;
       sumWX += w * x;
       sumWY += w * y;
@@ -778,7 +779,7 @@ static bool granRegression(TitrationPoint* points, int nPoints,
       float x = points[i].units;
       float totalVol = sampleVol + x * k;
       float y = totalVol * powf(10.0f, -points[i].pH);
-      float w = 1.0f / (y * y);
+      float w = 1.0f / fabsf(y);
       float pred = *outSlope * x + *outIntercept;
       float res = y - pred;
       ssRes += w * res * res;
@@ -833,7 +834,7 @@ static float tryGranWindow(TitrationPoint* points, int nPoints,
         float x = points[i].units;
         float totalVol = sampleVol + x * k;
         float y = totalVol * powf(10.0f, -points[i].pH);
-        float w = 1.0f / (y * y);
+        float w = 1.0f / fabsf(y);
         float wRes = sqrtf(w) * fabsf(y - (slope * x + intercept));
         if (wRes > 2.0f * sigma && wRes > worstRes) {
           worstRes = wRes;
