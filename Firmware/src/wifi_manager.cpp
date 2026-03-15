@@ -9,6 +9,7 @@ void WifiManager::begin(const char* ssid, const char* password) {
   this->ssid = ssid;
   this->password = password;
   WiFi.mode(WIFI_STA);
+  WiFi.setSleep(false);  // Disable modem sleep — critical at weak RSSI (-79 dBm)
   startConnection();
 }
 
