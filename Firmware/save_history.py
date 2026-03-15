@@ -1,33 +1,85 @@
 """
-PlatformIO extra_scripts: preserve history files across LittleFS uploads.
+PlatformIO extra_scripts: preserve history files across LittleFS uploads
+and pre-compress web assets for faster page loads.
 
 Downloads history CSVs from the device into data/history/ BEFORE the LittleFS
-image is built, so they are included. Cleans up after upload.
+image is built, so they are included. Also gzips web assets (HTML/JS/CSS) and
+removes originals so ESPAsyncWebServer serves compressed versions (it only
+serves .gz when the original file is absent). Restores originals after upload.
 
 Key: the download runs at script load time (during SCons configuration),
 not as a pre-action callback. Pre-actions on "uploadfs" run AFTER the
 littlefs.bin dependency is already built — too late.
 """
 import os
+import gzip
 import shutil
+import subprocess
 from SCons.Script import COMMAND_LINE_TARGETS
 
 Import("env")
 
 HISTORY_FILES = ["kh", "ph", "gran", "precision"]
 DATA_DIR = os.path.join(env.subst("$PROJECT_DIR"), "data", "history")
+WWW_DIR = os.path.join(env.subst("$PROJECT_DIR"), "data", "www")
 DEVICE_HOST = env.subst("$UPLOAD_PORT") or "khpro.local"
 
+# Web assets to gzip (source files kept in git, .gz generated at build time)
+GZIP_EXTENSIONS = (".html", ".js", ".css")
 
-def cleanup_history(source, target, env):
-    """Remove data/history/ after upload to avoid stale files in repo."""
+# Track which originals were removed so we can restore them
+_removed_originals = []
+
+
+def gzip_web_assets():
+    """Compress web assets and remove originals for LittleFS build."""
+    for fname in os.listdir(WWW_DIR):
+        if any(fname.endswith(ext) for ext in GZIP_EXTENSIONS):
+            src = os.path.join(WWW_DIR, fname)
+            dst = src + ".gz"
+            # Regenerate if source is newer than .gz or .gz doesn't exist
+            if not os.path.exists(dst) or os.path.getmtime(src) > os.path.getmtime(dst):
+                with open(src, "rb") as f_in:
+                    with gzip.open(dst, "wb", compresslevel=9) as f_out:
+                        f_out.write(f_in.read())
+                orig = os.path.getsize(src)
+                comp = os.path.getsize(dst)
+                print(f"  Gzipped {fname}: {orig} -> {comp} bytes ({100-comp*100//orig}% smaller)")
+
+    # Remove originals — ESPAsyncWebServer only serves .gz when original is absent
+    for fname in list(os.listdir(WWW_DIR)):
+        if any(fname.endswith(ext) for ext in GZIP_EXTENSIONS):
+            gz_path = os.path.join(WWW_DIR, fname + ".gz")
+            if os.path.exists(gz_path):
+                os.remove(os.path.join(WWW_DIR, fname))
+                _removed_originals.append(fname)
+    if _removed_originals:
+        print(f"  Removed originals for build: {', '.join(_removed_originals)}")
+
+
+def restore_originals():
+    """Restore original web assets from git after upload."""
+    if _removed_originals:
+        restore = [os.path.join("data", "www", f) for f in _removed_originals]
+        subprocess.run(["git", "checkout", "--"] + restore,
+                       cwd=env.subst("$PROJECT_DIR"),
+                       capture_output=True)
+        print(f"  Restored originals: {', '.join(_removed_originals)}")
+
+
+def cleanup_after_upload(source, target, env):
+    """Remove data/history/ and restore web assets after upload."""
     if os.path.exists(DATA_DIR):
         shutil.rmtree(DATA_DIR)
         print("  Cleaned up data/history/")
+    restore_originals()
 
 
-# Download history at script load time — runs BEFORE any targets are built
+# Gzip web assets at script load time (before LittleFS image is built)
 if "uploadfs" in COMMAND_LINE_TARGETS:
+    print("Compressing web assets...")
+    gzip_web_assets()
+
     import urllib.request
 
     print("Backing up history from device before filesystem build...")
@@ -56,4 +108,4 @@ if "uploadfs" in COMMAND_LINE_TARGETS:
         os.remove(img)
         print("  Removed cached littlefs.bin to force rebuild with history")
 
-env.AddPostAction("uploadfs", cleanup_history)
+env.AddPostAction("uploadfs", cleanup_after_upload)
