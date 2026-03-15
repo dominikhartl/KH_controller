@@ -49,7 +49,7 @@ static const float MOTOR_TARGET_RPM   = 80.0f;   // Sample pump cruising speed
 static const float MOTOR_START_RPM    = 9.4f;     // Acceleration ramp start speed (~2000 us)
 static const float TITRATION_RPM      = 47.0f;    // Titration pump speed (~400 us)
 static const float PREFILL_RPM        = 63.0f;    // Prefill/fill pump speed (~300 us)
-static const float MOTOR_ACCEL_FACTOR = 0.9995;   // Acceleration/deceleration factor (per step)
+static const float MOTOR_ACCEL_FACTOR = 0.999;    // Acceleration/deceleration factor (per step)
 
 // Titration tuning parameters
 static const int TITRATION_STEP_SIZE = 2;        // Base units per titration step

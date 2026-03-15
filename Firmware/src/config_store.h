@@ -72,6 +72,8 @@ public:
   void setSampleCalRevsPerML(float v);
   int getSampleCalRevolutions();   // Revolutions used during sample pump calibration run (default 350)
   void setSampleCalRevolutions(int v);
+  int getNumWashes();              // Number of washes before measurement (default 2, range 1-5)
+  void setNumWashes(int n);
 
   // ADS1115 external ADC
   bool getUseADS1115();             // Use external ADC for pH (default false)

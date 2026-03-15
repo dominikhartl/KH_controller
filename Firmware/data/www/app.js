@@ -255,6 +255,7 @@
       setInput('cfg-buf_ph7', d.config.buf_ph7);
       setInput('cfg-buf_ph10', d.config.buf_ph10);
       setInput('cfg-slope_hours', d.config.slope_hours);
+      setInput('cfg-num_washes', d.config.num_washes);
       setInput('cfg-stirrer_speed', d.config.stirrer_speed);
 
       // Sample pump calibration info
@@ -650,8 +651,8 @@
         var v = confByTs[data[i][0]];
         if (v != null) {
           confData.push({x: data[i][0], y: data[i][1]});
-          confBg.push(v < 0.8 ? 'rgba(255,59,48,0.18)' : 'rgba(48,209,88,0.13)');
-          confBorder.push(v < 0.8 ? 'rgba(255,59,48,0.4)' : 'rgba(48,209,88,0.3)');
+          confBg.push(v < 0.8 ? 'rgba(255,59,48,0.35)' : 'rgba(48,209,88,0.35)');
+          confBorder.push(v < 0.8 ? 'rgba(255,59,48,0.8)' : 'rgba(48,209,88,0.8)');
         }
       }
       khChart.data.datasets[3].data = confData;
@@ -841,7 +842,7 @@
         { label: 'KH', data: [], backgroundColor: '#0a84ff', borderColor: '#0a84ff', borderWidth: 0, pointRadius: 3, pointBackgroundColor: '#0a84ff', pointBorderColor: '#0a84ff', showLine: false, yAxisID: 'y', order: 1 },
         { label: 'Smooth', data: [], borderColor: '#0a84ff', borderWidth: 3, pointRadius: 0, showLine: true, cubicInterpolationMode: 'monotone', tension: 0.4, yAxisID: 'y', order: 2 },
         { label: 'Trend', data: [], borderColor: 'rgba(255,159,10,0.6)', borderWidth: 2, borderDash: [6,3], pointRadius: 0, showLine: true, tension: 0, spanGaps: true, yAxisID: 'y', order: 0 },
-        { label: 'Conf', data: [], backgroundColor: 'rgba(48,209,88,0.13)', borderColor: 'rgba(48,209,88,0.3)', borderWidth: 0, pointRadius: 6, pointStyle: 'rect', yAxisID: 'y', order: 3 },
+        { label: 'Conf', data: [], backgroundColor: 'rgba(48,209,88,0.35)', borderColor: 'rgba(48,209,88,0.8)', borderWidth: 2, pointRadius: 8, pointStyle: 'rect', yAxisID: 'y', order: 3 },
         { label: '_trendUpper', data: [], borderColor: 'rgba(255,159,10,0.2)', borderWidth: 1, pointRadius: 0, showLine: true, fill: 5, backgroundColor: 'rgba(255,159,10,0.08)', spanGaps: true, yAxisID: 'y', order: 6 },
         { label: '_trendLower', data: [], borderColor: 'rgba(255,159,10,0.2)', borderWidth: 1, pointRadius: 0, showLine: true, fill: false, spanGaps: true, yAxisID: 'y', order: 6 }
       ] },

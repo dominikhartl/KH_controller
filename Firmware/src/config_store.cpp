@@ -288,6 +288,17 @@ void ConfigStore::setSampleCalRevolutions(int v) {
   if (v > 2200) v = 2200;
   prefs.putInt("samp_cal_rev", v);
 }
+int ConfigStore::getNumWashes() {
+  int v = prefs.getInt("num_washes", 2);
+  if (v < 1) v = 1;
+  if (v > 5) v = 5;
+  return v;
+}
+void ConfigStore::setNumWashes(int n) {
+  if (n < 1) n = 1;
+  if (n > 5) n = 5;
+  prefs.putInt("num_washes", n);
+}
 
 // ADS1115 external ADC
 bool ConfigStore::getUseADS1115() { return prefs.getBool("use_ads", true); }

@@ -286,6 +286,7 @@ static void handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
       else if (strcmp(key, "gran_mix_delay") == 0) {
         configStore.setGranMixDelay((int)value);
       }
+      else if (strcmp(key, "num_washes") == 0) { configStore.setNumWashes((int)value); }
       else if (strcmp(key, "drop_ul") == 0) { configStore.setDropVolumeUL(value); }
       else if (strcmp(key, "titration_rpm") == 0) { configStore.setTitrationRPM(value); }
       else if (strcmp(key, "titrate_max_rpm") == 0) { configStore.setTitrateMaxRPM(value); }
@@ -820,6 +821,7 @@ void broadcastState() {
   cfg["buf_ph10"] = configStore.getBufferPH10();
   cfg["slope_hours"] = configStore.getSlopeWindowHours();
   cfg["stirrer_speed"] = configStore.getStirrerSpeed();
+  cfg["num_washes"] = configStore.getNumWashes();
   cfg["timezone"] = configStore.getTimezone();
   cfg["use_ads1115"] = configStore.getUseADS1115();
   cfg["ads_active"] = isExternalADCActive();

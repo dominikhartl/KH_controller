@@ -994,23 +994,22 @@ KHResult measureKH() {
   float revsPerML = configStore.getSampleCalRevsPerML();
   int sampleFillRevs = (int)round(sampVolML * revsPerML);
   int sampleRemoveRevs = (int)(sampleFillRevs * 1.2f);
-  // Double wash: first rinse cleans the chamber, second takes the actual sample
-  setMultiWashContext(2);
+  // Configurable wash count: rinses clean the chamber, last wash takes the actual sample
+  int numWashes = configStore.getNumWashes();
+  setMultiWashContext(numWashes);
   float sampRpm = configStore.getSamplePumpRPM();
-  if (!washSampleVol(sampleRemoveRevs, sampleFillRevs, sampRpm)) {
-    clearMultiWashContext();
-    publishError("Error: sample pump timeout during wash (1st rinse)");
-    isMeasuringKH = false;
-    return result;
-  }
-  measurementYield();
-  if (abortRequested) { abortRequested = false; stopStirrer(); digitalWrite(EN_PIN2, HIGH); clearMultiWashContext(); publishError("Measurement aborted"); isMeasuringKH = false; return result; }
-  delay(1000);
-  if (!washSampleVol(sampleRemoveRevs, sampleFillRevs, sampRpm)) {
-    clearMultiWashContext();
-    publishError("Error: sample pump timeout during wash (2nd rinse)");
-    isMeasuringKH = false;
-    return result;
+  for (int w = 0; w < numWashes; w++) {
+    if (!washSampleVol(sampleRemoveRevs, sampleFillRevs, sampRpm)) {
+      clearMultiWashContext();
+      static char washErr[64];
+      snprintf(washErr, sizeof(washErr), "Error: sample pump timeout during wash (%d/%d)", w + 1, numWashes);
+      publishError(washErr);
+      isMeasuringKH = false;
+      return result;
+    }
+    measurementYield();
+    if (abortRequested) { abortRequested = false; stopStirrer(); digitalWrite(EN_PIN2, HIGH); clearMultiWashContext(); publishError("Measurement aborted"); isMeasuringKH = false; return result; }
+    if (w < numWashes - 1) delay(1000);
   }
   clearMultiWashContext();
   measurementYield();
