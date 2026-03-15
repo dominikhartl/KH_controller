@@ -20,7 +20,7 @@ public:
   void setVoltage10PH(float v);
 
   // KH calculation parameters
-  float getTitrationVolume();   // mL per calUnits (default 13.4)
+  float getTitrationVolume();   // mL per calUnits (default 9.8)
   float getSampleVolume();      // mL (default 82.0)
   float getCorrectionFactor();  // unitless (default 1.0)
   float getHClMolarity();       // mol/L (default 0.02)
@@ -48,6 +48,10 @@ public:
   void setTitrationRPM(float rpm);
   float getPrefillVolumeUL();    // Prefill volume in µL (default 100.0)
   void setPrefillVolumeUL(float ul);
+  float getMaxAcidML();           // Max acid volume per measurement in mL (default 16.0)
+  void setMaxAcidML(float ml);
+  float getFastStepML();          // Fast phase max step volume in mL (default 0.33)
+  void setFastStepML(float ml);
   float getMeasTempC();           // Measurement temperature in °C (default 21.0)
   void setMeasTempC(float t);
   float getCalTempC();            // Temperature at which pH calibration was performed
@@ -66,6 +70,8 @@ public:
   void setSamplePumpRPM(float rpm);
   float getSampleCalRevsPerML();   // Sample pump calibration: revolutions per mL (default ~4.55)
   void setSampleCalRevsPerML(float v);
+  int getSampleCalRevolutions();   // Revolutions used during sample pump calibration run (default 350)
+  void setSampleCalRevolutions(int v);
 
   // ADS1115 external ADC
   bool getUseADS1115();             // Use external ADC for pH (default false)

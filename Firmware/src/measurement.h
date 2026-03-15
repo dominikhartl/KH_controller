@@ -31,6 +31,10 @@ bool isCalibrationValid();
 // Wait for ADC readings to converge (call after acid addition + mixing delay)
 void waitForPHStabilization();
 
+// Register a callback invoked periodically during stabilization waits
+// to keep UI/MQTT responsive. Called approximately every 500ms.
+void setStabilizationYieldCallback(void (*cb)());
+
 // Measurement functions
 void measurePH(int nreadings);
 void measurePHStabilized(int nreadings);  // Like measurePH but skips internal stabilization

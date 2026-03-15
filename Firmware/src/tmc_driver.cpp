@@ -10,11 +10,19 @@ static TMC2209Stepper* titrateDriver = nullptr;
 static bool tmcDetected = false;
 static bool stallFlag = false;
 
+// Convert SG_RESULT threshold to SGTHRS register value.
+// TMC2209 triggers stall when SG_RESULT < 2 * SGTHRS, so SGTHRS = threshold / 2.
+static uint8_t sgThresholdToRegister(int stallSG) {
+  int val = stallSG / 2;
+  if (val > 255) val = 255;
+  return (uint8_t)val;
+}
+
 static void configureDriver(TMC2209Stepper* driver, int rmsCurrent) {
   driver->rms_current(rmsCurrent);
   driver->microsteps(TMC_MICROSTEPS);
   driver->en_spreadCycle(false);  // StealthChop (quiet); stall via UART SG_RESULT
-  driver->SGTHRS(TMC_STALL_THRESHOLD);
+  driver->SGTHRS(0);             // Disabled at init; enabled per-motor after config applied
   driver->TCOOLTHRS(0xFFFFF);    // Enable StallGuard at all velocities
 }
 
@@ -34,6 +42,9 @@ bool initTMCDrivers() {
     configureDriver(sampleDriver, TMC_SAMPLE_RMS_MA);
     configureDriver(titrateDriver, TMC_TITRATE_RMS_MA);
     // Apply per-motor chopper mode from config store
+    // Note: configStore may not be initialized yet (initTMCDrivers runs before configStore.begin).
+    // SpreadCycle defaults to false (StealthChop) which is correct for uninitialized NVS.
+    // SGTHRS stays at 0 from configureDriver(); applyStallGuardConfig() sets it after configStore.begin().
     sampleDriver->en_spreadCycle(configStore.getSampleSpreadCycle());
     titrateDriver->en_spreadCycle(configStore.getTitrateSpreadCycle());
     pinMode(DIAG_SAMPLE, INPUT);
@@ -79,16 +90,34 @@ void resetSampleStallGuard() {
   if (!sampleDriver) return;
   sampleDriver->SGTHRS(0);        // disable StallGuard → DIAG goes LOW
   delay(10);
-  sampleDriver->SGTHRS(TMC_STALL_THRESHOLD);  // re-enable with fresh state
-  sampleDriver->SG_RESULT();      // read to clear any pending DIAG
+  uint8_t reg = sgThresholdToRegister(configStore.getSampleStallSG());
+  sampleDriver->SGTHRS(reg);
+  sampleDriver->SG_RESULT();      // read to clear any pending state
 }
 
 void resetTitrateStallGuard() {
   if (!titrateDriver) return;
   titrateDriver->SGTHRS(0);
   delay(10);
-  titrateDriver->SGTHRS(TMC_STALL_THRESHOLD);
+  uint8_t reg = sgThresholdToRegister(configStore.getTitrateStallSG());
+  titrateDriver->SGTHRS(reg);
   titrateDriver->SG_RESULT();
+}
+
+void clearSampleDIAG() {
+  if (!sampleDriver) return;
+  sampleDriver->SGTHRS(0);
+  delay(1);
+  uint8_t reg = sgThresholdToRegister(configStore.getSampleStallSG());
+  sampleDriver->SGTHRS(reg);
+}
+
+void clearTitrateDIAG() {
+  if (!titrateDriver) return;
+  titrateDriver->SGTHRS(0);
+  delay(1);
+  uint8_t reg = sgThresholdToRegister(configStore.getTitrateStallSG());
+  titrateDriver->SGTHRS(reg);
 }
 
 void disableSampleStallGuard() {
@@ -96,7 +125,9 @@ void disableSampleStallGuard() {
 }
 
 void enableSampleStallGuard() {
-  if (sampleDriver) sampleDriver->SGTHRS(TMC_STALL_THRESHOLD);
+  if (!sampleDriver) return;
+  uint8_t reg = sgThresholdToRegister(configStore.getSampleStallSG());
+  sampleDriver->SGTHRS(reg);
 }
 
 void disableTitrateStallGuard() {
@@ -104,7 +135,23 @@ void disableTitrateStallGuard() {
 }
 
 void enableTitrateStallGuard() {
-  if (titrateDriver) titrateDriver->SGTHRS(TMC_STALL_THRESHOLD);
+  if (!titrateDriver) return;
+  uint8_t reg = sgThresholdToRegister(configStore.getTitrateStallSG());
+  titrateDriver->SGTHRS(reg);
+}
+
+void applyStallGuardConfig() {
+  if (!tmcDetected) return;
+  enableSampleStallGuard();
+  enableTitrateStallGuard();
+}
+
+void setSampleSGTHRS(uint8_t val) {
+  if (sampleDriver) sampleDriver->SGTHRS(val);
+}
+
+void setTitrateSGTHRS(uint8_t val) {
+  if (titrateDriver) titrateDriver->SGTHRS(val);
 }
 
 void setSampleSpreadCycle(bool enable) {

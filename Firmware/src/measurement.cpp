@@ -117,6 +117,10 @@ static float stabNoiseMvMax = 0;       // Peak noise across all stabilizations
 static int stabNoiseMvHighCount = 0;   // Count of stabilizations with noise > PROBE_NOISE_GOOD_MV
 
 void setStabilizationTimeoutMs(int ms) { stabilizationTimeoutMs = ms; }
+
+// Optional yield callback invoked during stabilization waits (~every 500ms)
+static void (*stabYieldCallback)() = nullptr;
+void setStabilizationYieldCallback(void (*cb)()) { stabYieldCallback = cb; }
 void resetStabilizationStats() { stabTimeoutCount = 0; stabTotalMs = 0; lastStabTimedOut = false; }
 void resetNoiseStats() { lastStabNoiseMv = 0; stabNoiseMvSum = 0; stabNoiseMvCount = 0; stabNoiseMvMax = 0; stabNoiseMvHighCount = 0; }
 int getStabilizationTimeoutCount() { return stabTimeoutCount; }
@@ -511,6 +515,7 @@ static void waitForStabilization() {
   memset(goodHistory, false, sizeof(goodHistory));
   int windowIdx = 0;    // next slot in circular buffer
   int windowFilled = 0; // how many slots have been written
+  unsigned long lastYield = start;
   while (millis() - start < (unsigned long)stabilizationTimeoutMs) {
     esp_task_wdt_reset();  // Feed watchdog — stabilization can take up to 30s
     float curr = readADCTrimmed(stabSamples, ADC_INTER_SAMPLE_DELAY_MS);
@@ -535,6 +540,11 @@ static void waitForStabilization() {
     }
     prev = curr;
     if (!adsActive()) delay(50);
+    // Yield to UI/MQTT periodically to stay responsive
+    if (stabYieldCallback && millis() - lastYield >= 500) {
+      stabYieldCallback();
+      lastYield = millis();
+    }
   }
   if (!converged) {
     lastStabilizationMs = stabilizationTimeoutMs;

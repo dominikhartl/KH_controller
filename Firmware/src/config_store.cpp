@@ -164,6 +164,32 @@ void ConfigStore::setPrefillVolumeUL(float ul) {
   prefs.putFloat("prefill_ul", ul);
 }
 
+// Max acid volume per measurement (mL)
+float ConfigStore::getMaxAcidML() {
+  float v = prefs.getFloat("max_acid_ml", 16.0f);
+  if (v < 5.0f) v = 5.0f;
+  if (v > 100.0f) v = 100.0f;
+  return v;
+}
+void ConfigStore::setMaxAcidML(float ml) {
+  if (ml < 5.0f) ml = 5.0f;
+  if (ml > 100.0f) ml = 100.0f;
+  prefs.putFloat("max_acid_ml", ml);
+}
+
+// Fast phase max step volume (mL)
+float ConfigStore::getFastStepML() {
+  float v = prefs.getFloat("fast_step_ml", 0.33f);
+  if (v < 0.05f) v = 0.05f;
+  if (v > 2.0f) v = 2.0f;
+  return v;
+}
+void ConfigStore::setFastStepML(float ml) {
+  if (ml < 0.05f) ml = 0.05f;
+  if (ml > 2.0f) ml = 2.0f;
+  prefs.putFloat("fast_step_ml", ml);
+}
+
 // Measurement temperature
 float ConfigStore::getMeasTempC() {
   float t = prefs.getFloat("meas_temp", DEFAULT_MEASUREMENT_TEMP_C);
@@ -250,6 +276,19 @@ void ConfigStore::setSampleCalRevsPerML(float v) {
   prefs.putFloat("samp_cal", v);
 }
 
+// Sample pump calibration revolutions (how many revs during calibration run)
+int ConfigStore::getSampleCalRevolutions() {
+  int v = prefs.getInt("samp_cal_rev", SAMPLE_CAL_REVOLUTIONS);
+  if (v < 50) v = 50;
+  if (v > 2200) v = 2200;
+  return v;
+}
+void ConfigStore::setSampleCalRevolutions(int v) {
+  if (v < 50) v = 50;
+  if (v > 2200) v = 2200;
+  prefs.putInt("samp_cal_rev", v);
+}
+
 // ADS1115 external ADC
 bool ConfigStore::getUseADS1115() { return prefs.getBool("use_ads", true); }
 void ConfigStore::setUseADS1115(bool v) { prefs.putBool("use_ads", v); }
@@ -264,7 +303,7 @@ void ConfigStore::setVoltage10PHExt(float v) { prefs.putFloat("v10ph_ext", v); }
 bool ConfigStore::getSampleSpreadCycle() { return prefs.getBool("samp_sc", false); }
 void ConfigStore::setSampleSpreadCycle(bool v) { prefs.putBool("samp_sc", v); }
 int ConfigStore::getSampleStallSG() {
-  int v = prefs.getInt("samp_sg", 30);
+  int v = prefs.getInt("samp_sg", 0);
   if (v < 0) v = 0;
   if (v > 500) v = 500;
   return v;
@@ -277,7 +316,7 @@ void ConfigStore::setSampleStallSG(int v) {
 bool ConfigStore::getTitrateSpreadCycle() { return prefs.getBool("titr_sc", false); }
 void ConfigStore::setTitrateSpreadCycle(bool v) { prefs.putBool("titr_sc", v); }
 int ConfigStore::getTitrateStallSG() {
-  int v = prefs.getInt("titr_sg", 100);
+  int v = prefs.getInt("titr_sg", 0);
   if (v < 0) v = 0;
   if (v > 500) v = 500;
   return v;

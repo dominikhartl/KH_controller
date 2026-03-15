@@ -2,6 +2,7 @@
 #define WEB_SERVER_H
 
 #include <ESPAsyncWebServer.h>
+#include <atomic>
 
 struct GranWindowResult;
 
@@ -60,7 +61,7 @@ const char* getTubeHealth();
 int getRecentKHValues(float* outValues, int maxCount);
 float computeKHSlope();
 extern float lastConfidence;
-extern volatile bool isMeasuringKH;
+extern std::atomic<bool> isMeasuringKH;
 
 extern AsyncWebServer server;
 extern AsyncWebSocket ws;

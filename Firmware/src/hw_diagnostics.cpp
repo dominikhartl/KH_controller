@@ -112,6 +112,17 @@ static bool motorsSkipped;
 static MotorDiagData motorSampleSC, motorSampleSP;
 static MotorDiagData motorTitrateSC, motorTitrateSP;
 
+// SG Profile (30 revs at operational speed for stall threshold calibration)
+static const int SG_PROFILE_REVS = 30;
+struct SGProfileData {
+  uint16_t sg[30];  // per-revolution SG values
+  int count;
+  uint16_t sgMin, sgMax;
+  float sgMean, sgStddev;
+  uint16_t recommendedStallSG;  // min * 0.4
+};
+static SGProfileData sgProfileSample, sgProfileTitrate;
+
 // GPIO
 struct GPIOState {
   const char* name;
@@ -607,6 +618,48 @@ static void testMotors() {
   // Subtract HCl used by titration pump diagnostics (2× DIAG_REVS revolutions)
   int diagUnits = DIAG_REVS * 2 * (STEPS_PER_REVOLUTION / MOTOR_STEPS_PER_UNIT);
   subtractHCl(diagUnits);
+
+  // SG Profile: 30 revolutions at operational speed for stall threshold calibration
+  broadcastMessage("SG profiling...");
+
+  auto fillProfile = [](SGSample* s, int n, SGProfileData* out) {
+    out->count = n;
+    out->sgMin = 65535; out->sgMax = 0;
+    uint32_t sum = 0;
+    for (int i = 0; i < n && i < SG_PROFILE_REVS; i++) {
+      out->sg[i] = s[i].sg;
+      if (s[i].sg < out->sgMin) out->sgMin = s[i].sg;
+      if (s[i].sg > out->sgMax) out->sgMax = s[i].sg;
+      sum += s[i].sg;
+    }
+    out->sgMean = n > 0 ? (float)sum / n : 0;
+    // Compute stddev
+    float sumSq = 0;
+    for (int i = 0; i < n; i++) {
+      float d = s[i].sg - out->sgMean;
+      sumSq += d * d;
+    }
+    out->sgStddev = n > 1 ? sqrtf(sumSq / (n - 1)) : 0;
+    out->recommendedStallSG = (uint16_t)(out->sgMin * 0.4f);
+  };
+
+  SGSample profileSamples[SG_PROFILE_REVS];
+
+  // Sample pump profile (StealthChop — the operational mode)
+  setSampleSpreadCycle(configStore.getSampleSpreadCycle());
+  delay(50);
+  n = diagStepSample(SG_PROFILE_REVS, sampleRPM, profileSamples, SG_PROFILE_REVS);
+  fillProfile(profileSamples, n, &sgProfileSample);
+
+  // Titration pump profile
+  setTitrateSpreadCycle(configStore.getTitrateSpreadCycle());
+  delay(50);
+  n = diagStepTitrate(SG_PROFILE_REVS, titrateRPM, profileSamples, SG_PROFILE_REVS);
+  fillProfile(profileSamples, n, &sgProfileTitrate);
+
+  // Subtract HCl used by titration pump SG profile
+  int profileUnits = SG_PROFILE_REVS * (STEPS_PER_REVOLUTION / MOTOR_STEPS_PER_UNIT);
+  subtractHCl(profileUnits);
 }
 
 static void testGPIOStates() {
@@ -949,8 +1002,22 @@ bool serveHWDiagChunk(int section, char* buf, size_t bufSize, size_t* written) {
             motorSampleSP.sgMin, motorSampleSP.sgMax, motorSampleSP.sgAvg);
           P("\"titrate\":{\"stealthchop\":{\"sg_min\":%d,\"sg_max\":%d,\"sg_avg\":%.0f},",
             motorTitrateSC.sgMin, motorTitrateSC.sgMax, motorTitrateSC.sgAvg);
-          P("\"spreadcycle\":{\"sg_min\":%d,\"sg_max\":%d,\"sg_avg\":%.0f}}},",
+          P("\"spreadcycle\":{\"sg_min\":%d,\"sg_max\":%d,\"sg_avg\":%.0f}},",
             motorTitrateSP.sgMin, motorTitrateSP.sgMax, motorTitrateSP.sgAvg);
+          // SG Profiles
+          P("\"sg_profile\":{\"sample\":{\"min\":%d,\"max\":%d,\"mean\":%.1f,\"stddev\":%.1f,\"recommended_sg\":%d,\"values\":[",
+            sgProfileSample.sgMin, sgProfileSample.sgMax, sgProfileSample.sgMean,
+            sgProfileSample.sgStddev, sgProfileSample.recommendedStallSG);
+          for (int i = 0; i < sgProfileSample.count; i++) {
+            P("%s%d", i ? "," : "", sgProfileSample.sg[i]);
+          }
+          P("]},\"titrate\":{\"min\":%d,\"max\":%d,\"mean\":%.1f,\"stddev\":%.1f,\"recommended_sg\":%d,\"values\":[",
+            sgProfileTitrate.sgMin, sgProfileTitrate.sgMax, sgProfileTitrate.sgMean,
+            sgProfileTitrate.sgStddev, sgProfileTitrate.recommendedStallSG);
+          for (int i = 0; i < sgProfileTitrate.count; i++) {
+            P("%s%d", i ? "," : "", sgProfileTitrate.sg[i]);
+          }
+          P("]}}},"  );
         }
       }
       break;

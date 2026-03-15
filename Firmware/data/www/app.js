@@ -40,7 +40,11 @@
   }
 
   function send(obj) {
-    if (ws && ws.readyState === 1) ws.send(JSON.stringify(obj));
+    if (ws && ws.readyState === 1) {
+      ws.send(JSON.stringify(obj));
+    } else {
+      addLogEntry('error', 'Not connected \u2014 command not sent');
+    }
   }
 
   // --- Event log ---
@@ -228,7 +232,10 @@
       setInput('cfg-correction_factor', d.config.correction_factor);
       setInput('cfg-hcl_molarity', d.config.hcl_molarity);
       setInput('cfg-hcl_volume', d.config.hcl_volume);
-      setInput('cfg-cal_drops', d.config.cal_drops);
+      setInput('cfg-cal_drops', d.config.cal_drops / 100);
+      if (_initCalDropsRevs === null) _initCalDropsRevs = d.config.cal_drops / 100;
+      setInput('cfg-sample_cal_revs', d.config.sample_cal_revs);
+      if (_initSampleCalRevs === null) _initSampleCalRevs = d.config.sample_cal_revs;
       setInput('cfg-fast_ph', d.config.fast_ph);
       setInput('cfg-endpoint_method', d.config.endpoint_method);
       setInput('cfg-min_start_ph', d.config.min_start_ph);
@@ -236,9 +243,13 @@
       setInput('cfg-gran_mix_delay', d.config.gran_mix_delay);
       setInput('cfg-drop_ul', d.config.drop_ul);
       setInput('cfg-titration_rpm', d.config.titration_rpm);
+      if (d.config.titrate_max_rpm > 0) setInput('cfg-titrate_max_rpm', Math.round(d.config.titrate_max_rpm));
       setInput('cfg-sample_pump_rpm', d.config.sample_pump_rpm);
+      if (d.config.sample_max_rpm > 0) setInput('cfg-sample_max_rpm', Math.round(d.config.sample_max_rpm));
       if (d.config.sample_cal_vol > 0) setInput('cfg-sample_cal_vol', d.config.sample_cal_vol.toFixed(1));
       setInput('cfg-prefill_ul', d.config.prefill_ul);
+      setInput('cfg-max_acid_ml', d.config.max_acid_ml);
+      setInput('cfg-fast_step_ml', d.config.fast_step_ml);
       setInput('cfg-meas_temp_c', d.config.meas_temp_c);
       setInput('cfg-buf_ph4', d.config.buf_ph4);
       setInput('cfg-buf_ph7', d.config.buf_ph7);
@@ -409,8 +420,7 @@
 
     // Asymmetry trend chart (over calibrations)
     if (effChart && p.effHist && p.effHist.length > 0) {
-      effChart.data.labels = p.effHist.map(function(e) { return fmtDate(e[0]); });
-      effChart.data.datasets[0].data = p.effHist.map(function(e) { return e[1]; });
+      effChart.data.datasets[0].data = p.effHist.map(function(e) { return {x: e[0], y: e[1]}; });
       var lastAsym = p.effHist[p.effHist.length - 1][1];
       var asymColor = (lastAsym < 15) ? '#30d158' : (lastAsym < 25) ? '#ff9f0a' : '#ff453a';
       effChart.data.datasets[0].borderColor = asymColor;
@@ -431,8 +441,7 @@
       if (nv > 0) data.push([granHistoryData[i][0], nv]);
     }
     if (data.length === 0) return;
-    noiseChart.data.labels = data.map(function(e) { return fmtDate(e[0]); });
-    noiseChart.data.datasets[0].data = data.map(function(e) { return e[1]; });
+    noiseChart.data.datasets[0].data = data.map(function(e) { return {x: e[0], y: e[1]}; });
     var last = data[data.length - 1][1];
     var nColor = (last < 5) ? '#30d158' : (last < 8) ? '#ff9f0a' : '#ff453a';
     noiseChart.data.datasets[0].borderColor = nColor;
@@ -584,8 +593,7 @@
     }
     // pH chart
     if (!phChart) return;
-    phChart.data.labels = d.data.map(function(p) { return fmtDate(p[0]); });
-    phChart.data.datasets[0].data = d.data.map(function(p) { return p[1]; });
+    phChart.data.datasets[0].data = d.data.map(function(p) { return {x: p[0], y: p[1]}; });
     phChart.update();
   }
 
@@ -616,34 +624,39 @@
       setText('val-kh-slope', '--');
       return;
     }
-    khChart.data.labels = data.map(function(p) { return fmtDate(p[0]); });
     // Dataset 0: scatter points
-    khChart.data.datasets[0].data = data.map(function(p) { return p[1]; });
+    khChart.data.datasets[0].data = data.map(function(p) { return {x: p[0], y: p[1]}; });
 
     // Dataset 1: EMA smooth line (12h half-life, time-aware)
     var smooth = [];
     var emaVal = data[0][1];
-    smooth.push(emaVal);
+    smooth.push({x: data[0][0], y: emaVal});
     for (var i = 1; i < data.length; i++) {
       var dtH = (data[i][0] - data[i-1][0]) / 3600;
       var alpha = 1 - Math.pow(0.5, dtH / 12);
       emaVal = alpha * data[i][1] + (1 - alpha) * emaVal;
-      smooth.push(Math.round(emaVal * 1000) / 1000);
+      smooth.push({x: data[i][0], y: Math.round(emaVal * 1000) / 1000});
     }
     khChart.data.datasets[1].data = smooth;
 
-    // Dataset 3: confidence bars from gran history (index 9), matched by timestamp
+    // Dataset 3: confidence indicators from gran history (index 9), matched by timestamp
     if (granHistoryData) {
       var confByTs = {};
       for (var i = 0; i < granHistoryData.length; i++) confByTs[granHistoryData[i][0]] = granHistoryData[i][9];
-      var confData = data.map(function(p) { return confByTs[p[0]] || null; });
+      var confData = [];
+      var confBg = [];
+      var confBorder = [];
+      for (var i = 0; i < data.length; i++) {
+        var v = confByTs[data[i][0]];
+        if (v != null) {
+          confData.push({x: data[i][0], y: data[i][1]});
+          confBg.push(v < 0.8 ? 'rgba(255,59,48,0.18)' : 'rgba(48,209,88,0.13)');
+          confBorder.push(v < 0.8 ? 'rgba(255,59,48,0.4)' : 'rgba(48,209,88,0.3)');
+        }
+      }
       khChart.data.datasets[3].data = confData;
-      khChart.data.datasets[3].backgroundColor = confData.map(function(v) {
-        return (v !== null && v < 0.8) ? 'rgba(255,59,48,0.18)' : 'rgba(48,209,88,0.13)';
-      });
-      khChart.data.datasets[3].borderColor = confData.map(function(v) {
-        return (v !== null && v < 0.8) ? 'rgba(255,59,48,0.4)' : 'rgba(48,209,88,0.3)';
-      });
+      khChart.data.datasets[3].backgroundColor = confBg;
+      khChart.data.datasets[3].borderColor = confBorder;
     } else {
       khChart.data.datasets[3].data = [];
     }
@@ -679,27 +692,27 @@
         }
       }
       if (firstIdx >= 0 && lastIdx > firstIdx) {
-        // 2-point straight line — no intermediate points, no knee
-        var trendData = data.map(function() { return null; });
+        // 2-point straight line using {x,y} points
         var xFirst = data[firstIdx][0] / 86400 - serverSlopeDay0;
         var xLast = data[lastIdx][0] / 86400 - serverSlopeDay0;
-        trendData[firstIdx] = serverSlope * xFirst + serverIntercept;
-        trendData[lastIdx] = serverSlope * xLast + serverIntercept;
-        khChart.data.datasets[2].data = trendData;
+        khChart.data.datasets[2].data = [
+          {x: data[firstIdx][0], y: serverSlope * xFirst + serverIntercept},
+          {x: data[lastIdx][0], y: serverSlope * xLast + serverIntercept}
+        ];
 
         // Datasets 4+5: slope CI band (parallel lines offset by ±slopeCI × timespan)
         if (lastSlopeCI > 0) {
           var xMid = (xFirst + xLast) / 2;
-          var upperData = data.map(function() { return null; });
-          var lowerData = data.map(function() { return null; });
+          var upperData = [];
+          var lowerData = [];
           // CI band widens with distance from center
           [firstIdx, lastIdx].forEach(function(idx) {
             var x = data[idx][0] / 86400 - serverSlopeDay0;
             var yHat = serverSlope * x + serverIntercept;
             var dx = x - xMid;
             var band = lastSlopeCI * Math.abs(dx);
-            upperData[idx] = yHat + band;
-            lowerData[idx] = yHat - band;
+            upperData.push({x: data[idx][0], y: yHat + band});
+            lowerData.push({x: data[idx][0], y: yHat - band});
           });
           khChart.data.datasets[4].data = upperData;
           khChart.data.datasets[5].data = lowerData;
@@ -716,7 +729,7 @@
       khChart.data.datasets[5].data = [];
     }
     // Enforce minimum 1.5 dKH span on y-axis
-    var vals = khChart.data.datasets[0].data.filter(function(v) { return v != null; });
+    var vals = khChart.data.datasets[0].data.map(function(p) { return p.y; }).filter(function(v) { return v != null; });
     if (vals.length > 0) {
       var mn = Math.min.apply(null, vals);
       var mx = Math.max.apply(null, vals);
@@ -734,11 +747,10 @@
 
   function updateGranHistChart() {
     if (!granHistChart || !granHistoryData || granHistoryData.length === 0) return;
-    // data: [[ts, r2, eqML, endpointPH, method, khGran, khEndpoint], ...]
-    granHistChart.data.labels = granHistoryData.map(function(p) { return fmtDate(p[0]); });
-    granHistChart.data.datasets[0].data = granHistoryData.map(function(p) { return p[1]; }); // R2
-    granHistChart.data.datasets[1].data = granHistoryData.map(function(p) { return p[3]; }); // endpointPH
-    granHistChart.data.datasets[2].data = granHistoryData.map(function(p) { return p[10] > 0 ? p[10] : null; }); // CI
+    // data: [[ts, r2, eqML, endpointPH, method, khGran, khEndpoint, noiseMv, reversals, conf, khCI], ...]
+    granHistChart.data.datasets[0].data = granHistoryData.map(function(p) { return {x: p[0], y: p[1]}; }); // R2
+    granHistChart.data.datasets[1].data = granHistoryData.map(function(p) { return {x: p[0], y: p[3]}; }); // endpointPH
+    granHistChart.data.datasets[2].data = granHistoryData.map(function(p) { return p[10] > 0 ? {x: p[0], y: p[10]} : null; }).filter(function(v) { return v !== null; }); // CI
     // Color interpolation points red
     var r2Colors = granHistoryData.map(function(p) { return p[4] === 1 ? '#0a84ff' : '#ff453a'; });
     var phColors = granHistoryData.map(function(p) { return p[4] === 1 ? '#ff9f0a' : '#ff453a'; });
@@ -802,42 +814,49 @@
   var granHistoryData = null; // raw gran history [[ts, r2, eqML, eph, mth, khG, khE, noiseMv, reversals, conf], ...]
   var motorHistoryData = null; // raw motor history [[ts, sAvg, sMin, tAvg, tMin], ...]
   var lastSGValues = { sample: 0, titrate: 0 };
+  // Time-proportional X-axis: uses linear scale with Unix timestamps (seconds)
+  var timeXScale = {
+    type: 'linear',
+    ticks: { color: '#8e8e93', maxTicksLimit: 6, font: { size: 10 },
+      callback: function(val) { return fmtDate(val); }
+    },
+    grid: { color: '#38383a' }
+  };
   var chartOpts = {
     responsive: true,
     maintainAspectRatio: false,
     animation: false,
     plugins: { legend: { display: false } },
     scales: {
-      x: { ticks: { color: '#8e8e93', maxTicksLimit: 6, font: { size: 10 } }, grid: { color: '#38383a' } },
+      x: timeXScale,
       y: { ticks: { color: '#8e8e93', font: { size: 10 } }, grid: { color: '#38383a' } }
     }
   };
 
   function initCharts() {
     khChart = new Chart(document.getElementById('chart-kh'), {
-      type: 'line',
+      type: 'scatter',
       plugins: [errorBarPlugin],
-      data: { labels: [], datasets: [
+      data: { datasets: [
         { label: 'KH', data: [], backgroundColor: '#0a84ff', borderColor: '#0a84ff', borderWidth: 0, pointRadius: 3, pointBackgroundColor: '#0a84ff', pointBorderColor: '#0a84ff', showLine: false, yAxisID: 'y', order: 1 },
-        { label: 'Smooth', data: [], borderColor: '#0a84ff', borderWidth: 3, pointRadius: 0, cubicInterpolationMode: 'monotone', tension: 0.4, yAxisID: 'y', order: 2 },
-        { label: 'Trend', data: [], borderColor: 'rgba(255,159,10,0.6)', borderWidth: 2, borderDash: [6,3], pointRadius: 0, tension: 0, spanGaps: true, yAxisID: 'y', order: 0 },
-        { label: 'Conf', type: 'bar', data: [], backgroundColor: 'rgba(48,209,88,0.13)', borderColor: 'rgba(48,209,88,0.3)', borderWidth: 1, yAxisID: 'yConf', order: 3 },
-        { label: '_trendUpper', data: [], borderColor: 'rgba(255,159,10,0.2)', borderWidth: 1, pointRadius: 0, fill: 5, backgroundColor: 'rgba(255,159,10,0.08)', spanGaps: true, yAxisID: 'y', order: 6 },
-        { label: '_trendLower', data: [], borderColor: 'rgba(255,159,10,0.2)', borderWidth: 1, pointRadius: 0, fill: false, spanGaps: true, yAxisID: 'y', order: 6 }
+        { label: 'Smooth', data: [], borderColor: '#0a84ff', borderWidth: 3, pointRadius: 0, showLine: true, cubicInterpolationMode: 'monotone', tension: 0.4, yAxisID: 'y', order: 2 },
+        { label: 'Trend', data: [], borderColor: 'rgba(255,159,10,0.6)', borderWidth: 2, borderDash: [6,3], pointRadius: 0, showLine: true, tension: 0, spanGaps: true, yAxisID: 'y', order: 0 },
+        { label: 'Conf', data: [], backgroundColor: 'rgba(48,209,88,0.13)', borderColor: 'rgba(48,209,88,0.3)', borderWidth: 0, pointRadius: 6, pointStyle: 'rect', yAxisID: 'y', order: 3 },
+        { label: '_trendUpper', data: [], borderColor: 'rgba(255,159,10,0.2)', borderWidth: 1, pointRadius: 0, showLine: true, fill: 5, backgroundColor: 'rgba(255,159,10,0.08)', spanGaps: true, yAxisID: 'y', order: 6 },
+        { label: '_trendLower', data: [], borderColor: 'rgba(255,159,10,0.2)', borderWidth: 1, pointRadius: 0, showLine: true, fill: false, spanGaps: true, yAxisID: 'y', order: 6 }
       ] },
       options: {
         responsive: true, maintainAspectRatio: false, animation: false,
         plugins: { legend: { display: false } },
         scales: {
-          x: { ticks: { color: '#8e8e93', maxTicksLimit: 6, font: { size: 10 } }, grid: { color: '#38383a' } },
-          y: { ticks: { color: '#8e8e93', font: { size: 10 } }, grid: { color: '#38383a' } },
-          yConf: { type: 'linear', position: 'right', min: 0, max: 2.0, display: false }
+          x: timeXScale,
+          y: { ticks: { color: '#8e8e93', font: { size: 10 } }, grid: { color: '#38383a' } }
         }
       }
     });
     phChart = new Chart(document.getElementById('chart-ph'), {
-      type: 'line',
-      data: { labels: [], datasets: [{ data: [], borderColor: '#30d158', borderWidth: 2, pointRadius: 3, pointBackgroundColor: '#30d158', cubicInterpolationMode: 'monotone', tension: 0.4 }] },
+      type: 'scatter',
+      data: { datasets: [{ data: [], borderColor: '#30d158', borderWidth: 2, pointRadius: 3, pointBackgroundColor: '#30d158', showLine: true, cubicInterpolationMode: 'monotone', tension: 0.4 }] },
       options: chartOpts
     });
     liveChart = new Chart(document.getElementById('chart-live'), {
@@ -873,20 +892,19 @@
       }
     });
     granHistChart = new Chart(document.getElementById('chart-gran-hist'), {
-      type: 'line',
+      type: 'scatter',
       data: {
-        labels: [],
         datasets: [
-          { label: 'R\u00b2', data: [], borderColor: '#0a84ff', backgroundColor: 'rgba(10,132,255,0.15)', borderWidth: 2, pointRadius: 4, yAxisID: 'yR2', tension: 0.1 },
-          { label: 'End pH', data: [], borderColor: '#ff9f0a', backgroundColor: 'rgba(255,159,10,0.15)', borderWidth: 2, pointRadius: 4, yAxisID: 'yRight', tension: 0.1 },
-          { label: '\u00b1CI', data: [], borderColor: '#30d158', backgroundColor: 'rgba(48,209,88,0.15)', borderWidth: 2, pointRadius: 4, yAxisID: 'yCI', tension: 0.1 }
+          { label: 'R\u00b2', data: [], borderColor: '#0a84ff', backgroundColor: 'rgba(10,132,255,0.15)', borderWidth: 2, pointRadius: 4, showLine: true, yAxisID: 'yR2', tension: 0.1 },
+          { label: 'End pH', data: [], borderColor: '#ff9f0a', backgroundColor: 'rgba(255,159,10,0.15)', borderWidth: 2, pointRadius: 4, showLine: true, yAxisID: 'yRight', tension: 0.1 },
+          { label: '\u00b1CI', data: [], borderColor: '#30d158', backgroundColor: 'rgba(48,209,88,0.15)', borderWidth: 2, pointRadius: 4, showLine: true, yAxisID: 'yCI', tension: 0.1 }
         ]
       },
       options: {
         responsive: true, maintainAspectRatio: false, animation: false,
         plugins: { legend: { display: true, labels: { color: '#8e8e93', font: { size: 10 }, boxWidth: 12 } } },
         scales: {
-          x: { ticks: { color: '#8e8e93', maxTicksLimit: 6, font: { size: 10 } }, grid: { color: '#38383a' } },
+          x: timeXScale,
           yR2: { type: 'linear', position: 'left', min: 0.98, max: 1.0, ticks: { color: '#0a84ff', font: { size: 9 } }, grid: { color: '#38383a' }, title: { display: true, text: 'R\u00b2', color: '#0a84ff', font: { size: 10 } } },
           yRight: { type: 'linear', position: 'right', ticks: { color: '#ff9f0a', font: { size: 9 } }, grid: { drawOnChartArea: false }, title: { display: true, text: 'pH', color: '#ff9f0a', font: { size: 10 } } },
           yCI: { type: 'linear', position: 'right', ticks: { color: '#30d158', font: { size: 9 } }, grid: { drawOnChartArea: false }, title: { display: true, text: '\u00b1dKH', color: '#30d158', font: { size: 10 } } }
@@ -928,22 +946,22 @@
         plugins: {
           legend: { display: false },
           title: { display: true, text: title, color: '#8e8e93', font: { size: 11, weight: '500' }, padding: { bottom: 4 } },
-          tooltip: { callbacks: { title: function(items) { if (!items.length) return ''; return items[0].chart.data.labels[items[0].dataIndex] || ''; } } }
+          tooltip: { callbacks: { title: function(items) { if (!items.length) return ''; return fmtDate(items[0].parsed.x); } } }
         },
         scales: {
-          x: { ticks: { color: '#8e8e93', maxTicksLimit: 4, font: { size: 9 } }, grid: { color: '#38383a' } },
+          x: { type: 'linear', ticks: { color: '#8e8e93', maxTicksLimit: 4, font: { size: 9 }, callback: function(val) { return fmtDate(val); } }, grid: { color: '#38383a' } },
           y: { title: { display: true, text: yLabel, color: '#8e8e93', font: { size: 9 } }, ticks: { color: '#8e8e93', font: { size: 9 } }, grid: { color: '#38383a' } }
         }
       };
     };
     effChart = new Chart(document.getElementById('chart-efficiency'), {
-      type: 'line',
-      data: { labels: [], datasets: [{ data: [], borderColor: '#30d158', borderWidth: 2, pointRadius: 3, pointBackgroundColor: '#30d158', tension: 0.1 }] },
+      type: 'scatter',
+      data: { datasets: [{ data: [], borderColor: '#30d158', borderWidth: 2, pointRadius: 3, pointBackgroundColor: '#30d158', showLine: true, tension: 0.1 }] },
       options: probeChartOpts('Probe Asymmetry', '%')
     });
     noiseChart = new Chart(document.getElementById('chart-noise'), {
-      type: 'line',
-      data: { labels: [], datasets: [{ data: [], borderColor: '#30d158', borderWidth: 2, pointRadius: 3, pointBackgroundColor: '#30d158', tension: 0.1 }] },
+      type: 'scatter',
+      data: { datasets: [{ data: [], borderColor: '#30d158', borderWidth: 2, pointRadius: 3, pointBackgroundColor: '#30d158', showLine: true, tension: 0.1 }] },
       options: probeChartOpts('Probe Noise', 'mV')
     });
 
@@ -1228,13 +1246,8 @@
     var btn = document.getElementById('btn-stirrer');
     if (!btn) return;
     btn.addEventListener('click', function() {
-      if (stirrerOn) {
-        send({ type: 'cmd', cmd: 'e' });
-      } else {
-        send({ type: 'cmd', cmd: 'm' });
-      }
-      stirrerOn = !stirrerOn;
-      syncStirrerUI();
+      // Send command; let server state update drive the UI (line 196)
+      send({ type: 'cmd', cmd: stirrerOn ? 'e' : 'm' });
     });
   }
 
@@ -1253,11 +1266,29 @@
     setTimeout(function() { fb.style.opacity = '0'; }, 1500);
   }
 
+  // Track initial values for recalibration warnings
+  var _initCalDropsRevs = null;
+  var _initSampleCalRevs = null;
+
   function initConfigInputs() {
     document.querySelectorAll('.config-grid input, .cal-ph-col input').forEach(function(inp) {
       inp.addEventListener('change', function() {
         var key = inp.id.replace('cfg-', '');
         var val = (inp.type === 'text') ? inp.value : parseFloat(inp.value);
+        // Convert revolutions back to internal units for titration calibration
+        if (key === 'cal_drops') {
+          val = Math.round(val * 100);
+          if (_initCalDropsRevs !== null && parseFloat(inp.value) !== _initCalDropsRevs) {
+            alert('Titration calibration revolutions changed \u2014 please recalibrate the titration pump.');
+            _initCalDropsRevs = parseFloat(inp.value);
+          }
+        }
+        if (key === 'sample_cal_revs') {
+          if (_initSampleCalRevs !== null && val !== _initSampleCalRevs) {
+            alert('Sample calibration revolutions changed \u2014 please recalibrate the sample pump.');
+            _initSampleCalRevs = val;
+          }
+        }
         send({ type: 'config', key: key, value: val });
         showConfigFeedback(inp, true);
       });
@@ -1265,7 +1296,9 @@
     document.querySelectorAll('.config-grid select').forEach(function(sel) {
       sel.addEventListener('change', function() {
         var key = sel.id.replace('cfg-', '');
-        send({ type: 'config', key: key, value: parseInt(sel.value) });
+        var val = parseInt(sel.value);
+        if (isNaN(val)) return;
+        send({ type: 'config', key: key, value: val });
         showConfigFeedback(sel, true);
       });
     });
@@ -1381,6 +1414,7 @@
     if (!el) return;
     if (currentSchedMode !== 1) { el.textContent = ''; return; }
     var intervalMins = currentIntervalHours * 60;
+    if (intervalMins < 60) intervalMins = 60;
     var first = currentAnchorTime % intervalMins;
     var times = [];
     for (var t = first; t < 1440; t += intervalMins) {
@@ -1448,6 +1482,7 @@
   }
 
   function fmtDate(ts) {
+    if (!ts || ts < 946684800) return '--';
     var d = new Date(ts * 1000);
     return (d.getMonth() + 1) + '/' + d.getDate() + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes());
   }
@@ -1503,12 +1538,12 @@
     if (sampleRow) sampleRow.style.display = (m === 'd' || m === 'B') ? '' : 'none';
     if (titrateRow) titrateRow.style.display = (m === 'd' || m === 'C') ? '' : 'none';
 
-    if (m === 'd' || m === 'B') {
+    if ((m === 'd' || m === 'B') && d.sample) {
       setText('diag-sample-sc', fmtSG(d.sample.stealthchop));
       setText('diag-sample-sp', fmtSG(d.sample.spreadcycle));
       setText('diag-sample-rec', d.sample.recommended + ' (SG\u2265' + d.sample.suggestedThreshold + ')');
     }
-    if (m === 'd' || m === 'C') {
+    if ((m === 'd' || m === 'C') && d.titrate) {
       setText('diag-titrate-sc', fmtSG(d.titrate.stealthchop));
       setText('diag-titrate-sp', fmtSG(d.titrate.spreadcycle));
       setText('diag-titrate-rec', d.titrate.recommended + ' (SG\u2265' + d.titrate.suggestedThreshold + ')');
@@ -1527,7 +1562,7 @@
         if (d.titrate.stallRPM > 0) {
           parts.push('Titration: stall ' + d.titrate.stallRPM + ' RPM \u2192 max ' + Math.round(d.titrate.maxRPM) + ' RPM');
         } else {
-          parts.push('Titration: no stall (30\u2013150 RPM)');
+          parts.push('Titration: no stall (30\u2013300 RPM)');
         }
       }
       stallEl.textContent = '';
@@ -1536,6 +1571,60 @@
         stallEl.appendChild(document.createTextNode(p));
       });
       stallEl.style.display = parts.length > 0 ? '' : 'none';
+    }
+
+    // SG Profile charts
+    var profileEl = document.getElementById('diag-sg-profile');
+    var profileStats = document.getElementById('sg-profile-stats');
+    if (profileEl && d.sgProfile) {
+      profileEl.style.display = '';
+      var renderProfile = function(canvasId, prof, label) {
+        var canvas = document.getElementById(canvasId);
+        if (!canvas || !prof || !prof.values || prof.values.length === 0) return;
+        var ctx = canvas.getContext('2d');
+        // Destroy existing chart if any
+        if (canvas._chart) canvas._chart.destroy();
+        var data = prof.values.map(function(v, i) { return {x: i + 1, y: v}; });
+        canvas._chart = new Chart(ctx, {
+          type: 'line',
+          data: {
+            datasets: [{
+              data: data,
+              borderColor: '#30d158',
+              borderWidth: 1.5,
+              pointRadius: 2,
+              pointBackgroundColor: '#30d158',
+              fill: false
+            }]
+          },
+          options: {
+            responsive: true, maintainAspectRatio: false, animation: false,
+            plugins: {
+              legend: { display: false },
+              title: { display: true, text: label, color: '#8e8e93', font: { size: 10 }, padding: { bottom: 2 } }
+            },
+            scales: {
+              x: { type: 'linear', title: { display: true, text: 'Revolution', color: '#8e8e93', font: { size: 8 } }, ticks: { color: '#8e8e93', font: { size: 8 } }, grid: { color: '#38383a' } },
+              y: { title: { display: true, text: 'SG', color: '#8e8e93', font: { size: 8 } }, ticks: { color: '#8e8e93', font: { size: 8 } }, grid: { color: '#38383a' },
+                min: 0 }
+            }
+          }
+        });
+      };
+      if (d.sgProfile.sample) renderProfile('sg-profile-sample', d.sgProfile.sample, 'Sample Pump SG Profile');
+      if (d.sgProfile.titrate) renderProfile('sg-profile-titrate', d.sgProfile.titrate, 'Titration Pump SG Profile');
+
+      // Stats text
+      var stats = [];
+      if (d.sgProfile.sample && d.sgProfile.sample.values && d.sgProfile.sample.values.length > 0) {
+        stats.push('Sample: min=' + d.sgProfile.sample.min + ' rec. stallSG=' + d.sgProfile.sample.recSG);
+      }
+      if (d.sgProfile.titrate && d.sgProfile.titrate.values && d.sgProfile.titrate.values.length > 0) {
+        stats.push('Titrate: min=' + d.sgProfile.titrate.min + ' rec. stallSG=' + d.sgProfile.titrate.recSG);
+      }
+      if (profileStats) profileStats.textContent = stats.join(' | ');
+    } else if (profileEl) {
+      profileEl.style.display = 'none';
     }
 
     results.style.display = 'block';
@@ -1551,7 +1640,7 @@
           title: { display: true, text: title, color: '#8e8e93', font: { size: 10, weight: '500' }, padding: { bottom: 4 } }
         },
         scales: {
-          x: { ticks: { color: '#8e8e93', maxTicksLimit: 4, font: { size: 9 } }, grid: { color: '#38383a' } },
+          x: { type: 'linear', ticks: { color: '#8e8e93', maxTicksLimit: 4, font: { size: 9 }, callback: function(val) { return fmtDate(val); } }, grid: { color: '#38383a' } },
           y: { ticks: { color: '#8e8e93', font: { size: 9 } }, grid: { color: '#38383a' }, title: { display: true, text: 'SG', color: '#8e8e93', font: { size: 9 } } }
         }
       };
@@ -1559,18 +1648,18 @@
     var el1 = document.getElementById('chart-sg-sample');
     var el2 = document.getElementById('chart-sg-titrate');
     if (el1) sgSampleChart = new Chart(el1, {
-      type: 'line',
-      data: { labels: [], datasets: [
-        { data: [], borderColor: '#0a84ff', borderWidth: 2, pointRadius: 2, pointBackgroundColor: '#0a84ff', tension: 0.1 },
-        { data: [], borderColor: 'rgba(255,159,10,0.5)', borderWidth: 1, borderDash: [4,4], pointRadius: 0 }
+      type: 'scatter',
+      data: { datasets: [
+        { data: [], borderColor: '#0a84ff', borderWidth: 2, pointRadius: 2, pointBackgroundColor: '#0a84ff', showLine: true, tension: 0.1 },
+        { data: [], borderColor: 'rgba(255,159,10,0.5)', borderWidth: 1, borderDash: [4,4], pointRadius: 0, showLine: true }
       ] },
       options: sgChartOpts('Sample Pump SG')
     });
     if (el2) sgTitrateChart = new Chart(el2, {
-      type: 'line',
-      data: { labels: [], datasets: [
-        { data: [], borderColor: '#30d158', borderWidth: 2, pointRadius: 2, pointBackgroundColor: '#30d158', tension: 0.1 },
-        { data: [], borderColor: 'rgba(255,159,10,0.5)', borderWidth: 1, borderDash: [4,4], pointRadius: 0 }
+      type: 'scatter',
+      data: { datasets: [
+        { data: [], borderColor: '#30d158', borderWidth: 2, pointRadius: 2, pointBackgroundColor: '#30d158', showLine: true, tension: 0.1 },
+        { data: [], borderColor: 'rgba(255,159,10,0.5)', borderWidth: 1, borderDash: [4,4], pointRadius: 0, showLine: true }
       ] },
       options: sgChartOpts('Titration Pump SG')
     });
@@ -1579,21 +1668,17 @@
   function renderMotorCharts() {
     if (!motorHistoryData || motorHistoryData.length === 0) return;
     // data: [[ts, sAvg, sMin, tAvg, tMin], ...]
-    var labels = motorHistoryData.map(function(p) { return fmtDate(p[0]); });
-
     if (sgSampleChart) {
-      sgSampleChart.data.labels = labels;
-      sgSampleChart.data.datasets[0].data = motorHistoryData.map(function(p) { return p[1]; });
+      sgSampleChart.data.datasets[0].data = motorHistoryData.map(function(p) { return {x: p[0], y: p[1]}; });
       if (motorBaselines.sample > 0) {
-        sgSampleChart.data.datasets[1].data = labels.map(function() { return motorBaselines.sample; });
+        sgSampleChart.data.datasets[1].data = motorHistoryData.map(function(p) { return {x: p[0], y: motorBaselines.sample}; });
       }
       sgSampleChart.update();
     }
     if (sgTitrateChart) {
-      sgTitrateChart.data.labels = labels;
-      sgTitrateChart.data.datasets[0].data = motorHistoryData.map(function(p) { return p[3]; }); // avg
+      sgTitrateChart.data.datasets[0].data = motorHistoryData.map(function(p) { return {x: p[0], y: p[3]}; });
       if (motorBaselines.titrate > 0) {
-        sgTitrateChart.data.datasets[1].data = labels.map(function() { return motorBaselines.titrate; });
+        sgTitrateChart.data.datasets[1].data = motorHistoryData.map(function(p) { return {x: p[0], y: motorBaselines.titrate}; });
       }
       sgTitrateChart.update();
     }
@@ -1625,13 +1710,13 @@
         var m = lastDiagResult.mode || 'd';
         var s = lastDiagResult.sample;
         var t = lastDiagResult.titrate;
-        if (m === 'd' || m === 'B') {
+        if ((m === 'd' || m === 'B') && s) {
           send({ type: 'config', key: 'sample_spreadcycle', value: s.recommended === 'spreadcycle' ? 1 : 0 });
           send({ type: 'config', key: 'sample_stall_sg', value: s.suggestedThreshold });
           var sMode = s.recommended === 'spreadcycle' ? s.spreadcycle : s.stealthchop;
           if (sMode) send({ type: 'config', key: 'sample_sg_baseline', value: sMode.sgAvg });
         }
-        if (m === 'd' || m === 'C') {
+        if ((m === 'd' || m === 'C') && t) {
           send({ type: 'config', key: 'titrate_spreadcycle', value: t.recommended === 'spreadcycle' ? 1 : 0 });
           send({ type: 'config', key: 'titrate_stall_sg', value: t.suggestedThreshold });
           var tMode = t.recommended === 'spreadcycle' ? t.spreadcycle : t.stealthchop;
@@ -1740,7 +1825,10 @@
       rows.push('</tbody></table>');
       el.innerHTML = rows.join('');
       try { localStorage.setItem('hwDiagDone', '1'); } catch(e) {}
-    }).catch(function() {});
+    }).catch(function() {
+      var el = document.getElementById('hw-diag-summary');
+      if (el) el.innerHTML = '<p style="color:var(--red)">Failed to load diagnostics report</p>';
+    });
   }
 
   function initHWDiag() {

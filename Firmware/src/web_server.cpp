@@ -88,7 +88,7 @@ void storeAnalysisPoints(const TitrationPoint* points, int count) {
 }
 
 // Forward declarations for command/config handlers from main
-extern int units;
+extern std::atomic<int> units;
 extern float startPH;
 extern void calibrateTitrationPump();
 extern void subtractHCl(int unitsUsed);
@@ -157,10 +157,11 @@ static void sendMesData(AsyncWebSocketClient* client) {
       point.add(mesBuffer[i].mV);
     }
 
-    char* buf = (char*)malloc(8192);
+    size_t jsonLen = measureJson(doc) + 1;
+    char* buf = (char*)malloc(jsonLen);
     if (buf) {
-      size_t written = serializeJson(doc, buf, 8192);
-      if (written > 0) client->text(buf);
+      serializeJson(doc, buf, jsonLen);
+      client->text(buf);
       free(buf);
     }
   }
@@ -271,7 +272,7 @@ static void handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
 
       if (strcmp(key, "titration_vol") == 0 && value > 0) configStore.setTitrationVolume(value);
       else if (strcmp(key, "sample_vol") == 0 && value > 0) configStore.setSampleVolume(value);
-      else if (strcmp(key, "correction_factor") == 0 && value > 0 && value <= 5) configStore.setCorrectionFactor(value);
+      else if (strcmp(key, "correction_factor") == 0 && value >= 0.5f && value <= 2.0f) configStore.setCorrectionFactor(value);
       else if (strcmp(key, "hcl_molarity") == 0 && value > 0 && value <= 1) configStore.setHClMolarity(value);
       else if (strcmp(key, "hcl_volume") == 0 && value >= 0) configStore.setHClVolume(value);
       else if (strcmp(key, "cal_drops") == 0 && (int)value > 0) configStore.setCalUnits((int)value);
@@ -287,16 +288,24 @@ static void handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
       }
       else if (strcmp(key, "drop_ul") == 0) { configStore.setDropVolumeUL(value); }
       else if (strcmp(key, "titration_rpm") == 0) { configStore.setTitrationRPM(value); }
+      else if (strcmp(key, "titrate_max_rpm") == 0) { configStore.setTitrateMaxRPM(value); }
       else if (strcmp(key, "sample_pump_rpm") == 0) { configStore.setSamplePumpRPM(value); }
+      else if (strcmp(key, "sample_max_rpm") == 0) { configStore.setSampleMaxRPM(value); }
+      else if (strcmp(key, "sample_cal_revs") == 0 && (int)value >= 50) {
+        configStore.setSampleCalRevolutions((int)value);
+      }
       else if (strcmp(key, "sample_cal_vol") == 0 && value > 0.1f) {
         // User entered measured volume from sample pump calibration
-        float revsPerML = (float)SAMPLE_CAL_REVOLUTIONS / value;
+        int calRevs = configStore.getSampleCalRevolutions();
+        float revsPerML = (float)calRevs / value;
         configStore.setSampleCalRevsPerML(revsPerML);
         char buf[64];
         snprintf(buf, sizeof(buf), "Sample pump: %.2f revs/mL (from %.1f mL)", revsPerML, value);
         publishMessage(buf);
       }
       else if (strcmp(key, "prefill_ul") == 0) { configStore.setPrefillVolumeUL(value); }
+      else if (strcmp(key, "max_acid_ml") == 0) { configStore.setMaxAcidML(value); }
+      else if (strcmp(key, "fast_step_ml") == 0) { configStore.setFastStepML(value); }
       else if (strcmp(key, "meas_temp_c") == 0) { configStore.setMeasTempC(value); }
       else if (strcmp(key, "buf_ph4") == 0 && value >= 3.0f && value <= 5.0f) {
         configStore.setBufferPH4(value); updateCalibrationFit();
@@ -692,7 +701,7 @@ void executeCommand(const char* cmd) {
     ESP.restart();
   } else if (strcmp(cmd, "4") == 0 || strcmp(cmd, "7") == 0 || strcmp(cmd, "10") == 0) {
     // Defer to loopTask — calibratePH blocks ~10s (stirrer warmup + voltage measurement)
-    queueCommand(cmd[0] == '1' ? 'A' : cmd[0]);  // '4','7','A' (A=pH10)
+    queueCommand(strcmp(cmd, "10") == 0 ? 'A' : cmd[0]);  // '4','7','A' (A=pH10)
     return;
   }
   broadcastState();
@@ -717,7 +726,7 @@ void broadcastState() {
   doc["fwVersion"] = FW_VERSION;
   doc["ph"] = pH;
   doc["startPh"] = startPH;
-  doc["units"] = units;
+  doc["units"] = units.load();
   doc["kh"] = configStore.getLastKH();
   doc["lastStartPh"] = configStore.getLastStartPH();
   doc["hclVol"] = configStore.getHClVolume();
@@ -733,7 +742,7 @@ void broadcastState() {
   doc["temp_sensor"] = hasTemperatureSensor();
   doc["tmc"] = isTMCDetected();
   doc["stirrer"] = isStirrerRunning();
-  doc["measuring"] = isMeasuringKH;
+  doc["measuring"] = isMeasuringKH.load();
 
   // KH trend slope (dKH/day) and regression parameters for client trend line
   if (!isnan(cachedKHSlope)) {
@@ -797,10 +806,14 @@ void broadcastState() {
   cfg["titration_rpm"] = configStore.getTitrationRPM();
   cfg["sample_pump_rpm"] = configStore.getSamplePumpRPM();
   cfg["sample_cal_revs_per_ml"] = configStore.getSampleCalRevsPerML();
+  cfg["sample_cal_revs"] = configStore.getSampleCalRevolutions();
   { float rpm = configStore.getSampleCalRevsPerML();
-    cfg["sample_cal_vol"] = (rpm > 0) ? (float)SAMPLE_CAL_REVOLUTIONS / rpm : 0;
+    int calRevs = configStore.getSampleCalRevolutions();
+    cfg["sample_cal_vol"] = (rpm > 0) ? (float)calRevs / rpm : 0;
   }
   cfg["prefill_ul"] = configStore.getPrefillVolumeUL();
+  cfg["max_acid_ml"] = configStore.getMaxAcidML();
+  cfg["fast_step_ml"] = configStore.getFastStepML();
   cfg["meas_temp_c"] = configStore.getMeasTempC();
   cfg["buf_ph4"] = configStore.getBufferPH4();
   cfg["buf_ph7"] = configStore.getBufferPH7();
@@ -1006,6 +1019,7 @@ void appendHistory(const char* sensor, float value, uint32_t ts) {
       File fw = LittleFS.open(tmpFile, "w");
       if (fw) {
         int lines = 0;
+        bool writeOk = true;
         while (f.available() && lines < 200) {
           String line = f.readStringUntil('\n');
           lines++;
@@ -1014,13 +1028,18 @@ void appendHistory(const char* sensor, float value, uint32_t ts) {
           if (comma < 0) continue;
           uint32_t lineTs = line.substring(0, comma).toInt();
           if (lineTs >= cutoff) {
-            fw.print(line + "\n");
+            if (fw.print(line + "\n") == 0) { writeOk = false; break; }
           }
         }
         fw.close();
         f.close();
-        LittleFS.remove(filename);
-        LittleFS.rename(tmpFile, filename);
+        if (writeOk) {
+          LittleFS.remove(filename);
+          LittleFS.rename(tmpFile, filename);
+        } else {
+          LittleFS.remove(tmpFile);  // Discard partial file, keep original intact
+          Serial.printf("Warning: write failed during %s pruning, keeping original\n", filename);
+        }
       } else {
         f.close();
         Serial.printf("Warning: failed to open %s for pruning\n", tmpFile);
@@ -1563,6 +1582,7 @@ void setupWebServer() {
               "\"fast_ph\":%.1f,\"endpoint_method\":%d,"
               "\"min_start_ph\":%.1f,\"stab_timeout\":%d,\"gran_mix_delay\":%d,"
               "\"drop_ul\":%.1f,\"titration_rpm\":%.1f,\"prefill_ul\":%.1f,"
+              "\"max_acid_ml\":%.1f,\"fast_step_ml\":%.2f,"
               "\"cal_v4\":%.2f,\"cal_v7\":%.2f,\"cal_v10\":%.2f,"
               "\"schedule_mode\":%d,\"interval_hours\":%d,\"anchor_time\":%d"
               "},",
@@ -1574,6 +1594,7 @@ void setupWebServer() {
               configStore.getFastTitrationPH(), (int)configStore.getEndpointMethod(),
               configStore.getMinStartPH(), configStore.getStabilizationTimeout(), configStore.getGranMixDelay(),
               configStore.getDropVolumeUL(), configStore.getTitrationRPM(), configStore.getPrefillVolumeUL(),
+              configStore.getMaxAcidML(), configStore.getFastStepML(),
               voltage_4PH, voltage_7PH, voltage_10PH,
               (int)configStore.getScheduleMode(),
               (int)configStore.getIntervalHours(),
@@ -1884,6 +1905,10 @@ void registerOTAUploadHandler() {
     [](AsyncWebServerRequest* request, String filename, size_t index, uint8_t* data, size_t len, bool final) {
       if (index == 0) {
         String typeParam = request->hasParam("type") ? request->getParam("type")->value() : "firmware";
+        if (typeParam != "firmware" && typeParam != "filesystem") {
+          Serial.printf("OTA rejected: unknown type '%s'\n", typeParam.c_str());
+          return;
+        }
         int updateType = (typeParam == "filesystem") ? U_SPIFFS : U_FLASH;
         size_t updateSize = (updateType == U_SPIFFS) ? 0xF0000 : ESP.getFreeSketchSpace();
         Serial.printf("OTA upload start: %s (%u bytes max)\n", typeParam.c_str(), updateSize);

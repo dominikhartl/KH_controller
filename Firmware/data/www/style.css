@@ -159,8 +159,8 @@ h2{font-size:.8em;font-weight:600;color:var(--text-secondary);text-transform:upp
 .cmd-btn.cal-4:active{background:rgba(255,69,58,.25)}
 .cmd-btn.cal-7{background:rgba(48,209,88,.15);color:#30d158}
 .cmd-btn.cal-7:active{background:rgba(48,209,88,.25)}
-.cmd-btn.cal-10{background:rgba(100,120,255,.15);color:#6478ff}
-.cmd-btn.cal-10:active{background:rgba(100,120,255,.25)}
+.cmd-btn.cal-10{background:var(--accent-dim);color:var(--accent)}
+.cmd-btn.cal-10:active{background:rgba(10,132,255,.25)}
 .config-advanced{margin-top:12px}
 .config-advanced summary{font-size:.75em;font-weight:600;color:var(--text-secondary);text-transform:uppercase;letter-spacing:.04em;cursor:pointer;padding:8px 0;list-style:none;-webkit-tap-highlight-color:transparent}
 .config-advanced summary::-webkit-details-marker{display:none}
@@ -305,6 +305,9 @@ h2{font-size:.8em;font-weight:600;color:var(--text-secondary);text-transform:upp
   .gauge-visual{height:58px}
   .gauge-value{font-size:1.4em}
   .gauge-card{padding:12px 6px 10px}
+  .cal-ph-grid{grid-template-columns:1fr}
+  .probe-grid{grid-template-columns:1fr}
+  .status-bar-inline{grid-template-columns:1fr}
 }
 
 /* === Touch device hover removal === */
@@ -316,7 +319,7 @@ h2{font-size:.8em;font-weight:600;color:var(--text-secondary);text-transform:upp
   .cmd-btn.warn:hover{background:rgba(255,69,58,.22)}
   .cmd-btn.cal-4:hover{background:rgba(255,69,58,.22)}
   .cmd-btn.cal-7:hover{background:rgba(48,209,88,.22)}
-  .cmd-btn.cal-10:hover{background:rgba(100,120,255,.22)}
+  .cmd-btn.cal-10:hover{background:rgba(10,132,255,.22)}
   .sched-rm:hover{color:var(--red);background:var(--red-dim)}
   .sched-add-btn:hover{color:var(--accent);border-color:var(--accent)}
 }

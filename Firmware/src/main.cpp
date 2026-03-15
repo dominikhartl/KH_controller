@@ -25,8 +25,11 @@
 char deviceName[21] = "KHpro";
 
 // --- Global state ---
-// These are accessed from both loopTask and AsyncTCP task — marked volatile
-volatile int units = 0;
+// These are accessed from both loopTask and AsyncTCP task.
+// Atomic for cross-task safety on ESP32 dual-core.
+std::atomic<int> units{0};
+// startPH: float has no std::atomic on ESP32 Arduino. Torn reads are theoretically
+// possible but harmless — value is only written once per measurement, read for display.
 volatile float startPH = 0;
 volatile bool discoveryPublished = false;
 volatile unsigned long lastDiagnosticsTime = 0;
@@ -45,21 +48,28 @@ static unsigned long bootBtnPressStart = 0;
 static const unsigned long BOOT_BTN_HOLD_MS = 5000;  // 5 seconds
 
 // Measuring flag: true while measureKH() is running (any trigger: UI, schedule, precision test)
-volatile bool isMeasuringKH = false;
+// Atomic: read by AsyncTCP task (broadcastState), written by loopTask
+std::atomic<bool> isMeasuringKH{false};
 
-// Abort flag: set by WebSocket handler, checked in measurement loops
-static volatile bool abortRequested = false;
-void requestAbort() { abortRequested = true; }
-bool isAbortRequested() { return abortRequested; }
+// Abort flag: set by AsyncTCP task (WebSocket handler), checked by loopTask in measurement loops
+static std::atomic<bool> abortRequested{false};
+void requestAbort() { abortRequested.store(true, std::memory_order_relaxed); }
+bool isAbortRequested() { return abortRequested.load(std::memory_order_relaxed); }
 
 // Yield during measurement: keeps UI responsive
+// Light yield runs every call (~500ms): WiFi/MQTT/OTA + client cleanup
+// Full broadcastState runs at most every 2s to avoid flooding WebSocket/SPI flash
 static void measurementYield() {
   esp_task_wdt_reset();  // Feed watchdog during long measurement operations
-  broadcastState();
   ws.cleanupClients();
   wifiManager.loop();
   mqttManager.loop();
   ArduinoOTA.handle();
+  static unsigned long lastBroadcast = 0;
+  if (millis() - lastBroadcast >= 2000) {
+    lastBroadcast = millis();
+    broadcastState();
+  }
 }
 
 // MQTT topic buffers
@@ -355,10 +365,10 @@ void processPendingCommand() {
       break;
     }
     case 'f': {
-      publishMessage("Filling 1 mL");
+      publishMessage("Filling 10 mL");
       float fCalU = (float)configStore.getCalUnits();
       float fTitV = configStore.getTitrationVolume();
-      int fUnits = max(2, (int)round(1000.0f * fCalU / (fTitV * 1000.0f)));
+      int fUnits = max(2, (int)round(10000.0f * fCalU / (fTitV * 1000.0f)));
       if (!titrate(fUnits, configStore.getTitrationRPM(), false)) {
         publishError(wasMotorStall() ? "Error: titration pump stall during fill" : "Error: titration pump timeout during fill");
       } else {
@@ -595,7 +605,7 @@ void runMotorDiagnostic(char mode) {
     SGSample rampSamples[RAMP_MAX_SAMPLES];
     int rampSampleCount = 0;
 
-    float stallRemoval = diagStallRamp(30.0f, 500.0f, 5.0f, 3,
+    float stallRemoval = diagStallRamp(70.0f, 500.0f, 5.0f, 3,
                                     rampSamples, RAMP_MAX_SAMPLES, &rampSampleCount,
                                     false, stallRpmProgress);
 
@@ -614,7 +624,7 @@ void runMotorDiagnostic(char mode) {
     publishMessage("Testing stall speed (fill)...");
     rampSampleCount = 0;
 
-    float stallFill = diagStallRamp(30.0f, 500.0f, 5.0f, 3,
+    float stallFill = diagStallRamp(70.0f, 500.0f, 5.0f, 3,
                                     rampSamples, RAMP_MAX_SAMPLES, &rampSampleCount,
                                     true, stallRpmProgress);
 
@@ -651,7 +661,7 @@ void runMotorDiagnostic(char mode) {
                sampleStallRPM, stallRemoval, stallFill, sampleRecommendedRPM);
       publishMessage(buf);
     } else {
-      publishMessage("Sample: no stall detected within test range (30-500 RPM)");
+      publishMessage("Sample: no stall detected within test range (70-500 RPM)");
     }
   }
 
@@ -685,11 +695,11 @@ void runMotorDiagnostic(char mode) {
     clearStallFlag();
     delay(3000);
 
-    const int TRIT_RAMP_MAX = 13;  // (150-30)/10 * 1 = 12 max + 1
+    const int TRIT_RAMP_MAX = 28;  // (300-30)/10 * 1 = 27 max + 1
     SGSample titRampSamples[TRIT_RAMP_MAX];
     int titRampCount = 0;
 
-    float titStall = diagStallRampTitrate(30.0f, 150.0f, 10.0f, 1,
+    float titStall = diagStallRampTitrate(70.0f, 300.0f, 10.0f, 1,
                                     titRampSamples, TRIT_RAMP_MAX, &titRampCount,
                                     true, stallRpmProgress);
 
@@ -708,7 +718,7 @@ void runMotorDiagnostic(char mode) {
                titrateStallRPM, titrateRecommendedRPM);
       publishMessage(buf);
     } else {
-      publishMessage("Titration: no stall detected within test range (30-150 RPM)");
+      publishMessage("Titration: no stall detected within test range (70-300 RPM)");
     }
 
     // Subtract HCl used by titration diagnostics:
@@ -718,10 +728,50 @@ void runMotorDiagnostic(char mode) {
     subtractHCl(diagTitrateUnits);
   }
 
-  // Build JSON with snprintf to avoid JsonDocument DRAM overhead
-  char* json = (char*)malloc(1024);
+  // --- SG Profiling (30 revolutions at operational speed) ---
+  const int PROFILE_REVS = 30;
+  SGSample profileSamples[PROFILE_REVS];
+  uint16_t sProfileSGs[PROFILE_REVS] = {0};
+  uint16_t tProfileSGs[PROFILE_REVS] = {0};
+  int sProfileCount = 0, tProfileCount = 0;
+  uint16_t sProfileMin = 0, tProfileMin = 0;
+
+  if (doSample) {
+    publishMessage("SG profiling sample pump...");
+    setSampleSpreadCycle(configStore.getSampleSpreadCycle());
+    delay(50);
+    sProfileCount = diagStepSample(PROFILE_REVS, configStore.getSamplePumpRPM(),
+                                    profileSamples, PROFILE_REVS);
+    sProfileMin = 65535;
+    for (int i = 0; i < sProfileCount; i++) {
+      sProfileSGs[i] = profileSamples[i].sg;
+      if (profileSamples[i].sg < sProfileMin) sProfileMin = profileSamples[i].sg;
+    }
+    if (sProfileCount == 0) sProfileMin = 0;
+  }
+
+  if (doTitrate) {
+    publishMessage("SG profiling titration pump...");
+    setTitrateSpreadCycle(configStore.getTitrateSpreadCycle());
+    delay(50);
+    tProfileCount = diagStepTitrate(PROFILE_REVS, TITRATION_RPM,
+                                     profileSamples, PROFILE_REVS);
+    tProfileMin = 65535;
+    for (int i = 0; i < tProfileCount; i++) {
+      tProfileSGs[i] = profileSamples[i].sg;
+      if (profileSamples[i].sg < tProfileMin) tProfileMin = profileSamples[i].sg;
+    }
+    if (tProfileCount == 0) tProfileMin = 0;
+    // Subtract HCl for profile run
+    int profileUnits = PROFILE_REVS * (STEPS_PER_REVOLUTION / MOTOR_STEPS_PER_UNIT);
+    subtractHCl(profileUnits);
+  }
+
+  // Build JSON — need larger buffer for profile arrays
+  const int JSON_SIZE = 2048;
+  char* json = (char*)malloc(JSON_SIZE);
   if (!json) { publishError("Motor diag: out of memory"); return; }
-  snprintf(json, 1024,
+  int pos = snprintf(json, JSON_SIZE,
     "{\"type\":\"motorDiag\",\"mode\":\"%c\","
     "\"sample\":{\"stealthchop\":{\"sgMin\":%d,\"sgMax\":%d,\"sgAvg\":%d},"
     "\"spreadcycle\":{\"sgMin\":%d,\"sgMax\":%d,\"sgAvg\":%d},"
@@ -730,7 +780,8 @@ void runMotorDiagnostic(char mode) {
     "\"titrate\":{\"stealthchop\":{\"sgMin\":%d,\"sgMax\":%d,\"sgAvg\":%d},"
     "\"spreadcycle\":{\"sgMin\":%d,\"sgMax\":%d,\"sgAvg\":%d},"
     "\"recommended\":\"%s\",\"suggestedThreshold\":%d,"
-    "\"stallRPM\":%.0f,\"maxRPM\":%.0f}}",
+    "\"stallRPM\":%.0f,\"maxRPM\":%.0f},"
+    "\"sgProfile\":{\"sample\":{\"min\":%d,\"recSG\":%d,\"values\":[",
     mode,
     scSample.sgMin, scSample.sgMax, (int)scSample.sgAvg,
     spSample.sgMin, spSample.sgMax, (int)spSample.sgAvg,
@@ -739,7 +790,18 @@ void runMotorDiagnostic(char mode) {
     scTitrate.sgMin, scTitrate.sgMax, (int)scTitrate.sgAvg,
     spTitrate.sgMin, spTitrate.sgMax, (int)spTitrate.sgAvg,
     titrateRecSC ? "stealthchop" : "spreadcycle", tBestMin / 2,
-    titrateStallRPM, titrateRecommendedRPM);
+    titrateStallRPM, titrateRecommendedRPM,
+    (int)sProfileMin, (int)(sProfileMin * 0.4f));
+  for (int i = 0; i < sProfileCount && pos < JSON_SIZE - 100; i++) {
+    pos += snprintf(json + pos, JSON_SIZE - pos, "%s%d", i ? "," : "", sProfileSGs[i]);
+  }
+  pos += snprintf(json + pos, JSON_SIZE - pos,
+    "]},\"titrate\":{\"min\":%d,\"recSG\":%d,\"values\":[",
+    (int)tProfileMin, (int)(tProfileMin * 0.4f));
+  for (int i = 0; i < tProfileCount && pos < JSON_SIZE - 50; i++) {
+    pos += snprintf(json + pos, JSON_SIZE - pos, "%s%d", i ? "," : "", tProfileSGs[i]);
+  }
+  snprintf(json + pos, JSON_SIZE - pos, "]}}}");
   broadcastMotorDiag(json);
   free(json);
   publishMessage("Motor diagnostics complete");
@@ -749,33 +811,44 @@ void runMotorDiagnostic(char mode) {
 
 void calibrateSamplePump() {
   publishMessage("Calibrating sample pump: removing old water...");
+  broadcastProgress(0);
   float sampRpm = configStore.getSamplePumpRPM();
+  int calRevs = configStore.getSampleCalRevolutions();
   // Remove existing water first (same volume as calibration run)
-  if (!removeSample(SAMPLE_CAL_REVOLUTIONS, sampRpm)) {
+  if (!removeSample(calRevs, sampRpm)) {
     publishError(wasMotorStall() ? "Error: sample pump stall during remove" : "Error: sample pump timeout during remove");
+    broadcastProgress(100);
     return;
   }
+  broadcastProgress(50);
   delay(500);
   char buf[80];
   snprintf(buf, sizeof(buf), "Taking %d revolutions at %.0f RPM",
-           SAMPLE_CAL_REVOLUTIONS, sampRpm);
+           calRevs, sampRpm);
   publishMessage(buf);
-  if (!takeSample(SAMPLE_CAL_REVOLUTIONS, sampRpm)) {
+  if (!takeSample(calRevs, sampRpm)) {
     publishError(wasMotorStall() ? "Error: sample pump stall during calibration" : "Error: sample pump timeout during calibration");
+    broadcastProgress(100);
     return;
   }
   configStore.setSampleCalTimestamp((uint32_t)time(nullptr));
   publishMessage("Sample pump calibration done. Measure dispensed volume and enter in 'Sample Cal Volume (mL)'.");
+  broadcastProgress(100);
 }
 
 void calibrateTitrationPump() {
-  int targetUnits = CALIBRATION_TARGET_UNITS;
+  int targetUnits = configStore.getCalUnits();
   char buf[80];
-  snprintf(buf, sizeof(buf), "Calibrating pump (%d units)", targetUnits);
+  snprintf(buf, sizeof(buf), "Calibrating titration pump (%d revolutions)", targetUnits / 100);
   publishMessage(buf);
+  broadcastProgress(0);
 
   units = 0;
-  const int BATCH = 40;
+  // Batch size ~65 µL for stall detection between batches
+  float calU_cal = (float)configStore.getCalUnits();
+  float titV_cal = configStore.getTitrationVolume();
+  float unitsPerUL_cal = (titV_cal > 0) ? calU_cal / (titV_cal * 1000.0f) : 1.0f;
+  const int BATCH = max(4, (int)round(65.0f * unitsPerUL_cal));
 
   while (units < targetUnits) {
     int batch = min(BATCH, targetUnits - units);
@@ -784,26 +857,15 @@ void calibrateTitrationPump() {
       if (units > 0) subtractHCl(units);
       units = 0;
       digitalWrite(EN_PIN2, HIGH);
+      broadcastProgress(100);
       return;
     }
-    // Read SG immediately after batch (motor was just stepping, SG still reflects load)
-    if (isTMCDetected()) {
-      uint16_t sg = getTitrateSG();
-      if (sg < (uint16_t)configStore.getTitrateStallSG()) {
-        Serial.printf("ERROR: Titration pump stall (SG=%d)\n", sg);
-        setStallFlag();
-        publishError("Error: titration pump stall during calibration");
-        units += batch;  // batch was dispensed before SG check
-        subtractHCl(units);
-        units = 0;
-        digitalWrite(EN_PIN2, HIGH);
-        return;
-      }
-    }
     units += batch;
+    int pct = (units * 99) / targetUnits;  // cap at 99% until fully done
+    broadcastProgress(pct);
     delay(TITRATION_MIX_DELAY_FAST_MS);
     ArduinoOTA.handle();
-    snprintf(buf, sizeof(buf), "Cal: %d / %d", units, targetUnits);
+    snprintf(buf, sizeof(buf), "Cal: %d / %d revolutions", units / 100, targetUnits / 100);
     publishMessage(buf);
   }
 
@@ -812,6 +874,7 @@ void calibrateTitrationPump() {
   digitalWrite(EN_PIN2, HIGH);
   configStore.setTitrationCalTimestamp((uint32_t)time(nullptr));
   publishMessage("Pump calibration done");
+  broadcastProgress(100);
 }
 
 // --- Measurement confidence score ---
@@ -855,12 +918,12 @@ static float computeConfidence(float granR2, bool usedGran, int nPoints,
 
 // --- Adaptive fast-phase batch size ---
 // Reduces batch as pH approaches the fast/precise threshold to avoid overshoot
-static int computeFastBatch(float currentPH, float thresholdPH) {
-  if (currentPH >= FAST_RAMP_START_PH) return FAST_BATCH_MAX;
+static int computeFastBatch(float currentPH, float thresholdPH, int batchMax, int batchMin) {
+  if (currentPH >= FAST_RAMP_START_PH) return batchMax;
   float lower = thresholdPH + 0.5f;
-  if (currentPH <= lower) return FAST_BATCH_MIN;
+  if (currentPH <= lower) return batchMin;
   float fraction = (currentPH - lower) / (FAST_RAMP_START_PH - lower);
-  return FAST_BATCH_MIN + (int)(fraction * (FAST_BATCH_MAX - FAST_BATCH_MIN));
+  return batchMin + (int)(fraction * (batchMax - batchMin));
 }
 
 // --- MeasureKH ---
@@ -919,7 +982,7 @@ KHResult measureKH() {
     return result;
   }
 
-  if (!titrate(prefillUnits, configStore.getTitrationRPM(), true)) {
+  if (!titrate(prefillUnits, configStore.getTitrationRPM())) {
     publishError(wasMotorStall() ? "Error: titration pump stall during prefill" : "Error: titration pump timeout during prefill");
     digitalWrite(EN_PIN2, HIGH);
     isMeasuringKH = false;
@@ -976,10 +1039,14 @@ KHResult measureKH() {
     publishMessage(retryBuf);
     stopStirrer();
     setMultiWashContext(2);
-    washSampleVol((int)(sampleFillRevs * 1.5f), sampleFillRevs, sampRpm);
+    bool rinse1 = washSampleVol((int)(sampleFillRevs * 1.5f), sampleFillRevs, sampRpm);
     delay(2000);
-    washSampleVol(sampleRemoveRevs, sampleFillRevs, sampRpm);
+    bool rinse2 = washSampleVol(sampleRemoveRevs, sampleFillRevs, sampRpm);
     clearMultiWashContext();
+    if (!rinse1 || !rinse2) {
+      publishError("Warning: sample pump timeout during extra rinse");
+      errorflag = 1;
+    }
     delay(100);
     startStirrer();
     delay(STIRRER_WARMUP_MS);
@@ -1024,6 +1091,13 @@ KHResult measureKH() {
 
     float fastPH = configStore.getFastTitrationPH();
 
+    // Compute unit limits from mL config using current calibration
+    float maxAcidML = configStore.getMaxAcidML();
+    int maxUnits = min((int)(maxAcidML * calU / titV), MAX_TITRATION_UNITS);
+    float fastStepML = configStore.getFastStepML();
+    int fastBatchMax = max(20, (int)round(fastStepML * calU / titV));
+    int fastBatchMin = max(2, fastBatchMax / 10);
+
     // --- Fast phase: adaptive batch size, reduces near threshold to avoid overshoot ---
     float lastFastPH = startPH;
     int stallCount = 0;
@@ -1035,8 +1109,8 @@ KHResult measureKH() {
     int granCount = 0;
     static const float DATA_STORE_PH = 5.0f;
 
-    while (pH > fastPH && units < MAX_TITRATION_UNITS && errorflag == 0) {
-      int batch = computeFastBatch(pH, fastPH);
+    while (pH > fastPH && units < maxUnits && errorflag == 0) {
+      int batch = computeFastBatch(pH, fastPH, fastBatchMax, fastBatchMin);
       if (!titrate(batch, TITRATION_RPM)) {
         errorMessage = wasMotorStall() ? "Error: titration pump stall in fast phase" : "Error: titration pump timeout in fast phase";
         errorflag = 1;
@@ -1044,11 +1118,11 @@ KHResult measureKH() {
       }
       units += batch;
       int mixDelay = TITRATION_MIX_DELAY_FAST_MS +
-          (FAST_BATCH_MAX - batch) * 600 / FAST_BATCH_MAX;
+          max(0, fastBatchMax - batch) * 600 / fastBatchMax;
       delay(mixDelay);
       int nReadings = isExternalADCActive()
-          ? 3 + (FAST_BATCH_MAX - batch) * 5 / FAST_BATCH_MAX
-          : 5 + (FAST_BATCH_MAX - batch) * 15 / FAST_BATCH_MAX;
+          ? 3 + max(0, fastBatchMax - batch) * 5 / fastBatchMax
+          : 5 + max(0, fastBatchMax - batch) * 15 / fastBatchMax;
       measurePHFast(nReadings);
       broadcastTitrationPH(pH, units);
       measurementYield();
@@ -1083,6 +1157,11 @@ KHResult measureKH() {
     // --- Precise phase: adaptive steps with Gran transformation ---
 
     if (errorflag == 0) {
+      if (pH > fastPH) {
+        char buf[80];
+        snprintf(buf, sizeof(buf), "Warning: Fast phase ended at pH %.2f (%.1f mL acid limit reached)", pH, maxAcidML);
+        publishMessage(buf);
+      }
       char buf[32];
       snprintf(buf, sizeof(buf), "Precise phase (pH %.1f)", pH);
       publishMessage(buf);
@@ -1109,10 +1188,12 @@ KHResult measureKH() {
     float cachedTitV = configStore.getTitrationVolume();
     float cachedUnitsPerUL = cachedCalU / (cachedTitV * 1000.0f);
     int cachedGranStepVol = max(2, (int)round(cachedDropUL * cachedUnitsPerUL));
+    // Medium zone: ~40 µL per step (coarser than Gran, just needs to get to Gran region)
+    int cachedMediumStepVol = max(4, (int)round(40.0f * cachedUnitsPerUL));
     float cachedGranRPM = configStore.getTitrationRPM();
     int cachedGranMixDelay = configStore.getGranMixDelay();
 
-    while (!isnan(pH) && pH > stopPH && units < MAX_TITRATION_UNITS
+    while (!isnan(pH) && pH > stopPH && units < maxUnits
            && errorflag == 0) {
       mqttManager.loop();
 
@@ -1122,7 +1203,7 @@ KHResult measureKH() {
         // Medium zone (pH above Gran region): large steps, rough tracking only
         // No stabilization needed — we just need to detect when to enter Gran zone
         curPhase = 1;
-        stepVol = TITRATION_STEP_SIZE * MEDIUM_STEP_MULTIPLIER;  // 48 units
+        stepVol = cachedMediumStepVol;
         if (!titrate(stepVol, TITRATION_RPM)) {
           errorMessage = wasMotorStall() ? "Error: titration pump stall in precise phase" : "Error: titration pump timeout in precise phase";
           errorflag = 1;
@@ -1139,7 +1220,13 @@ KHResult measureKH() {
           errorflag = 1;
           break;
         }
-        delay(cachedGranMixDelay);
+        // Yielding mix delay: feed UI/MQTT every 500ms instead of blocking
+        { unsigned long mixEnd = millis() + cachedGranMixDelay;
+          while (millis() < mixEnd) {
+            delay(500);
+            measurementYield();
+          }
+        }
         waitForPHStabilization();
         measurePHStabilized(isExternalADCActive() ? 5 : 20);
       }
@@ -1186,7 +1273,7 @@ KHResult measureKH() {
         preciseStall = 0;
         lastPrecisePH = pH;
       }
-      if (units >= MAX_TITRATION_UNITS - stepVol) {
+      if (units >= maxUnits - stepVol) {
         errorMessage = "Error: reached acid max!";
         errorflag = 1;
       }
@@ -1442,6 +1529,7 @@ KHResult measureKH() {
   digitalWrite(DIR_PIN2, LOW);   // Restore forward
   digitalWrite(EN_PIN2, HIGH);
 
+  Serial.println("Stopping stirrer (post-titration)");
   stopStirrer();
 
   // Compute extra removal to compensate for HCl volume added during titration
@@ -1461,6 +1549,7 @@ KHResult measureKH() {
   int postRemoveRevs = (int)(postFillRevs * (1.5f + hclPart));
   if (!washSampleVol(postRemoveRevs, postFillRevs, configStore.getSamplePumpRPM())) {
     publishError("Warning: sample pump timeout during post-wash");
+    errorflag = 1;  // Flag result as unreliable — incomplete wash risks contaminating next measurement
   }
 
   // Post-wash pH verification: quick check to detect incomplete wash
@@ -1539,6 +1628,9 @@ void setup() {
 
   // Initialize config store (NVS) and migrate from EEPROM if needed
   configStore.begin();
+  // Apply SGTHRS from configStore now that NVS is initialized
+  // (initTMCDrivers runs before configStore.begin, so SGTHRS was left at 0)
+  applyStallGuardConfig();
 
   // Load device name from NVS (used by mDNS, MQTT, HA, OTA, web UI)
   configStore.getDeviceName(deviceName, sizeof(deviceName));
@@ -1550,6 +1642,11 @@ void setup() {
   setMotorYieldCallback([]() {
     mqttManager.loop();
     ArduinoOTA.handle();
+  });
+
+  // Keep UI responsive during pH stabilization waits (up to 4s per Gran step)
+  setStabilizationYieldCallback([]() {
+    measurementYield();
   });
 
   // Report wash progress to web dashboard (WebSocket only, no MQTT during motor ops)

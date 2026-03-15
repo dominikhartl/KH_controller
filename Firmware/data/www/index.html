@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>KH Controller</title>
-  <link rel="stylesheet" href="style.css?v=15">
+  <link rel="stylesheet" href="style.css?v=16">
 </head>
 <body>
   <header>
@@ -108,8 +108,8 @@
     <div id="kh-trend" class="chart-sub">Trend: <strong id="val-kh-slope">--</strong> dKH/day</div>
     <div id="gran-info" class="gran-info" style="display:none"></div>
     <div id="gran-quality" class="gran-quality" style="display:none">
-      <span>Confidence: <strong id="val-confidence">--</strong></span>
-      <span>CI: <strong id="val-kh-ci">--</strong></span>
+      <span>Confidence: <strong id="val-confidence">--</strong> %</span>
+      <span>CI: &plusmn;<strong id="val-kh-ci">--</strong> dKH</span>
     </div>
   </section>
 
@@ -160,6 +160,9 @@
         <label>Target Sample Volume (mL)
           <input type="number" id="cfg-sample_vol" step="0.1" min="1" max="200">
         </label>
+        <label>Calibration Revolutions
+          <input type="number" id="cfg-sample_cal_revs" step="10" min="50" max="2200">
+        </label>
         <label>Measured Cal Volume (mL)
           <input type="number" id="cfg-sample_cal_vol" step="0.1" min="0.1" max="500">
         </label>
@@ -169,6 +172,9 @@
       <h3 class="cal-heading">Titration Pump <span class="cal-age-badge" id="titration-cal-age"></span></h3>
       <button class="cmd-btn" data-cmd="t" style="margin-bottom:0.5em">Calibrate Titration Pump</button>
       <div class="config-grid">
+        <label>Calibration Revolutions
+          <input type="number" id="cfg-cal_drops" step="1" min="10" max="500">
+        </label>
         <label>Measured Titration Volume (mL)
           <input type="number" id="cfg-titration_vol" step="0.1" min="0.1" max="50">
         </label>
@@ -229,14 +235,23 @@
         <label>Ejection Speed (RPM) <span class="cfg-hint" id="hint-titration-rpm"></span>
           <input type="number" id="cfg-titration_rpm" step="1" min="10" max="200">
         </label>
+        <label>Ejection Max RPM
+          <input type="number" id="cfg-titrate_max_rpm" step="5" min="0" max="500">
+        </label>
         <label>Sample Pump Speed (RPM) <span class="cfg-hint" id="hint-sample-rpm"></span>
           <input type="number" id="cfg-sample_pump_rpm" step="5" min="20" max="400">
+        </label>
+        <label>Sample Max RPM
+          <input type="number" id="cfg-sample_max_rpm" step="5" min="0" max="500">
         </label>
         <label>Prefill Volume (uL)
           <input type="number" id="cfg-prefill_ul" step="10" min="10" max="500">
         </label>
-        <label>Calibration Units
-          <input type="number" id="cfg-cal_drops" step="100" min="1000" max="20000">
+        <label>Max Acid Volume (mL)
+          <input type="number" id="cfg-max_acid_ml" step="1" min="5" max="100">
+        </label>
+        <label>Fast Step Volume (mL)
+          <input type="number" id="cfg-fast_step_ml" step="0.01" min="0.05" max="2.0">
         </label>
         <label>Meas. Temp. (&deg;C)
           <input type="number" id="cfg-meas_temp_c" step="0.5" min="0" max="40">
@@ -257,7 +272,7 @@
       <p style="font-size:.75em;color:var(--text-tertiary);margin:4px 0 0">Runs 3 consecutive KH measurements, reports SD</p>
       <div id="precision-status" style="display:none;margin:6px 0 0;font-size:0.85em;color:var(--text-secondary)"></div>
       <canvas id="precision-chart" style="display:none;max-height:180px;margin:8px 0 4px"></canvas>
-      <div id="precision-result" style="display:none;margin:4px 0 12px;padding:8px;background:var(--bg-secondary);border-radius:6px;font-size:0.85em"></div>
+      <div id="precision-result" style="display:none;margin:4px 0 12px;padding:8px;background:var(--card-elevated);border-radius:6px;font-size:0.85em"></div>
 
       <h3 class="cal-heading">Motor Diagnostics</h3>
       <div style="display:flex;gap:0.5em;flex-wrap:wrap">
@@ -287,6 +302,14 @@
           </tbody>
         </table>
         <div id="diag-stall-result" style="margin-top:0.5em;font-size:0.85em;font-weight:500"></div>
+        <div id="diag-sg-profile" style="display:none;margin-top:0.5em">
+          <div style="font-size:0.85em;font-weight:500;margin-bottom:0.3em">SG Profile (30 rev at operational speed)</div>
+          <div style="display:flex;gap:0.5em;flex-wrap:wrap">
+            <div style="flex:1;min-width:200px;height:120px"><canvas id="sg-profile-sample"></canvas></div>
+            <div style="flex:1;min-width:200px;height:120px"><canvas id="sg-profile-titrate"></canvas></div>
+          </div>
+          <div id="sg-profile-stats" style="font-size:0.8em;color:var(--text-secondary);margin-top:0.3em"></div>
+        </div>
         <div style="margin-top:0.5em">
           <button class="cmd-btn" id="btn-apply-diag">Apply Recommended Settings</button>
         </div>
@@ -320,19 +343,19 @@
           <span class="probe-value" id="probe-asymmetry">-- <small>%</small></span>
         </div>
         <div class="probe-item">
-          <span class="probe-label">Noise</span>
+          <span class="probe-label">Noise (mV)</span>
           <span class="probe-value" id="probe-noise"><span class="health-dot"></span>--</span>
         </div>
         <div class="probe-item">
-          <span class="probe-label">Cal Age</span>
+          <span class="probe-label">Cal Age (days)</span>
           <span class="probe-value" id="probe-cal-age">--</span>
         </div>
         <div class="probe-item">
-          <span class="probe-label">Current mV</span>
+          <span class="probe-label">Current (mV)</span>
           <span class="probe-value" id="probe-mv">--</span>
         </div>
         <div class="probe-item">
-          <span class="probe-label">Cal V (4/7/10)</span>
+          <span class="probe-label">Cal mV (4/7/10)</span>
           <span class="probe-value" id="probe-cal-v">--</span>
         </div>
       </div>
@@ -451,6 +474,6 @@
 
 
   <script src="chart.min.js?v=2"></script>
-  <script src="app.js?v=36"></script>
+  <script src="app.js?v=40"></script>
 </body>
 </html>

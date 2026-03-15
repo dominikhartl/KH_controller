@@ -57,7 +57,7 @@ static const int MOTOR_STEPS_PER_UNIT = 16;      // Motor steps per titration un
 static const int TITRATION_MIX_DELAY_FAST_MS = 200;  // Mixing delay far from endpoint
 static const int TITRATION_MIX_DELAY_MEDIUM_MS = 1000; // Medium zone mixing (stabilization inside measurePH)
 static const int TITRATION_MIX_DELAY_GRAN_MS = 2500;   // Gran zone mixing (explicit stabilization follows)
-static const int MAX_TITRATION_UNITS = 10000;
+static const int MAX_TITRATION_UNITS = 50000;  // Absolute hard cap (user sets soft limit via max_acid_ml)
 static const int FILL_VOLUME = 100;
 // Stirrer speed is configured via configStore (80-100%, default 90%)
 static const int STIRRER_WARMUP_MS = 3000;
@@ -159,12 +159,11 @@ static const float ADS_EMA_ALPHA  = 0.3f;      // EMA smoothing factor (0.3 = ~3
 #define TMC_SERIAL_BAUD     115200
 #define TMC_SAMPLE_ADDR     0b00    // MS1=LOW, MS2=LOW → address 0
 #define TMC_TITRATE_ADDR    0b01    // MS1=HIGH, MS2=LOW → address 1
-static const int TMC_SAMPLE_RMS_MA  = 800;   // Sample pump RMS current (mA)
-static const int TMC_TITRATE_RMS_MA = 600;   // Titration pump RMS current (mA)
+static const int TMC_SAMPLE_RMS_MA  = 900;   // Sample pump RMS current (mA)
+static const int TMC_TITRATE_RMS_MA = 900;   // Titration pump RMS current (mA)
 static const float TMC_R_SENSE      = 0.11f; // Current sense resistor (ohms)
 static const int TMC_MICROSTEPS     = 8;     // Must match STEPS_PER_REVOLUTION / 200
-static const int TMC_STALL_THRESHOLD = 15;   // SGTHRS: DIAG triggers at SG ≤ SGTHRS*2 (=30)
-static const int TMC_SAMPLE_STALL_SG = 30;  // Sample pump SG stall threshold (normal ~96-258)
+static const float TMC_MIN_SG_RPM   = 15.0f; // StallGuard unreliable below this RPM in StealthChop
 
 // MQTT_MAX_PACKET_SIZE and MQTT_KEEPALIVE are set via build_flags in platformio.ini
 
