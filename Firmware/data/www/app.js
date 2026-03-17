@@ -232,7 +232,6 @@
     if (d.config) {
       setInput('cfg-device_name', d.config.device_name);
       setInput('cfg-titration_vol', d.config.titration_vol);
-      setInput('cfg-sample_vol', d.config.sample_vol);
       setInput('cfg-correction_factor', d.config.correction_factor);
       setInput('cfg-hcl_molarity', d.config.hcl_molarity);
       setInput('cfg-hcl_volume', d.config.hcl_volume);

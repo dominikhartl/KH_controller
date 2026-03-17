@@ -382,7 +382,7 @@ void processPendingCommand() {
     case 's': {
       stopStirrer();
       publishMessage("Washing sample");
-      int wFill = (int)round(configStore.getSampleVolume() * configStore.getSampleCalRevsPerML());
+      int wFill = configStore.getSampleCalRevolutions();
       int wRemove = (int)(wFill * 1.2f);
       if (!washSampleVol(wRemove, wFill, configStore.getSamplePumpRPM())) {
         publishError(wasMotorStall() ? "Error: sample pump stall during wash" : "Error: sample pump timeout during wash");
@@ -395,7 +395,7 @@ void processPendingCommand() {
     case 'r': {
       stopStirrer();
       publishMessage("Removing sample");
-      int rVol = (int)round(configStore.getSampleVolume() * configStore.getSampleCalRevsPerML() * 1.2f);
+      int rVol = (int)(configStore.getSampleCalRevolutions() * 1.2f);
       if (!removeSample(rVol, configStore.getSamplePumpRPM())) {
         publishError(wasMotorStall() ? "Error: sample pump stall during remove" : "Error: sample pump timeout during remove");
       } else {
@@ -981,9 +981,9 @@ KHResult measureKH() {
   }
   // Keep titration motor enabled after prefill to prevent suckback
   publishMessage("Taking sample");
-  float sampVolML = configStore.getSampleVolume();
   float revsPerML = configStore.getSampleCalRevsPerML();
-  int sampleFillRevs = (int)round(sampVolML * revsPerML);
+  int sampleFillRevs = configStore.getSampleCalRevolutions();
+  float sampVolML = (revsPerML > 0) ? (float)sampleFillRevs / revsPerML : 0.0f;
   int sampleRemoveRevs = (int)(sampleFillRevs * 1.2f);
   // Configurable wash count: rinses clean the chamber, last wash takes the actual sample
   int numWashes = configStore.getNumWashes();
@@ -1275,11 +1275,12 @@ KHResult measureKH() {
       // Get calibration parameters
       float calUnits = (float)configStore.getCalUnits();
       float titVol = configStore.getTitrationVolume();
-      float samVol = configStore.getSampleVolume();
+      float revsPerMLkh = configStore.getSampleCalRevsPerML();
+      float samVol = (revsPerMLkh > 0) ? (float)configStore.getSampleCalRevolutions() / revsPerMLkh : 0.0f;
       float corrF = configStore.getCorrectionFactor();
       float hclMol = configStore.getHClMolarity();
 
-      if (calUnits <= 0 || samVol <= 0) {
+      if (calUnits <= 0 || samVol <= 0 || revsPerMLkh <= 0) {
         errorMessage = "Error: invalid calibration (calUnits or samVol is zero)";
         errorflag = 1;
       } else {
@@ -1529,14 +1530,15 @@ KHResult measureKH() {
   {
     float calU = (float)configStore.getCalUnits();
     float titV = configStore.getTitrationVolume();
-    float samV = configStore.getSampleVolume();
+    float revsPerMLpost = configStore.getSampleCalRevsPerML();
+    float samV = (revsPerMLpost > 0) ? (float)configStore.getSampleCalRevolutions() / revsPerMLpost : 0.0f;
     if (calU > 0 && samV > 0) {
       hclPart = ((float)(units + prefillUnits) / calU) * titV / samV;
     }
   }
 
   // Single post-wash rinse (pre-measurement double wash handles carryover)
-  int postFillRevs = (int)round(configStore.getSampleVolume() * configStore.getSampleCalRevsPerML());
+  int postFillRevs = configStore.getSampleCalRevolutions();
   int postRemoveRevs = (int)(postFillRevs * (1.5f + hclPart));
   if (!washSampleVol(postRemoveRevs, postFillRevs, configStore.getSamplePumpRPM())) {
     publishError("Warning: sample pump timeout during post-wash");
@@ -1602,6 +1604,7 @@ void setup() {
   pinMode(EN_PIN2, OUTPUT);
   pinMode(STEP_PIN2, OUTPUT);
   pinMode(DIR_PIN2, OUTPUT);
+  initMotors();
   initStirrer();
   Serial.begin(115200);
 
