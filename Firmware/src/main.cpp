@@ -20,7 +20,6 @@
 #include "temperature.h"
 #include "tmc_driver.h"
 #include "hw_diagnostics.h"
-#include "stepper_isr.h"
 
 // Device name (loaded from NVS at boot, used by mDNS, MQTT, HA, OTA, web UI)
 char deviceName[21] = "KHpro";
@@ -1608,9 +1607,6 @@ void setup() {
 
   // Detect TMC2209 stepper drivers (must be before initADC — IO35 is shared)
   initTMCDrivers();
-
-  // Hardware timer for non-blocking step pulse generation
-  stepISR_init();
 
   // Configure PH_PIN (GPIO34) as analog input for internal ADC fallback
   // (when ADS1115 is present, initExternalADC() reconfigures it as RDY pin)

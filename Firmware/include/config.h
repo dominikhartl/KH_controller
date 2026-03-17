@@ -89,6 +89,7 @@ static const float FAST_RAMP_START_PH = 6.0f;  // Start reducing batch size belo
 static const int MOTOR_ENABLE_DELAY_MS = 10;     // Settle time after enabling driver
 static const int MOTOR_HOLD_MS = 150;            // Hold position before disabling (tubing settle)
 static const int TITRATE_ACCEL_THRESHOLD = 50;    // Titrate uses acceleration above this volume
+static const uint16_t MOTOR_YIELD_INTERVAL = 10; // Yield every N revolutions during long ops
 
 // Anti-suckback: small reverse after titration pump stops to prevent drip
 static const int ANTI_SUCKBACK_STEPS = 3;

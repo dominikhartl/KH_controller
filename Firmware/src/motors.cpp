@@ -2,7 +2,6 @@
 #include <esp_task_wdt.h>
 #include "motors.h"
 #include "tmc_driver.h"
-#include "stepper_isr.h"
 #include "config_store.h"
 #include <pins.h>
 #include <config.h>
@@ -101,6 +100,19 @@ static inline void stepPulse(uint8_t pin, float halfPeriodUs) {
   delayMicroseconds(hp);
 }
 
+// Spread-spectrum step helper — ±10% jitter to smear stepping tone into broadband noise.
+// Used only by sample pump where audible noise matters more than sub-step timing precision.
+// Jitter is compensated per full step (+d HIGH, -d LOW) so average period is unchanged.
+static inline void stepPulseJittered(uint8_t pin, float halfPeriodUs) {
+  int jitter = (int)(halfPeriodUs * 0.1f);
+  int d = (jitter > 0) ? random(-jitter, jitter + 1) : 0;
+  unsigned int hpHigh = (unsigned int)(halfPeriodUs + 0.5f) + d;
+  unsigned int hpLow  = (unsigned int)(halfPeriodUs + 0.5f) - d;
+  digitalWrite(pin, HIGH);
+  delayMicroseconds(hpHigh);
+  digitalWrite(pin, LOW);
+  delayMicroseconds(hpLow);
+}
 
 // Count how many steps the acceleration/deceleration ramp takes
 static int rampStepCount(float targetUs) {
@@ -139,47 +151,75 @@ static bool runSamplePump(int volume, bool forward, float speedRpm) {
   unsigned long timeout = max((unsigned long)SAMPLE_PUMP_TIMEOUT_MS, expectedMs * 3UL);
 
   int totalSteps = volume * STEPS_PER_REVOLUTION;
+  int rampLen = rampStepCount(targetUs);
+
+  // Ensure we have room for both accel and decel within totalSteps
+  int decelStart = totalSteps - rampLen;
+  if (decelStart < rampLen) decelStart = totalSteps / 2;
+
+  int stepsDone = 0;
   bool timedOut = false;
 
-  // Hardware timer drives step pulses — CPU is free for yield/watchdog/abort
-  stepISR_start(STEP_PIN1, startUs, targetUs, totalSteps, MOTOR_ACCEL_FACTOR);
+  // Acceleration phase
+  float acc = startUs;
+  while (acc > targetUs && stepsDone < decelStart) {
+    stepPulseJittered(STEP_PIN1, acc);
+    acc *= MOTOR_ACCEL_FACTOR;
+    stepsDone++;
+    if (stepsDone % STEPS_PER_REVOLUTION == 0) esp_task_wdt_reset();
+  }
 
-  while (stepISR_running()) {
-    esp_task_wdt_reset();
-    if (yieldCb) yieldCb();
+  // Clear latched DIAG after acceleration (before stall monitoring begins)
+  // DIAG clearing removed — stall detection disabled
 
-    // Collect SG stats for diagnostics
-    { uint16_t sg = getSampleSG();
-      sampleSGSum += sg; sampleSGCount++;
-      if (sg < sampleSGMin) sampleSGMin = sg;
-    }
+  // Constant speed phase
+  while (stepsDone < decelStart) {
+    stepPulseJittered(STEP_PIN1, targetUs);
+    stepsDone++;
+    // Feed watchdog every revolution to stay well within WDT timeout
+    if (stepsDone % STEPS_PER_REVOLUTION == 0) esp_task_wdt_reset();
 
-    // Progress reporting
-    if (washTotalVol > 0 && progressCb) {
-      int revsDone = stepISR_stepsDone() / STEPS_PER_REVOLUTION;
-      int done = washBaseVol + revsDone;
-      int singlePct = (done * 100) / washTotalVol;
-      if (multiWashTotal > 0) {
-        progressCb((multiWashIndex * 100 + singlePct) / multiWashTotal);
-      } else {
-        progressCb(singlePct);
+    if (stepsDone % (STEPS_PER_REVOLUTION * MOTOR_YIELD_INTERVAL) == 0) {
+      if (yieldCb) yieldCb();
+      // Collect SG stats for diagnostics (no stall detection)
+      { uint16_t sg = getSampleSG();
+        sampleSGSum += sg; sampleSGCount++;
+        if (sg < sampleSGMin) sampleSGMin = sg;
+      }
+      if (washTotalVol > 0 && progressCb) {
+        int revsDone = stepsDone / STEPS_PER_REVOLUTION;
+        int done = washBaseVol + revsDone;
+        int singlePct = (done * 100) / washTotalVol;
+        if (multiWashTotal > 0) {
+          // Scale into overall multi-wash progress
+          progressCb((multiWashIndex * 100 + singlePct) / multiWashTotal);
+        } else {
+          progressCb(singlePct);
+        }
       }
     }
-
     if (abortCb && abortCb()) {
       Serial.println("Sample pump aborted by user");
-      stepISR_stop();
       timedOut = true;
       break;
     }
     if (millis() - startTime > timeout) {
       Serial.println("ERROR: Sample pump timeout!");
-      stepISR_stop();
       timedOut = true;
       break;
     }
+  }
 
-    delay(50);  // ~20 Hz service rate
+  // Deceleration phase (skip on timeout — stop immediately)
+  if (!timedOut) {
+    acc = targetUs;
+    while (stepsDone < totalSteps) {
+      stepPulseJittered(STEP_PIN1, acc);
+      acc /= MOTOR_ACCEL_FACTOR;
+      if (acc > startUs) acc = startUs;
+      stepsDone++;
+    }
+    esp_task_wdt_reset();
   }
 
   delay(MOTOR_HOLD_MS);
@@ -273,28 +313,62 @@ bool titrate(int volume, float speedRpm, bool noAccel) {
   int totalSteps = volume * MOTOR_STEPS_PER_UNIT;
 
   if (volume > TITRATE_ACCEL_THRESHOLD && !noAccel) {
-    // Large volume: hardware timer drives step pulses with accel/decel
-    stepISR_start(STEP_PIN2, startUs, speedUs, totalSteps, MOTOR_ACCEL_FACTOR);
+    // Large volume: use acceleration/deceleration
+    // Ramp from startUs (slow) down to speedUs (fast)
+    int rampLen = rampStepCount(speedUs);
 
-    while (stepISR_running()) {
-      esp_task_wdt_reset();
-      if (yieldCb) yieldCb();
+    int decelStart = totalSteps - rampLen;
+    if (decelStart < rampLen) decelStart = totalSteps / 2;
 
-      // Collect SG stats for diagnostics
-      { uint16_t sg = getTitrateSG();
-        titrateSGSum += sg; titrateSGCount++;
-        if (sg < titrateSGMin) titrateSGMin = sg;
-      }
+    int stepsDone = 0;
 
-      if (millis() - startTime > TITRATION_TIMEOUT_MS) {
-        Serial.println("ERROR: Titration timeout!");
-        stepISR_stop();
-        digitalWrite(EN_PIN2, HIGH);
-        return false;
-      }
-
-      delay(50);
+    // Acceleration
+    float acc = startUs;
+    while (acc > speedUs && stepsDone < decelStart) {
+      stepPulse(STEP_PIN2, acc);
+      acc *= MOTOR_ACCEL_FACTOR;
+      stepsDone++;
+      if (stepsDone % STEPS_PER_REVOLUTION == 0) esp_task_wdt_reset();
     }
+
+    // Record actual speed reached (may not have hit target if ramp > totalSteps/2)
+    float speedReached = acc;
+
+    // Clear latched DIAG after acceleration
+    // DIAG clearing removed — stall detection disabled
+
+    // Constant speed
+    while (stepsDone < decelStart) {
+      stepPulse(STEP_PIN2, speedUs);
+      stepsDone++;
+      speedReached = speedUs;
+      // Feed watchdog every revolution to stay well within WDT timeout
+      if (stepsDone % STEPS_PER_REVOLUTION == 0) esp_task_wdt_reset();
+
+      if (stepsDone % (MOTOR_STEPS_PER_UNIT * MOTOR_YIELD_INTERVAL * 50) == 0) {
+        if (yieldCb) yieldCb();
+        // Collect SG stats for diagnostics (no stall detection)
+        { uint16_t sg = getTitrateSG();
+          titrateSGSum += sg; titrateSGCount++;
+          if (sg < titrateSGMin) titrateSGMin = sg;
+        }
+        if (millis() - startTime > TITRATION_TIMEOUT_MS) {
+          Serial.println("ERROR: Titration timeout!");
+          digitalWrite(EN_PIN2, HIGH);
+          return false;
+        }
+      }
+    }
+
+    // Deceleration — start from actual speed, not target
+    acc = speedReached;
+    while (stepsDone < totalSteps) {
+      stepPulse(STEP_PIN2, acc);
+      acc /= MOTOR_ACCEL_FACTOR;
+      if (acc > startUs) acc = startUs;
+      stepsDone++;
+    }
+    esp_task_wdt_reset();
   } else {
     // Small volume: absolute-time stepping immune to interrupt jitter.
     // No spread-spectrum here — titration motor needs precise timing for volume accuracy.
@@ -335,7 +409,7 @@ int diagStepSample(int revolutions, float rpm, SGSample* samples, int maxSamples
   digitalWrite(DIR_PIN1, HIGH);
 
   for (int i = 0; i < totalSteps; i++) {
-    stepPulse(STEP_PIN1, halfPeriodUs);
+    stepPulseJittered(STEP_PIN1, halfPeriodUs);
     if ((i + 1) % STEPS_PER_REVOLUTION == 0) {
       esp_task_wdt_reset();
       if (nSamples < maxSamples) {
@@ -417,7 +491,7 @@ float diagStallRamp(float startRPM, float maxRPM, float stepRPM, int revsPerStep
     float warmupUs = rpmToHalfPeriodUs(startRPM);
     for (int rev = 0; rev < 5; rev++) {
       for (int step = 0; step < STEPS_PER_REVOLUTION; step++) {
-        stepPulse(STEP_PIN1, warmupUs);
+        stepPulseJittered(STEP_PIN1, warmupUs);
       }
       esp_task_wdt_reset();
     }
@@ -441,7 +515,7 @@ float diagStallRamp(float startRPM, float maxRPM, float stepRPM, int revsPerStep
 
     for (int rev = 0; rev < revsPerStep; rev++) {
       for (int step = 0; step < STEPS_PER_REVOLUTION; step++) {
-        stepPulse(STEP_PIN1, halfPeriodUs);
+        stepPulseJittered(STEP_PIN1, halfPeriodUs);
       }
       esp_task_wdt_reset();
 
