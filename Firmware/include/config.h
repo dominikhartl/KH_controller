@@ -113,7 +113,7 @@ static const float GRAN_REGION_PH       = 5.0f;  // Points below this used for G
 static const float GRAN_STOP_PH         = 3.5f;   // Stop titrating at this pH (standard practice: pH 3.0–3.5)
 static const int   MIN_GRAN_POINTS      = 8;       // Minimum points for reliable regression
 static const int   MAX_TITRATION_POINTS = 200;      // Data point buffer size
-static const float GRAN_MIN_R2          = 0.99f;   // Minimum R² for Gran fit acceptance
+static const float GRAN_MIN_R2          = 0.995f;  // Minimum R² for Gran fit acceptance
 
 // Default buffer pH values at 25°C (as printed on bottle)
 // User can override via config; device applies temperature compensation automatically

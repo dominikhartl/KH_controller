@@ -244,7 +244,7 @@ static void handleWebSocketMessage(AsyncWebSocketClient* client, void* arg, uint
 
       // Helper: send config result to the requesting client
       auto sendConfigResult = [&](const char* k, bool ok) {
-        char buf[96];
+        char buf[128];
         snprintf(buf, sizeof(buf), "{\"type\":\"configResult\",\"key\":\"%s\",\"ok\":%s}", k, ok ? "true" : "false");
         client->text(buf);
       };
@@ -306,7 +306,7 @@ static void handleWebSocketMessage(AsyncWebSocketClient* client, void* arg, uint
       else if (strcmp(key, "drop_ul") == 0) { configStore.setDropVolumeUL(value); }
       else if (strcmp(key, "titration_rpm") == 0) { configStore.setTitrationRPM(value); }
       else if (strcmp(key, "fast_phase_rpm") == 0) { configStore.setFastPhaseRPM(value); }
-      else if (strcmp(key, "sample_pump_rpm") == 0) { configStore.setSamplePumpRPM(value); }
+      else if (strcmp(key, "sample_pump_rpm") == 0 && value >= 20.0f && value <= 250.0f) { configStore.setSamplePumpRPM(value); }
       else if (strcmp(key, "sample_cal_revs") == 0 && (int)value >= 50) {
         configStore.setSampleCalRevolutions((int)value);
       }

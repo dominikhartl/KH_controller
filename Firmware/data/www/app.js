@@ -108,6 +108,10 @@
     else if (d.type === 'progress') updateProgress(d.pct);
     else if (d.type === 'motorDiag') showMotorDiag(d);
     else if (d.type === 'hwDiagDone') showHWDiagDone();
+    else if (d.type === 'configResult') {
+      var inp = document.getElementById('cfg-' + d.key);
+      if (inp) showConfigFeedback(inp, d.ok);
+    }
   }
 
   function clearLiveChart() {
@@ -632,27 +636,30 @@
     }
     khChart.data.datasets[1].data = smooth;
 
-    // Dataset 3: confidence indicators from gran history (index 9), matched by timestamp
-    if (granHistoryData) {
+    // Per-point score coloring on Dataset 0 (when Score checkbox is checked)
+    var showScore = document.getElementById('kh-show-score');
+    if (showScore && showScore.checked && granHistoryData) {
       var confByTs = {};
       for (var i = 0; i < granHistoryData.length; i++) confByTs[granHistoryData[i][0]] = granHistoryData[i][9];
-      var confData = [];
-      var confBg = [];
-      var confBorder = [];
+      var ptBg = [];
+      var ptBorder = [];
       for (var i = 0; i < data.length; i++) {
         var v = confByTs[data[i][0]];
         if (v != null) {
-          confData.push({x: data[i][0], y: data[i][1]});
-          confBg.push(v < 0.8 ? 'rgba(255,59,48,0.35)' : 'rgba(48,209,88,0.35)');
-          confBorder.push(v < 0.8 ? 'rgba(255,59,48,0.8)' : 'rgba(48,209,88,0.8)');
+          ptBg.push(v < 0.8 ? '#ff3b30' : '#30d158');
+          ptBorder.push(v < 0.8 ? '#ff3b30' : '#30d158');
+        } else {
+          ptBg.push('#0a84ff');
+          ptBorder.push('#0a84ff');
         }
       }
-      khChart.data.datasets[3].data = confData;
-      khChart.data.datasets[3].backgroundColor = confBg;
-      khChart.data.datasets[3].borderColor = confBorder;
+      khChart.data.datasets[0].pointBackgroundColor = ptBg;
+      khChart.data.datasets[0].pointBorderColor = ptBorder;
     } else {
-      khChart.data.datasets[3].data = [];
+      khChart.data.datasets[0].pointBackgroundColor = '#0a84ff';
+      khChart.data.datasets[0].pointBorderColor = '#0a84ff';
     }
+    khChart.data.datasets[3].data = [];
 
     // Per-point error bars from Gran regression CI (index 10 in gran history)
     khErrorBars = [];
@@ -810,6 +817,7 @@
   // Time-proportional X-axis: uses linear scale with Unix timestamps (seconds)
   var timeXScale = {
     type: 'linear',
+    offset: false,
     ticks: { color: '#8e8e93', maxTicksLimit: 6, font: { size: 10 },
       callback: function(val) { return fmtDate(val); }
     },
@@ -859,7 +867,7 @@
         responsive: true, maintainAspectRatio: false, animation: false,
         plugins: { legend: { display: false } },
         scales: {
-          x: { type: 'linear', title: { display: true, text: 'Volume (mL)', color: '#8e8e93' }, ticks: { color: '#8e8e93', font: { size: 10 } }, grid: { color: '#38383a' } },
+          x: { type: 'linear', offset: false, title: { display: true, text: 'Volume (mL)', color: '#8e8e93' }, ticks: { color: '#8e8e93', font: { size: 10 } }, grid: { color: '#38383a' } },
           y: { title: { display: true, text: 'pH', color: '#8e8e93' }, ticks: { color: '#8e8e93', font: { size: 10 } }, grid: { color: '#38383a' } }
         }
       }
@@ -879,7 +887,7 @@
         responsive: true, maintainAspectRatio: false, animation: false,
         plugins: { legend: { display: true, labels: { color: '#8e8e93', font: { size: 10 }, boxWidth: 12, filter: function(item) { return item.text && item.text.charAt(0) !== '_'; } } } },
         scales: {
-          x: { title: { display: true, text: 'Volume (mL)', color: '#8e8e93' }, ticks: { color: '#8e8e93', font: { size: 10 } }, grid: { color: '#38383a' } },
+          x: { offset: false, title: { display: true, text: 'Volume (mL)', color: '#8e8e93' }, ticks: { color: '#8e8e93', font: { size: 10 } }, grid: { color: '#38383a' } },
           y: { title: { display: true, text: 'Gran F', color: '#8e8e93' }, ticks: { color: '#8e8e93', font: { size: 10 } }, grid: { color: '#38383a' } }
         }
       }
@@ -888,9 +896,9 @@
       type: 'scatter',
       data: {
         datasets: [
-          { label: 'R\u00b2', data: [], borderColor: '#0a84ff', backgroundColor: 'rgba(10,132,255,0.15)', borderWidth: 2, pointRadius: 4, showLine: true, yAxisID: 'yR2', tension: 0.1 },
-          { label: 'End pH', data: [], borderColor: '#ff9f0a', backgroundColor: 'rgba(255,159,10,0.15)', borderWidth: 2, pointRadius: 4, showLine: true, yAxisID: 'yRight', tension: 0.1 },
-          { label: '\u00b1CI', data: [], borderColor: '#30d158', backgroundColor: 'rgba(48,209,88,0.15)', borderWidth: 2, pointRadius: 4, showLine: true, yAxisID: 'yCI', tension: 0.1 }
+          { label: 'R\u00b2', data: [], borderColor: '#0a84ff', backgroundColor: 'rgba(10,132,255,0.15)', borderWidth: 2, pointRadius: 2, showLine: true, yAxisID: 'yR2', tension: 0.1 },
+          { label: 'End pH', data: [], borderColor: '#ff9f0a', backgroundColor: 'rgba(255,159,10,0.15)', borderWidth: 2, pointRadius: 2, showLine: true, yAxisID: 'yRight', tension: 0.1 },
+          { label: '\u00b1CI', data: [], borderColor: '#30d158', backgroundColor: 'rgba(48,209,88,0.15)', borderWidth: 2, pointRadius: 2, showLine: true, yAxisID: 'yCI', tension: 0.1 }
         ]
       },
       options: {
@@ -898,7 +906,7 @@
         plugins: { legend: { display: true, labels: { color: '#8e8e93', font: { size: 10 }, boxWidth: 12 } } },
         scales: {
           x: timeXScale,
-          yR2: { type: 'linear', position: 'left', min: 0.98, max: 1.0, ticks: { color: '#0a84ff', font: { size: 9 } }, grid: { color: '#38383a' }, title: { display: true, text: 'R\u00b2', color: '#0a84ff', font: { size: 10 } } },
+          yR2: { type: 'linear', position: 'left', min: 0.995, max: 1.0, ticks: { color: '#0a84ff', font: { size: 9 }, maxTicksLimit: 4 }, grid: { color: '#38383a' }, title: { display: true, text: 'R\u00b2', color: '#0a84ff', font: { size: 9 }, padding: { top: 0, bottom: 0 } } },
           yRight: { type: 'linear', position: 'right', ticks: { color: '#ff9f0a', font: { size: 9 } }, grid: { drawOnChartArea: false }, title: { display: true, text: 'pH', color: '#ff9f0a', font: { size: 10 } } },
           yCI: { type: 'linear', position: 'right', ticks: { color: '#30d158', font: { size: 9 } }, grid: { drawOnChartArea: false }, title: { display: true, text: '\u00b1dKH', color: '#30d158', font: { size: 10 } } }
         }
@@ -911,8 +919,8 @@
         responsive: true, maintainAspectRatio: false, animation: false,
         plugins: { legend: { display: false } },
         scales: {
-          x: { type: 'linear', title: { display: true, text: 'pH', color: '#8e8e93' }, ticks: { color: '#8e8e93', font: { size: 10 } }, grid: { color: '#38383a' } },
-          y: { title: { display: true, text: 'R\u00b2', color: '#8e8e93' }, min: 0.98, max: 1.0, ticks: { color: '#8e8e93', font: { size: 9 } }, grid: { color: '#38383a' } }
+          x: { type: 'linear', offset: false, title: { display: true, text: 'pH', color: '#8e8e93' }, ticks: { color: '#8e8e93', font: { size: 10 } }, grid: { color: '#38383a' } },
+          y: { title: { display: true, text: 'R\u00b2', color: '#8e8e93' }, min: 0.995, max: 1.0, ticks: { color: '#8e8e93', font: { size: 9 } }, grid: { color: '#38383a' } }
         }
       },
       plugins: [{
@@ -999,8 +1007,7 @@
       ['kh-show-points', [0]],
       ['kh-show-smooth', [1]],
       ['kh-show-trend', [2]],
-      ['kh-show-ci', [4, 5]],
-      ['kh-show-score', [3]]
+      ['kh-show-ci', [4, 5]]
     ];
     // Restore saved state from localStorage
     var saved = {};
@@ -1031,6 +1038,20 @@
         khChart.update();
       });
     });
+    // Score toggle: re-apply point colors instead of hiding a dataset
+    var scoreEl = document.getElementById('kh-show-score');
+    if (scoreEl) {
+      if (saved.hasOwnProperty('kh-show-score')) scoreEl.checked = saved['kh-show-score'];
+      scoreEl.addEventListener('change', function() {
+        if (!khChart) return;
+        renderKHChart();
+        // Persist to localStorage
+        var state = {};
+        try { state = JSON.parse(localStorage.getItem('khLayers') || '{}'); } catch(e) {}
+        state['kh-show-score'] = scoreEl.checked;
+        localStorage.setItem('khLayers', JSON.stringify(state));
+      });
+    }
   }
 
   // --- Tabs ---
@@ -1283,7 +1304,6 @@
           }
         }
         send({ type: 'config', key: key, value: val });
-        showConfigFeedback(inp, true);
       });
     });
     document.querySelectorAll('.config-grid select').forEach(function(sel) {
@@ -1292,7 +1312,6 @@
         var val = parseInt(sel.value);
         if (isNaN(val)) return;
         send({ type: 'config', key: key, value: val });
-        showConfigFeedback(sel, true);
       });
     });
   }

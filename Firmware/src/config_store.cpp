@@ -265,12 +265,12 @@ void ConfigStore::setStirrerSpeed(int pct) {
 float ConfigStore::getSamplePumpRPM() {
   float rpm = prefs.getFloat("samp_rpm", MOTOR_TARGET_RPM);
   if (rpm < 20.0) rpm = 20.0;
-  if (rpm > 150.0) rpm = 150.0;
+  if (rpm > 250.0) rpm = 250.0;
   return rpm;
 }
 void ConfigStore::setSamplePumpRPM(float rpm) {
   if (rpm < 20.0) rpm = 20.0;
-  if (rpm > 150.0) rpm = 150.0;
+  if (rpm > 250.0) rpm = 250.0;
   prefs.putFloat("samp_rpm", rpm);
 }
 

@@ -406,7 +406,7 @@ int diagStepSample(int revolutions, float rpm, SGSample* samples, int maxSamples
 
   digitalWrite(EN_PIN1, LOW);
   delay(MOTOR_ENABLE_DELAY_MS);
-  digitalWrite(DIR_PIN1, HIGH);
+  digitalWrite(DIR_PIN1, LOW);  // removal direction
 
   for (int i = 0; i < totalSteps; i++) {
     stepPulseJittered(STEP_PIN1, halfPeriodUs);
