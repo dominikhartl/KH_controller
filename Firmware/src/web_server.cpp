@@ -96,7 +96,7 @@ extern void publishMessage(const char* message);
 extern void publishError(const char* errorMessage);
 
 // Internal forward declarations
-static void handleWebSocketMessage(void* arg, uint8_t* data, size_t len);
+static void handleWebSocketMessage(AsyncWebSocketClient* client, void* arg, uint8_t* data, size_t len);
 static void sendMesData(AsyncWebSocketClient* client);
 static void sendLogData(AsyncWebSocketClient* client);
 static void sendGranData(AsyncWebSocketClient* client);
@@ -216,7 +216,7 @@ void onWebSocketEvent(AsyncWebSocket* server, AsyncWebSocketClient* client,
     case WS_EVT_DISCONNECT:
       break;
     case WS_EVT_DATA:
-      handleWebSocketMessage(arg, data, len);
+      handleWebSocketMessage(client, arg, data, len);
       break;
     case WS_EVT_PONG:
     case WS_EVT_ERROR:
@@ -224,7 +224,7 @@ void onWebSocketEvent(AsyncWebSocket* server, AsyncWebSocketClient* client,
   }
 }
 
-static void handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
+static void handleWebSocketMessage(AsyncWebSocketClient* client, void* arg, uint8_t* data, size_t len) {
   AwsFrameInfo* info = (AwsFrameInfo*)arg;
   if (info->final && info->index == 0 && info->len == len && info->opcode == WS_TEXT) {
     JsonDocument doc;
@@ -242,6 +242,13 @@ static void handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
       if (!key) return;
       if (!doc["value"].is<JsonVariant>()) return;
 
+      // Helper: send config result to the requesting client
+      auto sendConfigResult = [&](const char* k, bool ok) {
+        char buf[96];
+        snprintf(buf, sizeof(buf), "{\"type\":\"configResult\",\"key\":\"%s\",\"ok\":%s}", k, ok ? "true" : "false");
+        client->text(buf);
+      };
+
       // Device name is a string config — handle separately
       if (strcmp(key, "device_name") == 0) {
         const char* name = doc["value"].as<const char*>();
@@ -253,9 +260,14 @@ static void handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
           }
           if (valid) {
             configStore.setDeviceName(name);
+            sendConfigResult(key, true);
             broadcastMessage("Device name changed. Reboot to apply.");
             broadcastState();
+          } else {
+            sendConfigResult(key, false);
           }
+        } else {
+          sendConfigResult(key, false);
         }
         return;
       }
@@ -263,12 +275,16 @@ static void handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
         const char* tz = doc["value"].as<const char*>();
         if (tz && strlen(tz) >= 3 && strlen(tz) <= 45) {
           configStore.setTimezone(tz);
+          sendConfigResult(key, true);
           broadcastMessage("Timezone changed. Reboot to apply.");
+        } else {
+          sendConfigResult(key, false);
         }
         return;
       }
 
       float value = doc["value"];
+      bool saved = true;
 
       if (strcmp(key, "titration_vol") == 0 && value > 0) configStore.setTitrationVolume(value);
       else if (strcmp(key, "sample_vol") == 0 && value > 0) configStore.setSampleVolume(value);
@@ -289,9 +305,8 @@ static void handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
       else if (strcmp(key, "num_washes") == 0) { configStore.setNumWashes((int)value); }
       else if (strcmp(key, "drop_ul") == 0) { configStore.setDropVolumeUL(value); }
       else if (strcmp(key, "titration_rpm") == 0) { configStore.setTitrationRPM(value); }
-      else if (strcmp(key, "titrate_max_rpm") == 0) { configStore.setTitrateMaxRPM(value); }
+      else if (strcmp(key, "fast_phase_rpm") == 0) { configStore.setFastPhaseRPM(value); }
       else if (strcmp(key, "sample_pump_rpm") == 0) { configStore.setSamplePumpRPM(value); }
-      else if (strcmp(key, "sample_max_rpm") == 0) { configStore.setSampleMaxRPM(value); }
       else if (strcmp(key, "sample_cal_revs") == 0 && (int)value >= 50) {
         configStore.setSampleCalRevolutions((int)value);
       }
@@ -306,7 +321,7 @@ static void handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
       }
       else if (strcmp(key, "prefill_ul") == 0) { configStore.setPrefillVolumeUL(value); }
       else if (strcmp(key, "max_acid_ml") == 0) { configStore.setMaxAcidML(value); }
-      else if (strcmp(key, "fast_step_ml") == 0) { configStore.setFastStepML(value); }
+      else if (strcmp(key, "fast_step_ul") == 0) { configStore.setFastStepUL((int)value); }
       else if (strcmp(key, "meas_temp_c") == 0) { configStore.setMeasTempC(value); }
       else if (strcmp(key, "buf_ph4") == 0 && value >= 3.0f && value <= 5.0f) {
         configStore.setBufferPH4(value); updateCalibrationFit();
@@ -320,9 +335,6 @@ static void handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
       else if (strcmp(key, "slope_hours") == 0) {
         configStore.setSlopeWindowHours((int)value);
         computeKHSlope();  // refresh cached slope with new window
-      }
-      else if (strcmp(key, "stirrer_speed") == 0 && (int)value >= 80 && (int)value <= 100) {
-        configStore.setStirrerSpeed((int)value);
       }
       else if (strcmp(key, "use_ads1115") == 0) {
         configStore.setUseADS1115((int)value == 1);
@@ -349,13 +361,13 @@ static void handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
         configStore.setTitrateSGBaseline((int)value);
       }
       else {
-        char warnBuf[80];
-        snprintf(warnBuf, sizeof(warnBuf), "Unknown or invalid config: %s", key);
-        broadcastMessage(warnBuf);
-        return;
+        saved = false;
       }
 
-      broadcastState(); // Confirm the update
+      sendConfigResult(key, saved);
+      if (saved) {
+        broadcastState();
+      }
     } else if (strcmp(type, "schedule") == 0) {
       // Schedule mode (0=custom, 1=interval, 2=never)
       if (doc["mode"].is<JsonVariant>()) {
@@ -805,6 +817,7 @@ void broadcastState() {
   cfg["gran_mix_delay"] = configStore.getGranMixDelay();
   cfg["drop_ul"] = configStore.getDropVolumeUL();
   cfg["titration_rpm"] = configStore.getTitrationRPM();
+  cfg["fast_phase_rpm"] = configStore.getFastPhaseRPM();
   cfg["sample_pump_rpm"] = configStore.getSamplePumpRPM();
   cfg["sample_cal_revs_per_ml"] = configStore.getSampleCalRevsPerML();
   cfg["sample_cal_revs"] = configStore.getSampleCalRevolutions();
@@ -814,13 +827,12 @@ void broadcastState() {
   }
   cfg["prefill_ul"] = configStore.getPrefillVolumeUL();
   cfg["max_acid_ml"] = configStore.getMaxAcidML();
-  cfg["fast_step_ml"] = configStore.getFastStepML();
+  cfg["fast_step_ul"] = configStore.getFastStepUL();
   cfg["meas_temp_c"] = configStore.getMeasTempC();
   cfg["buf_ph4"] = configStore.getBufferPH4();
   cfg["buf_ph7"] = configStore.getBufferPH7();
   cfg["buf_ph10"] = configStore.getBufferPH10();
   cfg["slope_hours"] = configStore.getSlopeWindowHours();
-  cfg["stirrer_speed"] = configStore.getStirrerSpeed();
   cfg["num_washes"] = configStore.getNumWashes();
   cfg["timezone"] = configStore.getTimezone();
   cfg["use_ads1115"] = configStore.getUseADS1115();
@@ -839,8 +851,6 @@ void broadcastState() {
   cfg["sample_cal_age"] = (sampCalTs > 0 && nowTs > (time_t)sampCalTs) ? (int)((nowTs - sampCalTs) / 86400) : -1;
   uint32_t titCalTs = configStore.getTitrationCalTimestamp();
   cfg["titration_cal_age"] = (titCalTs > 0 && nowTs > (time_t)titCalTs) ? (int)((nowTs - titCalTs) / 86400) : -1;
-  cfg["sample_max_rpm"] = configStore.getSampleMaxRPM();    // 0 = not tested
-  cfg["titrate_max_rpm"] = configStore.getTitrateMaxRPM();  // 0 = not tested
 
   const char* th = getTubeHealth();
   if (th) doc["tubeHealth"] = th;
@@ -1583,8 +1593,8 @@ void setupWebServer() {
               "\"hcl_volume\":%.1f,\"cal_units\":%d,"
               "\"fast_ph\":%.1f,\"endpoint_method\":%d,"
               "\"min_start_ph\":%.1f,\"stab_timeout\":%d,\"gran_mix_delay\":%d,"
-              "\"drop_ul\":%.1f,\"titration_rpm\":%.1f,\"prefill_ul\":%.1f,"
-              "\"max_acid_ml\":%.1f,\"fast_step_ml\":%.2f,"
+              "\"drop_ul\":%.1f,\"titration_rpm\":%.1f,\"fast_phase_rpm\":%.1f,\"prefill_ul\":%.1f,"
+              "\"max_acid_ml\":%.1f,\"fast_step_ul\":%d,"
               "\"cal_v4\":%.2f,\"cal_v7\":%.2f,\"cal_v10\":%.2f,"
               "\"schedule_mode\":%d,\"interval_hours\":%d,\"anchor_time\":%d"
               "},",
@@ -1595,8 +1605,8 @@ void setupWebServer() {
               configStore.getHClVolume(), configStore.getCalUnits(),
               configStore.getFastTitrationPH(), (int)configStore.getEndpointMethod(),
               configStore.getMinStartPH(), configStore.getStabilizationTimeout(), configStore.getGranMixDelay(),
-              configStore.getDropVolumeUL(), configStore.getTitrationRPM(), configStore.getPrefillVolumeUL(),
-              configStore.getMaxAcidML(), configStore.getFastStepML(),
+              configStore.getDropVolumeUL(), configStore.getTitrationRPM(), configStore.getFastPhaseRPM(), configStore.getPrefillVolumeUL(),
+              configStore.getMaxAcidML(), configStore.getFastStepUL(),
               voltage_4PH, voltage_7PH, voltage_10PH,
               (int)configStore.getScheduleMode(),
               (int)configStore.getIntervalHours(),

@@ -243,20 +243,18 @@
       setInput('cfg-gran_mix_delay', d.config.gran_mix_delay);
       setInput('cfg-drop_ul', d.config.drop_ul);
       setInput('cfg-titration_rpm', d.config.titration_rpm);
-      if (d.config.titrate_max_rpm > 0) setInput('cfg-titrate_max_rpm', Math.round(d.config.titrate_max_rpm));
+      setInput('cfg-fast_phase_rpm', d.config.fast_phase_rpm);
       setInput('cfg-sample_pump_rpm', d.config.sample_pump_rpm);
-      if (d.config.sample_max_rpm > 0) setInput('cfg-sample_max_rpm', Math.round(d.config.sample_max_rpm));
       if (d.config.sample_cal_vol > 0) setInput('cfg-sample_cal_vol', d.config.sample_cal_vol.toFixed(1));
       setInput('cfg-prefill_ul', d.config.prefill_ul);
       setInput('cfg-max_acid_ml', d.config.max_acid_ml);
-      setInput('cfg-fast_step_ml', d.config.fast_step_ml);
+      setInput('cfg-fast_step_ul', d.config.fast_step_ul);
       setInput('cfg-meas_temp_c', d.config.meas_temp_c);
       setInput('cfg-buf_ph4', d.config.buf_ph4);
       setInput('cfg-buf_ph7', d.config.buf_ph7);
       setInput('cfg-buf_ph10', d.config.buf_ph10);
       setInput('cfg-slope_hours', d.config.slope_hours);
       setInput('cfg-num_washes', d.config.num_washes);
-      setInput('cfg-stirrer_speed', d.config.stirrer_speed);
 
       // Sample pump calibration info
       var calInfo = document.getElementById('sample-cal-info');
@@ -273,12 +271,6 @@
       if (titAge && d.config.titration_cal_age != null) {
         titAge.textContent = d.config.titration_cal_age < 0 ? '(never calibrated)' : '(' + d.config.titration_cal_age + 'd ago)';
       }
-
-      // Max RPM hints from motor diagnostics (separate per pump)
-      var hintSamp = document.getElementById('hint-sample-rpm');
-      if (hintSamp && d.config.sample_max_rpm > 0) hintSamp.textContent = '(max ' + Math.round(d.config.sample_max_rpm) + ')';
-      var hintTit = document.getElementById('hint-titration-rpm');
-      if (hintTit && d.config.titrate_max_rpm > 0) hintTit.textContent = '(max ' + Math.round(d.config.titrate_max_rpm) + ')';
 
 
       // Tube baseline info

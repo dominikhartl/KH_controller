@@ -46,12 +46,14 @@ public:
   void setDropVolumeUL(float ul);
   float getTitrationRPM();       // Gran zone ejection speed in RPM (default TITRATION_RPM)
   void setTitrationRPM(float rpm);
+  float getFastPhaseRPM();       // Fast titration phase speed in RPM (default 50)
+  void setFastPhaseRPM(float rpm);
   float getPrefillVolumeUL();    // Prefill volume in µL (default 100.0)
   void setPrefillVolumeUL(float ul);
   float getMaxAcidML();           // Max acid volume per measurement in mL (default 16.0)
   void setMaxAcidML(float ml);
-  float getFastStepML();          // Fast phase max step volume in mL (default 0.33)
-  void setFastStepML(float ml);
+  int getFastStepUL();             // Fast phase max step volume in µL (default 330, range 50-2000)
+  void setFastStepUL(int ul);
   float getMeasTempC();           // Measurement temperature in °C (default 21.0)
   void setMeasTempC(float t);
   float getCalTempC();            // Temperature at which pH calibration was performed

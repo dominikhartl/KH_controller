@@ -20,6 +20,7 @@
 #include "temperature.h"
 #include "tmc_driver.h"
 #include "hw_diagnostics.h"
+#include "stepper_isr.h"
 
 // Device name (loaded from NVS at boot, used by mDNS, MQTT, HA, OTA, web UI)
 char deviceName[21] = "KHpro";
@@ -443,8 +444,7 @@ void processPendingCommand() {
       stopStirrer();
       float cwRevsPerML = configStore.getSampleCalRevsPerML();
       int cwRevs = (int)round(10.0f * cwRevsPerML);
-      float cwMaxRpm = configStore.getSampleMaxRPM();
-      float cwRpm = (cwMaxRpm > 0) ? cwMaxRpm : configStore.getSamplePumpRPM();
+      float cwRpm = configStore.getSampleMaxRPM();
       bool cwOk = true;
       for (int i = 0; i < 5 && cwOk; i++) {
         char cwBuf[32];
@@ -649,12 +649,6 @@ void runMotorDiagnostic(char mode) {
     }
     sampleRecommendedRPM = sampleStallRPM > 0 ? sampleStallRPM * 0.8f : 0.0f;
 
-    // Persist max RPM for speed indication
-    if (sampleStallRPM > 0) {
-      float maxRpm = floor(sampleRecommendedRPM / 5.0f) * 5.0f;
-      configStore.setSampleMaxRPM(maxRpm);
-    }
-
     if (sampleStallRPM > 0) {
       char buf[80];
       snprintf(buf, sizeof(buf), "Sample stall at %.0f RPM (removal:%.0f fill:%.0f, max: %.0f RPM)",
@@ -711,8 +705,6 @@ void runMotorDiagnostic(char mode) {
     titrateRecommendedRPM = titrateStallRPM > 0 ? titrateStallRPM * 0.8f : 0.0f;
 
     if (titrateStallRPM > 0) {
-      float maxRpm = floor(titrateRecommendedRPM / 5.0f) * 5.0f;
-      configStore.setTitrateMaxRPM(maxRpm);
       char buf[64];
       snprintf(buf, sizeof(buf), "Titration stall at %.0f RPM (max: %.0f RPM)",
                titrateStallRPM, titrateRecommendedRPM);
@@ -1093,13 +1085,14 @@ KHResult measureKH() {
     // Compute unit limits from mL config using current calibration
     float maxAcidML = configStore.getMaxAcidML();
     int maxUnits = min((int)(maxAcidML * calU / titV), MAX_TITRATION_UNITS);
-    float fastStepML = configStore.getFastStepML();
+    float fastStepML = configStore.getFastStepUL() / 1000.0f;
     int fastBatchMax = max(20, (int)round(fastStepML * calU / titV));
     int fastBatchMin = max(2, fastBatchMax / 10);
 
     // --- Fast phase: adaptive batch size, reduces near threshold to avoid overshoot ---
     float lastFastPH = startPH;
     int stallCount = 0;
+    float fastRPM = configStore.getFastPhaseRPM();
     publishMessage("Fast titration");
 
     // Data point storage — declared early so fast-phase can store points near endpoint
@@ -1110,7 +1103,7 @@ KHResult measureKH() {
 
     while (pH > fastPH && units < maxUnits && errorflag == 0) {
       int batch = computeFastBatch(pH, fastPH, fastBatchMax, fastBatchMin);
-      if (!titrate(batch, TITRATION_RPM)) {
+      if (!titrate(batch, fastRPM)) {
         errorMessage = wasMotorStall() ? "Error: titration pump stall in fast phase" : "Error: titration pump timeout in fast phase";
         errorflag = 1;
         break;
@@ -1203,7 +1196,7 @@ KHResult measureKH() {
         // No stabilization needed — we just need to detect when to enter Gran zone
         curPhase = 1;
         stepVol = cachedMediumStepVol;
-        if (!titrate(stepVol, TITRATION_RPM)) {
+        if (!titrate(stepVol, fastRPM)) {
           errorMessage = wasMotorStall() ? "Error: titration pump stall in precise phase" : "Error: titration pump timeout in precise phase";
           errorflag = 1;
           break;
@@ -1615,6 +1608,9 @@ void setup() {
 
   // Detect TMC2209 stepper drivers (must be before initADC — IO35 is shared)
   initTMCDrivers();
+
+  // Hardware timer for non-blocking step pulse generation
+  stepISR_init();
 
   // Configure PH_PIN (GPIO34) as analog input for internal ADC fallback
   // (when ADS1115 is present, initExternalADC() reconfigures it as RDY pin)

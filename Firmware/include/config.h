@@ -59,7 +59,9 @@ static const int TITRATION_MIX_DELAY_MEDIUM_MS = 1000; // Medium zone mixing (st
 static const int TITRATION_MIX_DELAY_GRAN_MS = 2500;   // Gran zone mixing (explicit stabilization follows)
 static const int MAX_TITRATION_UNITS = 50000;  // Absolute hard cap (user sets soft limit via max_acid_ml)
 static const int FILL_VOLUME = 100;
-// Stirrer speed is configured via configStore (80-100%, default 90%)
+static const int STIRRER_SPEED_PCT = 90;           // Stirrer duty cycle (%)
+static const float SAMPLE_MAX_RPM = 250.0f;        // Sample pump max speed (RPM)
+static const float TITRATE_MAX_RPM = 150.0f;       // Titration pump max speed (RPM)
 static const int STIRRER_WARMUP_MS = 3000;
 static const int MEASUREMENT_DELAY_MS = 50;
 
@@ -87,7 +89,6 @@ static const float FAST_RAMP_START_PH = 6.0f;  // Start reducing batch size belo
 static const int MOTOR_ENABLE_DELAY_MS = 10;     // Settle time after enabling driver
 static const int MOTOR_HOLD_MS = 150;            // Hold position before disabling (tubing settle)
 static const int TITRATE_ACCEL_THRESHOLD = 50;    // Titrate uses acceleration above this volume
-static const uint16_t MOTOR_YIELD_INTERVAL = 10; // Yield every N revolutions during long ops
 
 // Anti-suckback: small reverse after titration pump stops to prevent drip
 static const int ANTI_SUCKBACK_STEPS = 3;
@@ -108,7 +109,7 @@ static const float POST_WASH_PH_THRESHOLD = 6.0f;  // Warn if post-wash pH is be
 
 // Gran transformation endpoint detection
 static const float GRAN_REGION_PH       = 5.0f;  // Points below this used for Gran regression
-static const float GRAN_STOP_PH         = 3.7f;   // Stop titrating at this pH (raised from 3.5 to exclude pathological low-y weight region)
+static const float GRAN_STOP_PH         = 3.5f;   // Stop titrating at this pH (standard practice: pH 3.0–3.5)
 static const int   MIN_GRAN_POINTS      = 8;       // Minimum points for reliable regression
 static const int   MAX_TITRATION_POINTS = 200;      // Data point buffer size
 static const float GRAN_MIN_R2          = 0.99f;   // Minimum R² for Gran fit acceptance

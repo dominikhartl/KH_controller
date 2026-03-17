@@ -1,6 +1,6 @@
 #include <Arduino.h>
 #include "stirrer.h"
-#include "config_store.h"
+#include "config.h"
 #include <pins.h>
 
 static bool stirrerRunning = false;
@@ -11,7 +11,7 @@ void initStirrer() {
 }
 
 void startStirrer() {
-  int pct = configStore.getStirrerSpeed();  // 80-100%
+  int pct = STIRRER_SPEED_PCT;
   int duty = (pct * 255) / 100;
   if (duty > 255) duty = 255;
   analogWrite(STIRRER_PIN, duty);

@@ -198,10 +198,24 @@
   <section class="config collapsible collapsed">
     <h2 class="section-header">Advanced Configuration <span class="chevron"></span></h2>
     <div class="section-body">
+      <h3 class="cal-heading" style="margin-top:0;padding-top:0;border-top:none">General</h3>
       <div class="config-grid">
         <label>Device Name
           <input type="text" id="cfg-device_name" maxlength="20" pattern="[A-Za-z0-9\-]+" title="Letters, numbers, hyphens only">
         </label>
+        <label>Measurement Temperature (&deg;C)
+          <input type="number" id="cfg-meas_temp_c" step="0.5" min="0" max="40">
+        </label>
+        <label>KH Trend Window (h)
+          <input type="number" id="cfg-slope_hours" step="1" min="24" max="168">
+        </label>
+        <label>Wash Cycles
+          <input type="number" id="cfg-num_washes" step="1" min="1" max="5">
+        </label>
+      </div>
+
+      <h3 class="cal-heading">Titration</h3>
+      <div class="config-grid">
         <label>Endpoint Method
           <select id="cfg-endpoint_method">
             <option value="0">Gran</option>
@@ -211,20 +225,11 @@
         <label>Min Start pH
           <input type="number" id="cfg-min_start_ph" step="0.1" min="6.0" max="9.0">
         </label>
-        <label>Fast Titration pH
+        <label>Fast Phase pH
           <input type="number" id="cfg-fast_ph" step="0.1" min="4.5" max="7.0">
         </label>
-        <label>Washes Before Measurement
-          <input type="number" id="cfg-num_washes" step="1" min="1" max="5">
-        </label>
-        <label>Stirrer Speed (%)
-          <input type="number" id="cfg-stirrer_speed" step="5" min="80" max="100">
-        </label>
-        <label>Stirrer
-          <button class="cmd-btn" id="btn-stirrer" type="button">Start Stirrer</button>
-        </label>
-        <label>KH Trend Window (h)
-          <input type="number" id="cfg-slope_hours" step="1" min="24" max="168">
+        <label>Max Acid Volume (mL)
+          <input type="number" id="cfg-max_acid_ml" step="1" min="5" max="100">
         </label>
         <label>Stabilization Timeout (ms)
           <input type="number" id="cfg-stab_timeout" step="100" min="500" max="5000">
@@ -232,32 +237,27 @@
         <label>Gran Mix Delay (ms)
           <input type="number" id="cfg-gran_mix_delay" step="100" min="500" max="5000">
         </label>
-        <label>Drop Volume (uL)
-          <input type="number" id="cfg-drop_ul" step="1" min="5" max="200">
-        </label>
-        <label>Ejection Speed (RPM) <span class="cfg-hint" id="hint-titration-rpm"></span>
-          <input type="number" id="cfg-titration_rpm" step="1" min="10" max="200">
-        </label>
-        <label>Ejection Max RPM
-          <input type="number" id="cfg-titrate_max_rpm" step="5" min="0" max="500">
-        </label>
-        <label>Sample Pump Speed (RPM) <span class="cfg-hint" id="hint-sample-rpm"></span>
-          <input type="number" id="cfg-sample_pump_rpm" step="5" min="20" max="400">
-        </label>
-        <label>Sample Max RPM
-          <input type="number" id="cfg-sample_max_rpm" step="5" min="0" max="500">
+      </div>
+
+      <h3 class="cal-heading">Pumps</h3>
+      <div class="config-grid">
+        <label>Sample Pump RPM
+          <input type="number" id="cfg-sample_pump_rpm" step="5" min="20" max="150">
         </label>
         <label>Prefill Volume (uL)
           <input type="number" id="cfg-prefill_ul" step="10" min="10" max="500">
         </label>
-        <label>Max Acid Volume (mL)
-          <input type="number" id="cfg-max_acid_ml" step="1" min="5" max="100">
+        <label>Gran Phase RPM
+          <input type="number" id="cfg-titration_rpm" step="1" min="10" max="200">
         </label>
-        <label>Fast Step Volume (mL)
-          <input type="number" id="cfg-fast_step_ml" step="0.01" min="0.05" max="2.0">
+        <label>Fast Phase RPM
+          <input type="number" id="cfg-fast_phase_rpm" step="5" min="10" max="150">
         </label>
-        <label>Meas. Temp. (&deg;C)
-          <input type="number" id="cfg-meas_temp_c" step="0.5" min="0" max="40">
+        <label>Drop Size (uL)
+          <input type="number" id="cfg-drop_ul" step="1" min="5" max="200">
+        </label>
+        <label>Fast Step Size (uL)
+          <input type="number" id="cfg-fast_step_ul" step="10" min="50" max="2000">
         </label>
       </div>
     </div>

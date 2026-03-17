@@ -151,6 +151,17 @@ void ConfigStore::setTitrationRPM(float rpm) {
   if (rpm > 200.0) rpm = 200.0;
   prefs.putFloat("tit_rpm", rpm);
 }
+float ConfigStore::getFastPhaseRPM() {
+  float rpm = prefs.getFloat("fast_rpm", 50.0);
+  if (rpm < 10.0) rpm = 10.0;
+  if (rpm > 150.0) rpm = 150.0;
+  return rpm;
+}
+void ConfigStore::setFastPhaseRPM(float rpm) {
+  if (rpm < 10.0) rpm = 10.0;
+  if (rpm > 150.0) rpm = 150.0;
+  prefs.putFloat("fast_rpm", rpm);
+}
 
 float ConfigStore::getPrefillVolumeUL() {
   float ul = prefs.getFloat("prefill_ul", 100.0);
@@ -177,17 +188,17 @@ void ConfigStore::setMaxAcidML(float ml) {
   prefs.putFloat("max_acid_ml", ml);
 }
 
-// Fast phase max step volume (mL)
-float ConfigStore::getFastStepML() {
-  float v = prefs.getFloat("fast_step_ml", 0.33f);
-  if (v < 0.05f) v = 0.05f;
-  if (v > 2.0f) v = 2.0f;
+// Fast phase max step volume (µL)
+int ConfigStore::getFastStepUL() {
+  int v = prefs.getInt("fast_step_ul", 330);
+  if (v < 50) v = 50;
+  if (v > 2000) v = 2000;
   return v;
 }
-void ConfigStore::setFastStepML(float ml) {
-  if (ml < 0.05f) ml = 0.05f;
-  if (ml > 2.0f) ml = 2.0f;
-  prefs.putFloat("fast_step_ml", ml);
+void ConfigStore::setFastStepUL(int ul) {
+  if (ul < 50) ul = 50;
+  if (ul > 2000) ul = 2000;
+  prefs.putInt("fast_step_ul", ul);
 }
 
 // Measurement temperature
@@ -254,12 +265,12 @@ void ConfigStore::setStirrerSpeed(int pct) {
 float ConfigStore::getSamplePumpRPM() {
   float rpm = prefs.getFloat("samp_rpm", MOTOR_TARGET_RPM);
   if (rpm < 20.0) rpm = 20.0;
-  if (rpm > 400.0) rpm = 400.0;
+  if (rpm > 150.0) rpm = 150.0;
   return rpm;
 }
 void ConfigStore::setSamplePumpRPM(float rpm) {
   if (rpm < 20.0) rpm = 20.0;
-  if (rpm > 400.0) rpm = 400.0;
+  if (rpm > 150.0) rpm = 150.0;
   prefs.putFloat("samp_rpm", rpm);
 }
 
@@ -406,11 +417,11 @@ void ConfigStore::setSampleCalTimestamp(uint32_t ts) { prefs.putULong("samp_cal_
 uint32_t ConfigStore::getTitrationCalTimestamp() { return prefs.getULong("tit_cal_ts", 0); }
 void ConfigStore::setTitrationCalTimestamp(uint32_t ts) { prefs.putULong("tit_cal_ts", ts); }
 
-// Motor max speed from diagnostics
-float ConfigStore::getSampleMaxRPM() { return prefs.getFloat("samp_max_rpm", 0.0f); }
-void ConfigStore::setSampleMaxRPM(float rpm) { prefs.putFloat("samp_max_rpm", rpm); }
-float ConfigStore::getTitrateMaxRPM() { return prefs.getFloat("tit_max_rpm", 0.0f); }
-void ConfigStore::setTitrateMaxRPM(float rpm) { prefs.putFloat("tit_max_rpm", rpm); }
+// Motor max speed (from config.h)
+float ConfigStore::getSampleMaxRPM() { return SAMPLE_MAX_RPM; }
+void ConfigStore::setSampleMaxRPM(float) {}
+float ConfigStore::getTitrateMaxRPM() { return TITRATE_MAX_RPM; }
+void ConfigStore::setTitrateMaxRPM(float) {}
 
 // WiFi credentials
 bool ConfigStore::hasWifiCredentials() {
