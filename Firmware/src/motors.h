@@ -19,6 +19,9 @@ void setMotorProgressCallback(MotorProgressCallback cb);
 void setMultiWashContext(int numWashes);
 void clearMultiWashContext();
 
+// Initialize FastAccelStepper engine and stepper objects — call once during setup
+void initMotors();
+
 // All motor functions return true on success, false on timeout
 bool removeSample(int volume, float speedRpm);
 bool takeSample(int volume, float speedRpm);

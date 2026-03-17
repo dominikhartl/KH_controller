@@ -86,6 +86,7 @@ static const int FAST_BATCH_MIN = 20;
 static const float FAST_RAMP_START_PH = 6.0f;  // Start reducing batch size below this pH
 
 // Motor timing
+static const uint32_t MOTOR_ACCEL_STEPS_S2 = 1050;  // FastAccelStepper: steps/s² (geometric 0.999/step ≈ 1050; tune after first test)
 static const int MOTOR_ENABLE_DELAY_MS = 10;     // Settle time after enabling driver
 static const int MOTOR_HOLD_MS = 150;            // Hold position before disabling (tubing settle)
 static const int TITRATE_ACCEL_THRESHOLD = 50;    // Titrate uses acceleration above this volume
