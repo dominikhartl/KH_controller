@@ -1,6 +1,7 @@
 #include "hw_diagnostics.h"
 #include <Arduino.h>
 #include <Wire.h>
+#include <Ezo_i2c.h>
 #include <LittleFS.h>
 #include <WiFi.h>
 #include <math.h>
@@ -58,7 +59,16 @@ static int8_t sysRSSI;
 static uint8_t sysWifiChannel;
 
 // Hardware detection
-static bool hwADS1115, hwTMC2209, hwDS18B20;
+static bool hwADS1115, hwTMC2209, hwDS18B20, hwEZO;
+
+// EZO pH diagnostics
+static char ezoFirmware[16] = "";
+static char ezoStatusReason = '?';
+static float ezoVcc = 0;
+static uint8_t diagEzoCalPoints = 0;
+static float diagEzoAcidSlope = NAN, diagEzoBaseSlope = NAN;
+static float diagEzoTestPH = NAN;
+static bool ezoTestOk = false;
 
 // I2C test results
 static bool i2cSkipped;
@@ -696,6 +706,76 @@ static void testProbeHealth() {
   probeCalibrated = isCalibrationValid();
 }
 
+static void testEZOpH() {
+  if (!hwEZO) return;
+  broadcastMessage("EZO pH diagnostics...");
+
+  // Use the public API functions from measurement.cpp which talk to the EZO
+  // INFO — firmware version (already detected if ezoAvailable is true)
+  ezoFirmware[0] = '\0';
+  Ezo_board ezo(EZO_PH_I2C_ADDR, "PH");
+  char buf[48];
+
+  // INFO
+  ezo.send_cmd("i");
+  delay(EZO_CMD_DELAY_MS);
+  ezo.receive_cmd(buf, sizeof(buf));
+  if (ezo.get_error() == Ezo_board::SUCCESS) {
+    // Response: "?I,pH,<fw>" — extract firmware
+    char* p = strstr(buf, "pH,");
+    if (p) { strncpy(ezoFirmware, p + 3, sizeof(ezoFirmware) - 1); ezoFirmware[sizeof(ezoFirmware) - 1] = '\0'; }
+    else { strncpy(ezoFirmware, buf, sizeof(ezoFirmware) - 1); }
+  }
+
+  // STATUS
+  ezo.send_cmd("Status");
+  delay(EZO_CMD_DELAY_MS);
+  ezo.receive_cmd(buf, sizeof(buf));
+  if (ezo.get_error() == Ezo_board::SUCCESS) {
+    // Response: "?STATUS,<reason>,<vcc>"
+    char* p = strchr(buf, ',');
+    if (p) {
+      ezoStatusReason = *(p + 1);
+      char* p2 = strchr(p + 1, ',');
+      if (p2) ezoVcc = atof(p2 + 1);
+    }
+  }
+
+  // CAL,?
+  ezo.send_cmd("Cal,?");
+  delay(EZO_CMD_DELAY_MS);
+  ezo.receive_cmd(buf, sizeof(buf));
+  if (ezo.get_error() == Ezo_board::SUCCESS) {
+    char* p = strchr(buf, ',');
+    if (p) diagEzoCalPoints = (uint8_t)atoi(p + 1);
+  }
+
+  // SLOPE,?
+  ezo.send_cmd("Slope,?");
+  delay(EZO_CMD_DELAY_MS);
+  ezo.receive_cmd(buf, sizeof(buf));
+  if (ezo.get_error() == Ezo_board::SUCCESS) {
+    char* p = strchr(buf, ',');
+    if (p) {
+      diagEzoAcidSlope = atof(p + 1);
+      p = strchr(p + 1, ',');
+      if (p) diagEzoBaseSlope = atof(p + 1);
+    }
+  }
+
+  // Test read
+  ezo.send_read_with_temp_comp(25.0);
+  delay(EZO_READ_DELAY_MS);
+  ezo.receive_read_cmd();
+  if (ezo.get_error() == Ezo_board::SUCCESS) {
+    diagEzoTestPH = ezo.get_last_received_reading();
+    ezoTestOk = (diagEzoTestPH >= 0.0f && diagEzoTestPH <= 14.0f);
+  } else {
+    diagEzoTestPH = NAN;
+    ezoTestOk = false;
+  }
+}
+
 // --- Main diagnostic runner ---
 
 void runHardwareDiagnostics() {
@@ -710,6 +790,7 @@ void runHardwareDiagnostics() {
   hwADS1115 = isADS1115Available();
   hwTMC2209 = isTMCDetected();
   hwDS18B20 = hasTemperatureSensor();
+  hwEZO = isEZOAvailable();
 
   // Phase 1: System Health
   broadcastProgress(5);
@@ -719,13 +800,23 @@ void runHardwareDiagnostics() {
   broadcastProgress(10);
   testI2CBus();
 
+  // Phase 2b: EZO pH diagnostics (if present)
+  if (hwEZO) {
+    broadcastProgress(12);
+    testEZOpH();
+  }
+
   // Ensure motor drivers are disabled during ADC noise tests
   digitalWrite(EN_PIN1, HIGH);
   digitalWrite(EN_PIN2, HIGH);
 
-  // Phase 3: ADC Rapid Noise (pH channel)
+  // Phase 3: ADC Rapid Noise (pH channel) — skip if EZO is the active sensor
   broadcastProgress(15);
-  testADCNoisePH();
+  if (!hwEZO || hwADS1115) {
+    testADCNoisePH();
+  } else {
+    adcPhNoise = {};
+  }
 
   // Phase 4: ADC Baseline (AIN1)
   broadcastProgress(35);
@@ -761,8 +852,9 @@ void runHardwareDiagnostics() {
   testProbeHealth();
 
   // Compute pH-equivalent noise from ADC noise + calibration slope
+  // (not applicable when EZO is active — no voltage-domain noise data)
   phNoiseValid = false;
-  if (probeCalibrated && adcPhNoise.nSamples > 0) {
+  if (!hwEZO && probeCalibrated && adcPhNoise.nSamples > 0) {
     phSlope = (voltage_4PH - voltage_10PH) / 6.0f;
     if (phSlope > 50.0f) {  // sanity: slope must be positive and reasonable
       noiseStddevPH = adcPhNoise.stddevMv / phSlope;
@@ -808,11 +900,12 @@ bool serveHWDiagChunk(int section, char* buf, size_t bufSize, size_t* written) {
         deviceName, FW_VERSION);
       P("\"timestamp\":%lu,\"duration_sec\":%.1f,",
         (unsigned long)time(nullptr), diagDurationMs / 1000.0f);
-      P("\"hardware\":{\"ads1115\":%s,\"tmc2209\":%s,\"ds18b20\":%s,\"adc_source\":\"%s\"},",
+      P("\"hardware\":{\"ads1115\":%s,\"tmc2209\":%s,\"ds18b20\":%s,\"ezo_ph\":%s,\"adc_source\":\"%s\"},",
         hwADS1115 ? "true" : "false",
         hwTMC2209 ? "true" : "false",
         hwDS18B20 ? "true" : "false",
-        hwADS1115 ? "ADS1115" : "Internal");
+        hwEZO ? "true" : "false",
+        getActivePHSensor());
       break;
 
     case 1:  // System
@@ -1035,14 +1128,24 @@ bool serveHWDiagChunk(int section, char* buf, size_t bufSize, size_t* written) {
       break;
 
     case 11: {  // Probe + close
-      P("\"probe\":{\"voltage_mv\":%.1f,\"calibrated\":%s",
-        probeVoltageMv, probeCalibrated ? "true" : "false");
+      P("\"probe\":{\"sensor\":\"%s\",\"voltage_mv\":%.1f,\"calibrated\":%s",
+        getActivePHSensor(), probeVoltageMv, probeCalibrated ? "true" : "false");
+      if (hwEZO) {
+        P(",\"ezo\":{\"firmware\":\"%s\",\"status_reason\":\"%c\",\"vcc\":%.2f",
+          ezoFirmware, ezoStatusReason, ezoVcc);
+        P(",\"cal_points\":%d,\"acid_slope_pct\":%.1f,\"base_slope_pct\":%.1f",
+          diagEzoCalPoints, diagEzoAcidSlope, diagEzoBaseSlope);
+        P(",\"test_ph\":%.2f,\"test_ok\":%s}",
+          diagEzoTestPH, ezoTestOk ? "true" : "false");
+      }
       if (probeCalibrated) {
         char reasonBuf[80];
         const char* health = getProbeHealthDetail(reasonBuf, sizeof(reasonBuf));
         P(",\"health\":\"%s\",\"reason\":\"%s\"", health, reasonBuf);
-        P(",\"cal_v4\":%.1f,\"cal_v7\":%.1f,\"cal_v10\":%.1f",
-          voltage_4PH, voltage_7PH, voltage_10PH);
+        if (!hwEZO) {
+          P(",\"cal_v4\":%.1f,\"cal_v7\":%.1f,\"cal_v10\":%.1f",
+            voltage_4PH, voltage_7PH, voltage_10PH);
+        }
         P(",\"acid_eff_pct\":%.1f,\"alk_eff_pct\":%.1f,\"asymmetry_pct\":%.1f",
           getAcidEfficiency(), getAlkalineEfficiency(), getProbeAsymmetry());
         P(",\"avg_noise_mv\":%.2f,\"max_noise_mv\":%.2f",

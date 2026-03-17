@@ -1,5 +1,6 @@
 #include <Arduino.h>
 #include <Wire.h>
+#include <Ezo_i2c.h>
 #include <esp_task_wdt.h>
 #include "measurement.h"
 #include "config_store.h"
@@ -8,6 +9,7 @@
 #include <math.h>
 #include "driver/adc.h"
 #include "tmc_driver.h"
+#include "temperature.h"
 
 // Measurement state
 float voltage = 0;
@@ -20,6 +22,15 @@ float voltage_10PH = 0;
 static bool useExternalADC = false;
 static bool adsAvailable = false;
 static bool adsFallback = false;
+
+// Atlas Scientific EZO pH circuit state
+static Ezo_board ezoPH(EZO_PH_I2C_ADDR, "PH");
+static bool useEZO = false;
+static bool ezoAvailable = false;
+static bool ezoFallback = false;
+static uint8_t ezoCalPointsCache = 0;
+static float ezoAcidSlopeCache = NAN;
+static float ezoBaseSlopeCache = NAN;
 
 // ADS1115 register addresses
 static const uint8_t ADS_REG_CONVERSION = 0x00;
@@ -164,8 +175,110 @@ static float medianFilteredMean(float* sorted, int count, float outlierThreshold
   return (inlierCount > 0) ? sum / inlierCount : median;
 }
 
+// --- EZO pH helper functions ---
+
+static bool ezoActive() { return useEZO && ezoAvailable; }
+
+// Probe EZO: send INFO command, verify response contains "pH"
+static bool ezoProbe() {
+  ezoPH.send_cmd("i");
+  delay(EZO_CMD_DELAY_MS);
+  char buf[32];
+  ezoPH.receive_cmd(buf, sizeof(buf));
+  if (ezoPH.get_error() != Ezo_board::SUCCESS) return false;
+  // Response format: "?I,pH,<firmware>" — check for "pH"
+  return (strstr(buf, "pH") != nullptr || strstr(buf, "PH") != nullptr);
+}
+
+// Read pH with temperature compensation. Returns NAN on error.
+float ezoReadPH(float tempC) {
+  for (int attempt = 0; attempt < 3; attempt++) {
+    ezoPH.send_read_with_temp_comp(tempC);
+    delay(EZO_READ_DELAY_MS);
+    ezoPH.receive_read_cmd();
+    if (ezoPH.get_error() == Ezo_board::SUCCESS) {
+      float reading = ezoPH.get_last_received_reading();
+      if (reading >= 0.0f && reading <= 14.0f) return reading;
+    }
+    delay(100);
+  }
+  return NAN;
+}
+
+// Send calibration command to EZO. point = "mid", "low", or "high"
+bool ezoCalibrate(const char* point, float phValue) {
+  char cmd[32];
+  snprintf(cmd, sizeof(cmd), "Cal,%s,%.2f", point, phValue);
+  ezoPH.send_cmd(cmd);
+  delay(EZO_CAL_DELAY_MS);
+  char buf[16];
+  ezoPH.receive_cmd(buf, sizeof(buf));
+  return ezoPH.get_error() == Ezo_board::SUCCESS;
+}
+
+// Query calibration point count and slope from EZO
+void ezoQueryCalStatus() {
+  // Query calibration points: response "?Cal,<n>"
+  ezoPH.send_cmd("Cal,?");
+  delay(EZO_CMD_DELAY_MS);
+  char buf[32];
+  ezoPH.receive_cmd(buf, sizeof(buf));
+  if (ezoPH.get_error() == Ezo_board::SUCCESS) {
+    char* comma = strchr(buf, ',');
+    if (comma) ezoCalPointsCache = (uint8_t)atoi(comma + 1);
+  }
+
+  // Query slope: response "?Slope,<acid>,<base>,<zero>"
+  ezoPH.send_cmd("Slope,?");
+  delay(EZO_CMD_DELAY_MS);
+  ezoPH.receive_cmd(buf, sizeof(buf));
+  if (ezoPH.get_error() == Ezo_board::SUCCESS) {
+    // Parse acid and base slopes
+    char* p = strchr(buf, ',');
+    if (p) {
+      ezoAcidSlopeCache = atof(p + 1);
+      p = strchr(p + 1, ',');
+      if (p) ezoBaseSlopeCache = atof(p + 1);
+    }
+  }
+}
+
+// Initialize EZO pH circuit
+static void initEZOpH() {
+  uint8_t sensorType = configStore.getPhSensorType();
+  // Skip if explicitly set to internal or ADS1115 only
+  if (sensorType == PH_SENSOR_INTERNAL || sensorType == PH_SENSOR_ADS1115) return;
+
+  if (!ezoProbe()) {
+    if (sensorType == PH_SENSOR_EZO) {
+      ezoFallback = true;
+      Serial.println("EZO pH not found at 0x63 — falling back");
+    }
+    return;
+  }
+
+  ezoAvailable = true;
+  useEZO = true;
+  ezoQueryCalStatus();
+  Serial.printf("EZO pH initialized (%d cal points, acid slope %.1f%%)\n",
+                ezoCalPointsCache, ezoAcidSlopeCache);
+}
+
+// Public EZO accessors
+bool isEZOActive() { return ezoActive(); }
+bool isEZOAvailable() { return ezoAvailable; }
+uint8_t getEZOCalPoints() { return ezoCalPointsCache; }
+float getEZOAcidSlope() { return ezoAcidSlopeCache; }
+float getEZOBaseSlope() { return ezoBaseSlopeCache; }
+
+const char* getActivePHSensor() {
+  if (ezoActive()) return "EZO pH";
+  if (useExternalADC && adsAvailable) return "ADS1115";
+  return "Internal";
+}
+
 // ADS1115 helpers (must precede readADCTrimmed)
-static bool adsActive() { return useExternalADC && adsAvailable; }
+static bool adsActive() { return useExternalADC && adsAvailable && !ezoActive(); }
 static int effectiveOversampling() { return adsActive() ? ADS_OVERSAMPLING : ADC_OVERSAMPLING; }
 static int effectiveOversamplingFast() { return adsActive() ? ADS_OVERSAMPLING_FAST : ADC_OVERSAMPLING_FAST; }
 static int effectiveStabSamples() { return adsActive() ? ADS_STAB_SAMPLES : 16; }
@@ -275,17 +388,33 @@ void initADC() {
 }
 
 void initExternalADC() {
-  useExternalADC = configStore.getUseADS1115();
-  if (!useExternalADC) return;
+  uint8_t sensorType = configStore.getPhSensorType();
+
+  // Skip I2C entirely if explicitly set to internal ADC
+  if (sensorType == PH_SENSOR_INTERNAL) return;
 
   Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN);
   Wire.setClock(100000);  // 100 kHz standard mode
+
+  // Try EZO first (auto or explicit EZO mode)
+  if (sensorType == PH_SENSOR_AUTO || sensorType == PH_SENSOR_EZO) {
+    initEZOpH();
+    if (ezoActive()) return;  // EZO found — skip ADS1115
+  }
+
+  // Try ADS1115 (auto or explicit ADS1115 mode)
+  if (sensorType != PH_SENSOR_EZO) {
+    useExternalADC = true;  // Attempt ADS1115
+  } else {
+    return;  // EZO-only mode, EZO not found — already set ezoFallback
+  }
 
   // Probe ADS1115: read config register
   Wire.beginTransmission(ADS1115_I2C_ADDR);
   Wire.write(ADS_REG_CONFIG);
   if (Wire.endTransmission() != 0) {
     adsFallback = true;
+    useExternalADC = false;
     Serial.println("ADS1115 not found at 0x48 — falling back to internal ADC");
     return;
   }
@@ -369,6 +498,7 @@ void updateCalibrationFit() {
 }
 
 bool isCalibrationValid() {
+  if (ezoActive()) return ezoCalPointsCache >= 2;
   if (isnan(voltage_4PH) || isnan(voltage_7PH) || isnan(voltage_10PH)) return false;
   if (voltage_4PH <= 0 || voltage_7PH <= 0 || voltage_10PH <= 0) return false;
   if (fabs(voltage_4PH - voltage_7PH) < 150.0f) return false;  // ~1 pH minimum separation
@@ -421,14 +551,20 @@ static float slopeToEfficiency(float conditionedSlope) {
 }
 
 float getAcidEfficiency() {
+  if (ezoActive()) return ezoAcidSlopeCache;
   return slopeToEfficiency(getAcidSlope());
 }
 
 float getAlkalineEfficiency() {
+  if (ezoActive()) return ezoBaseSlopeCache;
   return slopeToEfficiency(getAlkalineSlope());
 }
 
 float getProbeAsymmetry() {
+  if (ezoActive()) {
+    if (isnan(ezoAcidSlopeCache) || isnan(ezoBaseSlopeCache)) return NAN;
+    return fabsf(ezoAcidSlopeCache - ezoBaseSlopeCache);
+  }
   if (!isCalibrationValid()) return NAN;
   float slopeAcid = fabsf((voltage_7PH - voltage_4PH) / (calBuf7 - calBuf4));
   float slopeBase = fabsf((voltage_10PH - voltage_7PH) / (calBuf10 - calBuf7));
@@ -442,6 +578,30 @@ const char* getProbeHealth() {
 }
 
 const char* getProbeHealthDetail(char* reasonBuf, size_t reasonLen) {
+  // EZO pH: health based on SLOPE,? response
+  if (ezoActive()) {
+    if (ezoCalPointsCache == 0) {
+      if (reasonBuf) snprintf(reasonBuf, reasonLen, "not calibrated");
+      return "Unknown";
+    }
+    float acidSlp = ezoAcidSlopeCache;
+    if (isnan(acidSlp)) {
+      if (reasonBuf) snprintf(reasonBuf, reasonLen, "slope data unavailable");
+      return "Unknown";
+    }
+    // EZO slope: ideal ~99.7%, acceptable 92-103%
+    if (acidSlp < 85.0f || acidSlp > 110.0f) {
+      if (reasonBuf) snprintf(reasonBuf, reasonLen, "acid slope %.1f%% (need 85-110%%)", acidSlp);
+      return "Replace";
+    }
+    if (acidSlp < 92.0f || acidSlp > 103.0f) {
+      if (reasonBuf) snprintf(reasonBuf, reasonLen, "acid slope %.1f%% (ideal 92-103%%)", acidSlp);
+      return "Fair";
+    }
+    if (reasonBuf && reasonLen > 0) reasonBuf[0] = '\0';
+    return "Good";
+  }
+
   float acidEff = getAcidEfficiency();
   if (isnan(acidEff)) {
     if (reasonBuf) snprintf(reasonBuf, reasonLen, "no calibration data");
@@ -491,6 +651,49 @@ const char* getProbeHealthDetail(char* reasonBuf, size_t reasonLen) {
 // to avoid false instability from ADC/WiFi noise spikes.
 static void waitForStabilization() {
   lastStabTimedOut = false;
+
+  // EZO pH: stabilize in pH domain (readings already filtered by EZO internally)
+  if (ezoActive()) {
+    float tempC = hasTemperatureSensor() ? getWaterTemperatureC() : configStore.getMeasTempC();
+    static const int MAX_STAB_READINGS = 10;  // 900ms per read × 10 = 9s max
+    float stabReadings[MAX_STAB_READINGS];
+    int nReadings = 0;
+    float prev = ezoReadPH(tempC);
+    if (isnan(prev)) { lastStabTimedOut = true; stabTimeoutCount++; return; }
+    stabReadings[nReadings++] = prev;
+    unsigned long start = millis();
+    bool converged = false;
+    int goodCount = 0;
+    unsigned long lastYield = start;
+    while (millis() - start < (unsigned long)stabilizationTimeoutMs) {
+      esp_task_wdt_reset();
+      float curr = ezoReadPH(tempC);
+      if (isnan(curr)) continue;
+      if (nReadings < MAX_STAB_READINGS) stabReadings[nReadings++] = curr;
+      if (fabsf(curr - prev) < EZO_STAB_THRESHOLD) {
+        goodCount++;
+        if (goodCount >= 2) { converged = true; break; }
+      } else {
+        goodCount = 0;
+      }
+      prev = curr;
+      if (stabYieldCallback && millis() - lastYield >= 500) {
+        stabYieldCallback(); lastYield = millis();
+      }
+    }
+    unsigned long elapsed = millis() - start;
+    if (converged) {
+      lastStabilizationMs = elapsed;
+      stabTotalMs += elapsed;
+    } else {
+      lastStabilizationMs = stabilizationTimeoutMs;
+      stabTotalMs += stabilizationTimeoutMs;
+      stabTimeoutCount++;
+      lastStabTimedOut = true;
+    }
+    return;
+  }
+
   if (!adsActive()) {
     analogReadMilliVolts(PH_PIN);  // Dummy read to prime ADC after idle
     delayMicroseconds(100);
@@ -585,21 +788,34 @@ void waitForPHStabilization() {
 // Core pH reading logic shared by measurePH and measurePHStabilized
 static void measurePHCore(int nreadings) {
   static float pHReadings[100];
-  const int maxReadings = (nreadings > 100) ? 100 : nreadings;
   int validReadings = 0;
 
-  int oversample = effectiveOversampling();
-  for (int t = 0; t < maxReadings; t++) {
-    voltage = readADCTrimmed(oversample, ADC_INTER_SAMPLE_DELAY_MS);
-
-    float calculatedPH = voltageToPH(voltage);
-
-    if (!isnan(calculatedPH) && calculatedPH > 0.0 && calculatedPH < 14.0) {
-      pHReadings[validReadings] = calculatedPH;
-      validReadings++;
+  if (ezoActive()) {
+    // EZO returns pH directly — no voltage conversion needed
+    float tempC = hasTemperatureSensor() ? getWaterTemperatureC() : configStore.getMeasTempC();
+    int maxReadings = (nreadings > 5) ? 5 : nreadings;  // Each read is 900ms
+    for (int t = 0; t < maxReadings; t++) {
+      float reading = ezoReadPH(tempC);
+      if (!isnan(reading) && reading > 0.0f && reading < 14.0f) {
+        pHReadings[validReadings++] = reading;
+      }
     }
+    voltage = 0;  // No voltage available from EZO
+  } else {
+    const int maxReadings = (nreadings > 100) ? 100 : nreadings;
+    int oversample = effectiveOversampling();
+    for (int t = 0; t < maxReadings; t++) {
+      voltage = readADCTrimmed(oversample, ADC_INTER_SAMPLE_DELAY_MS);
 
-    delay(MEASUREMENT_DELAY_MS);
+      float calculatedPH = voltageToPH(voltage);
+
+      if (!isnan(calculatedPH) && calculatedPH > 0.0 && calculatedPH < 14.0) {
+        pHReadings[validReadings] = calculatedPH;
+        validReadings++;
+      }
+
+      delay(MEASUREMENT_DELAY_MS);
+    }
   }
 
   if (validReadings == 0) {
@@ -627,21 +843,30 @@ void measurePHStabilized(int nreadings) {
 // For use far from endpoint where ±0.3 pH accuracy is sufficient
 void measurePHFast(int nreadings) {
   static float pHReadings[100];
-  const int maxReadings = (nreadings > 100) ? 100 : nreadings;
   int validReadings = 0;
 
-  int oversampleFast = effectiveOversamplingFast();
-  for (int t = 0; t < maxReadings; t++) {
-    voltage = readADCTrimmed(oversampleFast, ADC_INTER_SAMPLE_DELAY_FAST_MS);
-
-    float calculatedPH = voltageToPH(voltage);
-
-    if (!isnan(calculatedPH) && calculatedPH > 0.0 && calculatedPH < 14.0) {
-      pHReadings[validReadings] = calculatedPH;
-      validReadings++;
+  if (ezoActive()) {
+    // EZO: 2 reads max for fast mode (1.8s)
+    float tempC = hasTemperatureSensor() ? getWaterTemperatureC() : configStore.getMeasTempC();
+    int maxReadings = (nreadings > 2) ? 2 : nreadings;
+    for (int t = 0; t < maxReadings; t++) {
+      float reading = ezoReadPH(tempC);
+      if (!isnan(reading) && reading > 0.0f && reading < 14.0f) {
+        pHReadings[validReadings++] = reading;
+      }
     }
-
-    delay(MEASUREMENT_DELAY_FAST_MS);
+    voltage = 0;
+  } else {
+    const int maxReadings = (nreadings > 100) ? 100 : nreadings;
+    int oversampleFast = effectiveOversamplingFast();
+    for (int t = 0; t < maxReadings; t++) {
+      voltage = readADCTrimmed(oversampleFast, ADC_INTER_SAMPLE_DELAY_FAST_MS);
+      float calculatedPH = voltageToPH(voltage);
+      if (!isnan(calculatedPH) && calculatedPH > 0.0 && calculatedPH < 14.0) {
+        pHReadings[validReadings++] = calculatedPH;
+      }
+      delay(MEASUREMENT_DELAY_FAST_MS);
+    }
   }
 
   if (validReadings == 0) {

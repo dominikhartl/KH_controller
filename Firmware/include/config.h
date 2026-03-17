@@ -151,6 +151,19 @@ static const uint32_t HEAP_WARNING_THRESHOLD = 40000;  // Warn on serial when fr
 // Minimum valid Unix timestamp (Nov 2023) — used to detect NTP not yet synced
 static const uint32_t MIN_VALID_EPOCH = 1700000000;
 
+// Atlas Scientific EZO pH circuit (I2C, via isolation board)
+#define EZO_PH_I2C_ADDR    0x63    // Default I2C address (99 decimal)
+#define EZO_READ_DELAY_MS   900    // Processing time for R/RT command
+#define EZO_CMD_DELAY_MS    300    // Processing time for non-read commands
+#define EZO_CAL_DELAY_MS    900    // Processing time for calibration commands
+#define EZO_STAB_THRESHOLD  0.02f  // pH stabilization threshold for EZO readings
+
+// pH sensor type (stored in NVS as "ph_sensor")
+#define PH_SENSOR_AUTO      0
+#define PH_SENSOR_INTERNAL  1
+#define PH_SENSOR_ADS1115   2
+#define PH_SENSOR_EZO       3
+
 // ADS1115 external ADC configuration
 #define ADS1115_I2C_ADDR               0x48
 #define ADS_OVERSAMPLING               16       // 16 samples × 75ms = 1.2s; trimmed mean keeps middle 8

@@ -11,10 +11,21 @@ extern float voltage_10PH;
 // Initialize ADC with calibrated attenuation
 void initADC();
 
-// Initialize ADS1115 external ADC (call after configStore.begin())
+// Initialize external pH sensor — ADS1115 or EZO (call after configStore.begin())
 void initExternalADC();
 bool isExternalADCActive();    // True if ADS1115 is being used for readings
 bool isExternalADCFallback();  // True if configured for ADS1115 but fell back to internal
+
+// Atlas Scientific EZO pH circuit
+bool isEZOActive();              // True if EZO is being used for pH readings
+bool isEZOAvailable();           // True if EZO hardware was detected (regardless of config)
+uint8_t getEZOCalPoints();       // 0-3: number of EZO calibration points
+float getEZOAcidSlope();         // Acid slope % from SLOPE,? (ideal ~99.7%)
+float getEZOBaseSlope();         // Base slope % from SLOPE,?
+bool ezoCalibrate(const char* point, float pH);  // Send calibration command
+void ezoQueryCalStatus();        // Refresh cal points and slope from device
+float ezoReadPH(float tempC);    // Single pH reading with temperature compensation
+const char* getActivePHSensor(); // "Internal" / "ADS1115" / "EZO pH"
 
 // Recompute linear fit coefficients from current calibration voltages
 void updateCalibrationFit();

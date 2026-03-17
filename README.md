@@ -24,6 +24,7 @@ The device takes a water sample from the aquarium and titrates it with dilute hy
 - **Cross-validation**: Compares Gran and fixed-pH results to detect unreliable measurements
 - **Outlier rejection**: Median-filtered pH readings with automatic outlier removal
 - **3-point pH calibration**: Linear least-squares fit across pH 4, 7, and 10 buffer solutions
+- **Optional EZO pH**: Atlas Scientific EZO pH circuit provides ±0.002 pH accuracy with onboard calibration
 
 ## Features
 
@@ -52,6 +53,7 @@ The device takes a water sample from the aquarium and titrates it with dilute hy
 | TMC2208 or TMC2209 stepper driver | 2 | TMC2209 enables UART interface with stall detection (auto-detected) |
 | NEMA 17 peristaltic pump | 2 | Sample and titration pumps |
 | ADS1115 ADC module | 1 | Optional: 16-bit external ADC for higher pH resolution (auto-detected) |
+| Atlas Scientific EZO pH + Isolation Board | 1 | Optional: digital pH circuit (±0.002 pH) — replaces analog probe + ADS1115 (auto-detected) |
 | DS18B20 temperature sensor | 1 | Optional: water temperature compensation (auto-detected) |
 | LM2596S buck converter | 1 | Set to 5V output |
 | TIP120 transistor | 1 | Stirrer motor driver |

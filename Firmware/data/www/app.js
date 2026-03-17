@@ -260,6 +260,11 @@
       setInput('cfg-buf_ph10', d.config.buf_ph10);
       setInput('cfg-slope_hours', d.config.slope_hours);
       setInput('cfg-num_washes', d.config.num_washes);
+      if (d.config.ph_sensor != null) {
+        var phSel = document.getElementById('cfg-ph_sensor');
+        if (phSel) phSel.value = d.config.ph_sensor;
+      }
+      updateEZOUI(d.config);
 
       // Sample pump calibration info
       var calInfo = document.getElementById('sample-cal-info');
@@ -428,6 +433,44 @@
 
     // Noise trend chart (from gran history data)
     renderNoiseTrend();
+  }
+
+  function updateEZOUI(cfg) {
+    var badge = document.getElementById('ph-sensor-badge');
+    if (badge && cfg.ph_sensor_name) badge.textContent = cfg.ph_sensor_name;
+
+    var ezoInfo = document.getElementById('ezo-cal-info');
+    var ezoActive = cfg.ezo_active;
+    if (ezoInfo) ezoInfo.style.display = ezoActive ? '' : 'none';
+
+    if (ezoActive) {
+      var pts = document.getElementById('ezo-cal-pts');
+      if (pts) pts.textContent = cfg.ezo_cal_points || 0;
+      var acid = document.getElementById('ezo-acid-slope');
+      if (acid) acid.textContent = isNaN(cfg.ezo_acid_slope) ? '--' : cfg.ezo_acid_slope.toFixed(1);
+      var base = document.getElementById('ezo-base-slope');
+      if (base) base.textContent = isNaN(cfg.ezo_base_slope) ? '--' : cfg.ezo_base_slope.toFixed(1);
+    }
+
+    // Hide cal mV values when EZO active (no voltage data)
+    var calMvEls = document.querySelectorAll('.cal-mv');
+    calMvEls.forEach(function(el) { el.style.display = ezoActive ? 'none' : ''; });
+
+    // Enforce EZO calibration order: mid (7) first, then low (4), then high (10)
+    var btn4 = document.querySelector('[data-cmd="4"]');
+    var btn10 = document.querySelector('[data-cmd="10"]');
+    if (ezoActive && btn4 && btn10) {
+      var calPts = cfg.ezo_cal_points || 0;
+      btn4.disabled = (calPts < 1);   // Need mid-point first
+      btn10.disabled = (calPts < 2);  // Need mid + low first
+      btn4.title = calPts < 1 ? 'Calibrate pH 7 first' : '';
+      btn10.title = calPts < 2 ? 'Calibrate pH 7 and pH 4 first' : '';
+    } else if (btn4 && btn10) {
+      btn4.disabled = false;
+      btn10.disabled = false;
+      btn4.title = '';
+      btn10.title = '';
+    }
   }
 
   function renderNoiseTrend() {
@@ -1770,6 +1813,14 @@
         rows.push('<tr><td>I2C / ADS1115</td><td>' + (i2cOk ? ok() : fail('Errors: ' + d.i2c.nak_count + ' NAK')) + '</td></tr>');
       } else {
         rows.push('<tr><td>I2C / ADS1115</td><td>' + skip() + '</td></tr>');
+      }
+
+      // EZO pH
+      if (d.probe && d.probe.ezo) {
+        var ezo = d.probe.ezo;
+        var ezoStatus = ezo.test_ok ? ok() + ' (pH ' + ezo.test_ph.toFixed(1) + ', FW ' + ezo.firmware + ')' : fail('test read failed');
+        rows.push('<tr><td>EZO pH</td><td>' + ezoStatus + '</td></tr>');
+        rows.push('<tr><td>EZO Slope</td><td>Acid ' + ezo.acid_slope_pct.toFixed(1) + '% / Base ' + ezo.base_slope_pct.toFixed(1) + '% (' + ezo.cal_points + ' cal pts)</td></tr>');
       }
 
       // ADC Noise

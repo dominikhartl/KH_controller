@@ -337,9 +337,14 @@ static void handleWebSocketMessage(AsyncWebSocketClient* client, void* arg, uint
         configStore.setSlopeWindowHours((int)value);
         computeKHSlope();  // refresh cached slope with new window
       }
+      else if (strcmp(key, "ph_sensor") == 0) {
+        configStore.setPhSensorType((uint8_t)(int)value);
+        publishMessage("pH sensor setting changed. Reboot to apply.");
+      }
       else if (strcmp(key, "use_ads1115") == 0) {
-        configStore.setUseADS1115((int)value == 1);
-        publishMessage("ADS1115 setting changed. Reboot to apply.");
+        // Legacy: map boolean to sensor type for backward compatibility
+        configStore.setPhSensorType((int)value == 1 ? PH_SENSOR_ADS1115 : PH_SENSOR_INTERNAL);
+        publishMessage("pH sensor setting changed. Reboot to apply.");
       }
       else if (strcmp(key, "sample_spreadcycle") == 0) {
         configStore.setSampleSpreadCycle((int)value == 1);
@@ -604,6 +609,51 @@ void calibratePH(int bufferPH) {
   char calMsg[64];
   snprintf(calMsg, sizeof(calMsg), "Calibrating pH %d at %.1f°C...", bufferPH, calTemp);
   publishMessage(calMsg);
+
+  // EZO pH: calibration is handled by the EZO circuit itself
+  if (isEZOActive()) {
+    const char* calPoint;
+    switch (bufferPH) {
+      case 7:  calPoint = "mid";  break;
+      case 4:  calPoint = "low";  break;
+      case 10: calPoint = "high"; break;
+      default: return;
+    }
+
+    startStirrer();
+    delay(STIRRER_WARMUP_MS);
+
+    // Let EZO stabilize on buffer solution with a few reads
+    for (int i = 0; i < 5; i++) ezoReadPH(calTemp);
+
+    float actualPH = bufferPHAtTemp(bufferPH, calTemp);
+    bool ok = ezoCalibrate(calPoint, actualPH);
+    stopStirrer();
+
+    if (ok) {
+      ezoQueryCalStatus();
+      uint32_t now = (uint32_t)time(nullptr);
+      if (now > MIN_VALID_EPOCH) configStore.setCalTimestamp(now);
+
+      char msg[48];
+      snprintf(msg, sizeof(msg), "EZO calibrated %s (pH %.2f)", calPoint, actualPH);
+      publishMessage(msg);
+
+      // Report probe health from EZO slope
+      char reason[96];
+      const char* health = getProbeHealthDetail(reason, sizeof(reason));
+      if (strcmp(health, "Good") != 0) {
+        char hBuf[128];
+        snprintf(hBuf, sizeof(hBuf), "Warning: Probe %s — %s", health, reason);
+        publishError(hBuf);
+      }
+    } else {
+      publishError("EZO calibration failed — check probe and buffer");
+    }
+    return;
+  }
+
+  // Analog probe calibration (ADS1115 or internal ADC)
   startStirrer();
   delay(STIRRER_WARMUP_MS);
   float v = measureVoltage(isExternalADCActive() ? 20 : 100);
@@ -841,9 +891,16 @@ void broadcastState() {
   cfg["slope_hours"] = configStore.getSlopeWindowHours();
   cfg["num_washes"] = configStore.getNumWashes();
   cfg["timezone"] = configStore.getTimezone();
-  cfg["use_ads1115"] = configStore.getUseADS1115();
+  cfg["ph_sensor"] = configStore.getPhSensorType();
+  cfg["ph_sensor_name"] = getActivePHSensor();
   cfg["ads_active"] = isExternalADCActive();
   cfg["ads_fallback"] = isExternalADCFallback();
+  cfg["ezo_active"] = isEZOActive();
+  if (isEZOActive()) {
+    cfg["ezo_cal_points"] = getEZOCalPoints();
+    cfg["ezo_acid_slope"] = getEZOAcidSlope();
+    cfg["ezo_base_slope"] = getEZOBaseSlope();
+  }
   cfg["sample_spreadcycle"] = configStore.getSampleSpreadCycle();
   cfg["sample_stall_sg"] = configStore.getSampleStallSG();
   cfg["titrate_spreadcycle"] = configStore.getTitrateSpreadCycle();

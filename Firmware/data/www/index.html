@@ -135,7 +135,13 @@
   <section class="config collapsible collapsed">
     <h2 class="section-header">Calibration <span class="chevron"></span></h2>
     <div class="section-body">
-      <h3 class="cal-heading">pH Calibration <span class="cal-age-badge" id="ph-cal-age"></span></h3>
+      <h3 class="cal-heading">pH Calibration <span class="cal-age-badge" id="ph-cal-age"></span> <span class="cal-age-badge" id="ph-sensor-badge" style="font-weight:600"></span></h3>
+      <div id="ezo-cal-info" style="display:none;margin:0 0 8px;font-size:0.85em;color:var(--text-secondary)">
+        <span>EZO Cal Points: <b id="ezo-cal-pts">0</b>/3</span>
+        &nbsp;&bull;&nbsp;Acid Slope: <b id="ezo-acid-slope">--</b>%
+        &nbsp;&bull;&nbsp;Base Slope: <b id="ezo-base-slope">--</b>%
+        <br><small>EZO requires calibration order: pH 7 first, then pH 4, then pH 10</small>
+      </div>
       <div class="cal-ph-grid">
         <div class="cal-ph-col">
           <button class="cmd-btn cal-4" data-cmd="4">Cal pH 4</button>
@@ -208,6 +214,14 @@
         </label>
         <label>Wash Cycles
           <input type="number" id="cfg-num_washes" step="1" min="1" max="5">
+        </label>
+        <label>pH Sensor
+          <select id="cfg-ph_sensor">
+            <option value="0">Auto</option>
+            <option value="1">Internal ADC</option>
+            <option value="2">ADS1115</option>
+            <option value="3">EZO pH</option>
+          </select>
         </label>
       </div>
 

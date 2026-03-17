@@ -52,6 +52,27 @@ For hardware details (bill of materials, PCB layout, pin configuration, HCl prep
    pio run -e ota -t upload --upload-port mydevice.local        # specific device
    ```
 
+### pH Sensor Options
+
+The firmware supports three pH sensor configurations, selectable in **Settings → Advanced → pH Sensor**:
+
+| Sensor | Type | Resolution | Notes |
+|--------|------|------------|-------|
+| DF-Robot pH Meter V2 | Analog (ESP32 internal ADC) | 12-bit | Default, no extra hardware needed |
+| DF-Robot + ADS1115 | Analog (external 16-bit ADC) | 16-bit | Lower noise, I2C on GPIO26/33 |
+| Atlas Scientific EZO pH | Digital (I2C) | ±0.002 pH | Requires EZO circuit + isolation board |
+
+**Auto-detection (default):** On boot, the firmware probes I2C in priority order: EZO (0x63) → ADS1115 (0x48) → internal ADC. The first detected device is used. Override this via the pH Sensor setting if needed.
+
+**EZO pH calibration:**
+- The EZO circuit stores calibration data onboard — it persists even without power
+- Calibration must be done in order: **pH 7 first**, then pH 4, then pH 10 (issuing pH 7 clears previous calibration)
+- The web UI enforces this order by disabling buttons until the prerequisite step is complete
+- At least a 2-point calibration (pH 7 + pH 4) is required for measurements
+- Probe health is reported via the EZO's `SLOPE,?` command (acid/base slope percentages)
+
+**Switching sensors:** Recalibrate pH after switching sensor type — calibration data is sensor-specific.
+
 ### Multi-Device Setup
 
 Multiple devices can run on the same network. Each device needs a unique name:
@@ -82,7 +103,7 @@ All parameters can be configured via the web interface or Home Assistant. They a
 | Endpoint method | Gran (0) | `0` = Gran analysis, `1` = fixed pH endpoint |
 | Min start pH | 7.5 | Reject measurement if sample pH is below this |
 | Stabilization timeout | 2000 ms | Max wait time for pH reading to stabilize |
-| Use ADS1115 | true | Use external 16-bit ADC for pH (requires ADS1115 module) |
+| pH sensor | Auto (0) | `0` = Auto-detect, `1` = Internal ADC, `2` = ADS1115, `3` = EZO pH |
 
 ## Web Interface
 
@@ -209,7 +230,7 @@ For best results, calibrate the pump (`t`) and carefully measure the dispensed v
 | `src/main.cpp` | Application entry, KH measurement algorithm, MQTT routing |
 | `src/web_server.cpp` | HTTP server, WebSocket dashboard, command dispatch |
 | `src/ha_discovery.cpp` | Home Assistant MQTT auto-discovery |
-| `src/measurement.cpp` | pH/voltage ADC (internal + ADS1115), 3-point calibration, probe health, Gran analysis |
+| `src/measurement.cpp` | pH/voltage ADC (internal + ADS1115 + EZO), calibration, probe health, Gran analysis |
 | `src/motors.cpp` | Stepper motor control with acceleration ramps |
 | `src/config_store.cpp` | NVS persistent configuration |
 | `src/scheduler.cpp` | NTP-based scheduled measurements |
@@ -245,10 +266,10 @@ The noise data is designed for data-driven hardware improvements: the noise rati
 
 The firmware supports an optional ADS1115 16-bit external ADC module connected via I2C (SDA=GPIO26, SCL=GPIO33) for higher-resolution pH measurement. The ADS1115 provides 16-bit resolution vs the ESP32's 12-bit internal ADC, resulting in lower noise and more precise readings.
 
-- Enabled by default (`use_ads1115` config). Disable via the web interface if no ADS1115 is connected.
-- Separate calibration values are stored for internal and external ADC — recalibrate pH after switching.
-- If the ADS1115 is configured but not detected at boot, the firmware falls back to the internal ADC automatically.
-- The web dashboard shows current probe mV and calibration voltages in the Probe Health section.
+- Auto-detected at boot (or select "ADS1115" in pH Sensor setting)
+- Separate calibration values are stored for internal and external ADC — recalibrate pH after switching
+- If configured but not detected at boot, the firmware falls back to the internal ADC automatically
+- The web dashboard shows current probe mV and calibration voltages in the Probe Health section
 
 ## License
 

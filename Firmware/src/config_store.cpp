@@ -333,9 +333,23 @@ void ConfigStore::setNumWashes(int n) {
   prefs.putInt("num_washes", n);
 }
 
-// ADS1115 external ADC
-bool ConfigStore::getUseADS1115() { return prefs.getBool("use_ads", true); }
-void ConfigStore::setUseADS1115(bool v) { prefs.putBool("use_ads", v); }
+// pH sensor type: 0=auto, 1=internal, 2=ADS1115, 3=EZO
+uint8_t ConfigStore::getPhSensorType() {
+  // Migrate from old use_ads boolean on first access
+  if (!prefs.getBool("ph_mig", false)) {
+    if (prefs.isKey("use_ads")) {
+      bool useAds = prefs.getBool("use_ads", true);
+      prefs.putUChar("ph_sensor", useAds ? PH_SENSOR_ADS1115 : PH_SENSOR_INTERNAL);
+      prefs.remove("use_ads");
+    }
+    prefs.putBool("ph_mig", true);
+  }
+  return prefs.getUChar("ph_sensor", PH_SENSOR_AUTO);
+}
+void ConfigStore::setPhSensorType(uint8_t t) {
+  if (t > PH_SENSOR_EZO) t = PH_SENSOR_AUTO;
+  prefs.putUChar("ph_sensor", t);
+}
 float ConfigStore::getVoltage4PHExt() { return prefs.getFloat("v4ph_ext", NAN); }
 float ConfigStore::getVoltage7PHExt() { return prefs.getFloat("v7ph_ext", NAN); }
 float ConfigStore::getVoltage10PHExt() { return prefs.getFloat("v10ph_ext", NAN); }

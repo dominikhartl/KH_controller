@@ -81,9 +81,11 @@ public:
   int getNumWashes();              // Number of washes before measurement (default 2, range 1-5)
   void setNumWashes(int n);
 
-  // ADS1115 external ADC
-  bool getUseADS1115();             // Use external ADC for pH (default false)
-  void setUseADS1115(bool v);
+  // pH sensor type: 0=auto, 1=internal, 2=ADS1115, 3=EZO
+  uint8_t getPhSensorType();
+  void setPhSensorType(uint8_t t);
+
+  // ADS1115 external ADC calibration voltages
   float getVoltage4PHExt();         // External ADC calibration voltages
   float getVoltage7PHExt();
   float getVoltage10PHExt();
