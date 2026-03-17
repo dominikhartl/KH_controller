@@ -449,7 +449,7 @@ void processPendingCommand() {
         char cwBuf[32];
         snprintf(cwBuf, sizeof(cwBuf), "Clean cycle %d/5", i + 1);
         publishMessage(cwBuf);
-        cwOk = removeSample(cwRevs, cwRpm);
+        cwOk = removeSample((int)(cwRevs * 1.2f), cwRpm);
         if (cwOk) cwOk = takeSample(cwRevs, cwRpm);
       }
       if (cwOk) {
@@ -801,23 +801,12 @@ void runMotorDiagnostic(char mode) {
 // --- Pump calibration ---
 
 void calibrateSamplePump() {
-  publishMessage("Calibrating sample pump: removing old water...");
   broadcastProgress(0);
   float sampRpm = configStore.getSamplePumpRPM();
-  int calRevs = configStore.getSampleCalRevolutions();
-  // Remove existing water first (same volume as calibration run)
-  if (!removeSample(calRevs, sampRpm)) {
-    publishError(wasMotorStall() ? "Error: sample pump stall during remove" : "Error: sample pump timeout during remove");
-    broadcastProgress(100);
-    return;
-  }
-  broadcastProgress(50);
-  delay(500);
-  char buf[80];
-  snprintf(buf, sizeof(buf), "Taking %d revolutions at %.0f RPM",
-           calRevs, sampRpm);
-  publishMessage(buf);
-  if (!takeSample(calRevs, sampRpm)) {
+  int fillRevs = configStore.getSampleCalRevolutions();
+  int removeRevs = (int)(fillRevs * 1.2f);
+  publishMessage("Calibrating sample pump...");
+  if (!washSampleVol(removeRevs, fillRevs, sampRpm)) {
     publishError(wasMotorStall() ? "Error: sample pump stall during calibration" : "Error: sample pump timeout during calibration");
     broadcastProgress(100);
     return;

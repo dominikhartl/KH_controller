@@ -182,11 +182,21 @@ static bool runSamplePump(int volume, bool forward, float speedRpm) {
   delay(MOTOR_ENABLE_DELAY_MS);
 
   // Backlash compensation on direction reversal
-  if (forward != lastSampleDirection) {
+  bool backlashApplied = (forward != lastSampleDirection);
+  { char _m[96];
+    snprintf(_m, sizeof(_m), "CAL: %d revs %s | lastDir=%s backlash=%s pos=%ld",
+      volume, forward ? "FWD" : "REV",
+      lastSampleDirection ? "FWD" : "REV",
+      backlashApplied ? "YES" : "NO",
+      (long)sampleStepper->getCurrentPosition());
+    Serial.println(_m); publishMessage(_m); }
+  if (backlashApplied) {
     sampleStepper->setSpeedInHz(rpmToHz(MOTOR_START_RPM));
     sampleStepper->setAcceleration(MOTOR_ACCEL_STEPS_S2);
     sampleStepper->move(forward ? BACKLASH_COMPENSATION_STEPS : -BACKLASH_COMPENSATION_STEPS);
     while (sampleStepper->isRunning()) { esp_task_wdt_reset(); delay(5); }
+    { char _m[48]; snprintf(_m, sizeof(_m), "CAL:   backlash done pos=%ld", (long)sampleStepper->getCurrentPosition());
+      Serial.println(_m); publishMessage(_m); }
   }
   lastSampleDirection = forward;
 
@@ -200,7 +210,48 @@ static bool runSamplePump(int volume, bool forward, float speedRpm) {
   unsigned long expectedMs = (unsigned long)((float)volume / speedRpm * 60000.0f);
   unsigned long timeout = max((unsigned long)SAMPLE_PUMP_TIMEOUT_MS, expectedMs * 3UL);
 
-  bool ok = waitForStepper(sampleStepper, timeout, startPos, /*trackProgress=*/true);
+  // Poll with per-10-revolution logging
+  unsigned long startTime = millis();
+  int lastLoggedRev = 0;
+  while (sampleStepper->isRunning()) {
+    esp_task_wdt_reset();
+    if (yieldCb) yieldCb();
+    if (abortCb && abortCb()) {
+      sampleStepper->forceStopAndNewPosition(sampleStepper->getCurrentPosition());
+      publishMessage("CAL: ABORTED");
+      delay(MOTOR_HOLD_MS);
+      digitalWrite(EN_PIN1, HIGH);
+      return false;
+    }
+    if (millis() - startTime > timeout) {
+      sampleStepper->forceStopAndNewPosition(sampleStepper->getCurrentPosition());
+      publishMessage("CAL: TIMEOUT");
+      delay(MOTOR_HOLD_MS);
+      digitalWrite(EN_PIN1, HIGH);
+      return false;
+    }
+    int32_t stepsDone = abs(sampleStepper->getCurrentPosition() - startPos);
+    int revsDone = (int)(stepsDone / STEPS_PER_REVOLUTION);
+    if (revsDone / 10 > lastLoggedRev / 10) {
+      lastLoggedRev = revsDone;
+      char _m[48]; snprintf(_m, sizeof(_m), "CAL:   %d revs (pos=%ld)", revsDone, (long)sampleStepper->getCurrentPosition());
+      Serial.println(_m); publishMessage(_m);
+    }
+    if (progressCb && washTotalVol > 0) {
+      int done = washBaseVol + revsDone;
+      int singlePct = (done * 100) / washTotalVol;
+      if (multiWashTotal > 0) progressCb((multiWashIndex * 100 + singlePct) / multiWashTotal);
+      else progressCb(singlePct);
+    }
+    delay(50);
+  }
+  bool ok = true;
+
+  int32_t endPos = sampleStepper->getCurrentPosition();
+  int stepsActual = (int)abs(endPos - startPos);
+  { char _m[80]; snprintf(_m, sizeof(_m), "CAL: done %d steps = %.2f revs (req %d revs) pos=%ld",
+      stepsActual, (float)stepsActual / STEPS_PER_REVOLUTION, volume, (long)endPos);
+    Serial.println(_m); publishMessage(_m); }
 
   if (!ok) {
     if (abortCb && abortCb()) {
