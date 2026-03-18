@@ -246,6 +246,8 @@
       setInput('cfg-gran_mix_delay', d.config.gran_mix_delay);
       setInput('cfg-drop_ul', d.config.drop_ul);
       setInput('cfg-titration_rpm', d.config.titration_rpm);
+      setInput('cfg-gran_burst_rpm', d.config.gran_burst_rpm);
+      setInput('cfg-gran_burst_accel', d.config.gran_burst_accel);
       setInput('cfg-fast_phase_rpm', d.config.fast_phase_rpm);
       setInput('cfg-sample_pump_rpm', d.config.sample_pump_rpm);
       if (d.config.sample_cal_vol > 0) setInput('cfg-sample_cal_vol', d.config.sample_cal_vol.toFixed(1));

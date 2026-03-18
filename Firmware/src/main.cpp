@@ -365,16 +365,41 @@ void processPendingCommand() {
       break;
     }
     case 'f': {
-      publishMessage("Filling 10 mL");
-      float fCalU = (float)configStore.getCalUnits();
-      float fTitV = configStore.getTitrationVolume();
-      int fUnits = max(2, (int)round(10000.0f * fCalU / (fTitV * 1000.0f)));
-      if (!titrate(fUnits, configStore.getTitrationRPM(), false)) {
+      publishMessage("Filling (burst mode)");
+      float fCalU          = (float)configStore.getCalUnits();
+      float fTitV          = configStore.getTitrationVolume();
+      float fBurstRPM      = configStore.getGranBurstRPM();
+      uint32_t fBurstAccel = configStore.getGranBurstAccel();
+
+      int dropUnits  = max(2, (int)round(configStore.getDropVolumeUL() * fCalU / (fTitV * 1000.0f)));
+      int pulseUnits = max(2, (int)round(1000.0f * fCalU / (fTitV * 1000.0f)));
+
+      digitalWrite(EN_PIN2, LOW);
+      delay(MOTOR_ENABLE_DELAY_MS);
+
+      int unitsDispensed = 0;
+      bool fillOk = true;
+
+      // Phase 1: 10 short drops to detach bubbles
+      for (int i = 0; i < 10 && fillOk; i++) {
+        if (!titrate(dropUnits, fBurstRPM, false, fBurstAccel)) { fillOk = false; break; }
+        unitsDispensed += dropUnits;
+        if (i < 9) delay(200);
+      }
+
+      // Phase 2: 5 × 1 mL pulses to flush bubbles out
+      for (int i = 0; i < 5 && fillOk; i++) {
+        if (!titrate(pulseUnits, fBurstRPM, false, fBurstAccel)) { fillOk = false; break; }
+        unitsDispensed += pulseUnits;
+        if (i < 4) delay(200);
+      }
+
+      if (!fillOk) {
         publishError(wasMotorStall() ? "Error: titration pump stall during fill" : "Error: titration pump timeout during fill");
       } else {
         publishMessage("Fill done");
       }
-      subtractHCl(fUnits);
+      subtractHCl(unitsDispensed);
       digitalWrite(EN_PIN2, HIGH);
       broadcastState();
       break;
