@@ -241,6 +241,7 @@ void measureKHWithValidation() {
 static const int PRECISION_TEST_COUNT = 3;
 
 static void measureKHPrecisionTest() {
+  abortRequested = false;  // Clear any stale abort from a previous measurement
   float results[PRECISION_TEST_COUNT];
   int validCount = 0;
   unsigned long testStart = millis();
