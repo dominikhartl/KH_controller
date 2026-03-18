@@ -428,6 +428,8 @@
       var asymColor = (lastAsym < 15) ? '#30d158' : (lastAsym < 25) ? '#ff9f0a' : '#ff453a';
       effChart.data.datasets[0].borderColor = asymColor;
       effChart.data.datasets[0].pointBackgroundColor = asymColor;
+      effChart.options.scales.x.min = p.effHist[0][0];
+      effChart.options.scales.x.max = p.effHist[p.effHist.length - 1][0];
       effChart.update();
     }
 
@@ -487,6 +489,8 @@
     var nColor = (last < 5) ? '#30d158' : (last < 8) ? '#ff9f0a' : '#ff453a';
     noiseChart.data.datasets[0].borderColor = nColor;
     noiseChart.data.datasets[0].pointBackgroundColor = nColor;
+    noiseChart.options.scales.x.min = data[0][0];
+    noiseChart.options.scales.x.max = data[data.length - 1][0];
     noiseChart.update();
   }
 
@@ -635,6 +639,10 @@
     // pH chart
     if (!phChart) return;
     phChart.data.datasets[0].data = d.data.map(function(p) { return {x: p[0], y: p[1]}; });
+    if (d.data.length > 0) {
+      phChart.options.scales.x.min = d.data[0][0];
+      phChart.options.scales.x.max = d.data[d.data.length - 1][0];
+    }
     phChart.update();
   }
 
@@ -786,6 +794,8 @@
         delete khChart.options.scales.y.max;
       }
     }
+    khChart.options.scales.x.min = data[0][0];
+    khChart.options.scales.x.max = data[data.length - 1][0];
     khChart.update();
   }
 
@@ -800,6 +810,8 @@
     var phColors = granHistoryData.map(function(p) { return p[4] === 1 ? '#ff9f0a' : '#ff453a'; });
     granHistChart.data.datasets[0].pointBackgroundColor = r2Colors;
     granHistChart.data.datasets[1].pointBackgroundColor = phColors;
+    granHistChart.options.scales.x.min = granHistoryData[0][0];
+    granHistChart.options.scales.x.max = granHistoryData[granHistoryData.length - 1][0];
     granHistChart.update();
   }
 
@@ -1729,6 +1741,8 @@
       if (motorBaselines.sample > 0) {
         sgSampleChart.data.datasets[1].data = motorHistoryData.map(function(p) { return {x: p[0], y: motorBaselines.sample}; });
       }
+      sgSampleChart.options.scales.x.min = motorHistoryData[0][0];
+      sgSampleChart.options.scales.x.max = motorHistoryData[motorHistoryData.length - 1][0];
       sgSampleChart.update();
     }
     if (sgTitrateChart) {
@@ -1736,6 +1750,8 @@
       if (motorBaselines.titrate > 0) {
         sgTitrateChart.data.datasets[1].data = motorHistoryData.map(function(p) { return {x: p[0], y: motorBaselines.titrate}; });
       }
+      sgTitrateChart.options.scales.x.min = motorHistoryData[0][0];
+      sgTitrateChart.options.scales.x.max = motorHistoryData[motorHistoryData.length - 1][0];
       sgTitrateChart.update();
     }
   }
