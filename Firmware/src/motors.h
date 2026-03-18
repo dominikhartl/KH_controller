@@ -53,4 +53,8 @@ float diagStallRampTitrate(float startRPM, float maxRPM, float stepRPM, int revs
                     SGSample* samples, int maxSamples, int* totalSamples,
                     bool dirForward = true, StallRampCallback rpmCb = nullptr);
 
+// Crash hint: RTC memory that survives a panic reset — log on next boot to identify crash location
+const char* getMotorCrashHint();  // returns hint string, or nullptr if none
+void clearMotorCrashHint();
+
 #endif // MOTORS_H

@@ -9,6 +9,23 @@
 
 extern void publishMessage(const char* message);
 
+// RTC memory survives a panic reset — used to identify which motor operation crashed
+RTC_NOINIT_ATTR char motorCrashHint[48];
+RTC_NOINIT_ATTR uint32_t motorCrashMagic;
+static const uint32_t CRASH_MAGIC = 0xFEEDC0DE;
+
+static void setCrashHint(const char* hint) {
+  strncpy(motorCrashHint, hint, sizeof(motorCrashHint) - 1);
+  motorCrashHint[sizeof(motorCrashHint) - 1] = '\0';
+  motorCrashMagic = CRASH_MAGIC;
+}
+
+const char* getMotorCrashHint() {
+  return (motorCrashMagic == CRASH_MAGIC) ? motorCrashHint : nullptr;
+}
+
+void clearMotorCrashHint() { motorCrashMagic = 0; }
+
 static FastAccelStepperEngine* pStepperEngine = nullptr;
 static FastAccelStepper* sampleStepper = nullptr;
 static FastAccelStepper* titrateStepper = nullptr;
@@ -143,6 +160,7 @@ void initMotors() {
 static bool waitForStepper(FastAccelStepper* stepper, unsigned long timeoutMs,
                             int32_t startPos, bool trackProgress = false) {
   unsigned long startTime = millis();
+  int lastPct = -1;
   while (stepper->isRunning()) {
     esp_task_wdt_reset();
     if (yieldCb) yieldCb();
@@ -152,11 +170,8 @@ static bool waitForStepper(FastAccelStepper* stepper, unsigned long timeoutMs,
       int revsDone = (int)(stepsDone / STEPS_PER_REVOLUTION);
       int done = washBaseVol + revsDone;
       int singlePct = (done * 100) / washTotalVol;
-      if (multiWashTotal > 0) {
-        progressCb((multiWashIndex * 100 + singlePct) / multiWashTotal);
-      } else {
-        progressCb(singlePct);
-      }
+      int pct = (multiWashTotal > 0) ? (multiWashIndex * 100 + singlePct) / multiWashTotal : singlePct;
+      if (pct != lastPct) { lastPct = pct; progressCb(pct); }
     }
 
     if (abortCb && abortCb()) {
@@ -175,6 +190,9 @@ static bool waitForStepper(FastAccelStepper* stepper, unsigned long timeoutMs,
 // Shared sample pump logic — direction is the only difference between remove and fill
 // Returns false on timeout/abort
 static bool runSamplePump(int volume, bool forward, float speedRpm) {
+  { char hint[48]; snprintf(hint, sizeof(hint), "%s %d revs",
+      forward ? "takeSample" : "removeSample", volume);
+    setCrashHint(hint); }
   clearStallFlag();
   sampleSGSum = 0; sampleSGCount = 0; sampleSGMin = 65535;
 
@@ -182,21 +200,11 @@ static bool runSamplePump(int volume, bool forward, float speedRpm) {
   delay(MOTOR_ENABLE_DELAY_MS);
 
   // Backlash compensation on direction reversal
-  bool backlashApplied = (forward != lastSampleDirection);
-  { char _m[96];
-    snprintf(_m, sizeof(_m), "CAL: %d revs %s | lastDir=%s backlash=%s pos=%ld",
-      volume, forward ? "FWD" : "REV",
-      lastSampleDirection ? "FWD" : "REV",
-      backlashApplied ? "YES" : "NO",
-      (long)sampleStepper->getCurrentPosition());
-    Serial.println(_m); publishMessage(_m); }
-  if (backlashApplied) {
+  if (forward != lastSampleDirection) {
     sampleStepper->setSpeedInHz(rpmToHz(MOTOR_START_RPM));
     sampleStepper->setAcceleration(MOTOR_ACCEL_STEPS_S2);
     sampleStepper->move(forward ? BACKLASH_COMPENSATION_STEPS : -BACKLASH_COMPENSATION_STEPS);
     while (sampleStepper->isRunning()) { esp_task_wdt_reset(); delay(5); }
-    { char _m[48]; snprintf(_m, sizeof(_m), "CAL:   backlash done pos=%ld", (long)sampleStepper->getCurrentPosition());
-      Serial.println(_m); publishMessage(_m); }
   }
   lastSampleDirection = forward;
 
@@ -210,48 +218,34 @@ static bool runSamplePump(int volume, bool forward, float speedRpm) {
   unsigned long expectedMs = (unsigned long)((float)volume / speedRpm * 60000.0f);
   unsigned long timeout = max((unsigned long)SAMPLE_PUMP_TIMEOUT_MS, expectedMs * 3UL);
 
-  // Poll with per-10-revolution logging
   unsigned long startTime = millis();
-  int lastLoggedRev = 0;
+  int lastPct = -1;
   while (sampleStepper->isRunning()) {
     esp_task_wdt_reset();
     if (yieldCb) yieldCb();
     if (abortCb && abortCb()) {
       sampleStepper->forceStopAndNewPosition(sampleStepper->getCurrentPosition());
-      publishMessage("CAL: ABORTED");
       delay(MOTOR_HOLD_MS);
       digitalWrite(EN_PIN1, HIGH);
       return false;
     }
     if (millis() - startTime > timeout) {
       sampleStepper->forceStopAndNewPosition(sampleStepper->getCurrentPosition());
-      publishMessage("CAL: TIMEOUT");
       delay(MOTOR_HOLD_MS);
       digitalWrite(EN_PIN1, HIGH);
       return false;
     }
-    int32_t stepsDone = abs(sampleStepper->getCurrentPosition() - startPos);
-    int revsDone = (int)(stepsDone / STEPS_PER_REVOLUTION);
-    if (revsDone / 10 > lastLoggedRev / 10) {
-      lastLoggedRev = revsDone;
-      char _m[48]; snprintf(_m, sizeof(_m), "CAL:   %d revs (pos=%ld)", revsDone, (long)sampleStepper->getCurrentPosition());
-      Serial.println(_m); publishMessage(_m);
-    }
     if (progressCb && washTotalVol > 0) {
+      int32_t stepsDone = abs(sampleStepper->getCurrentPosition() - startPos);
+      int revsDone = (int)(stepsDone / STEPS_PER_REVOLUTION);
       int done = washBaseVol + revsDone;
       int singlePct = (done * 100) / washTotalVol;
-      if (multiWashTotal > 0) progressCb((multiWashIndex * 100 + singlePct) / multiWashTotal);
-      else progressCb(singlePct);
+      int pct = (multiWashTotal > 0) ? (multiWashIndex * 100 + singlePct) / multiWashTotal : singlePct;
+      if (pct != lastPct) { lastPct = pct; progressCb(pct); }
     }
     delay(50);
   }
   bool ok = true;
-
-  int32_t endPos = sampleStepper->getCurrentPosition();
-  int stepsActual = (int)abs(endPos - startPos);
-  { char _m[80]; snprintf(_m, sizeof(_m), "CAL: done %d steps = %.2f revs (req %d revs) pos=%ld",
-      stepsActual, (float)stepsActual / STEPS_PER_REVOLUTION, volume, (long)endPos);
-    Serial.println(_m); publishMessage(_m); }
 
   if (!ok) {
     if (abortCb && abortCb()) {
@@ -344,6 +338,8 @@ bool washSampleVol(int removeRevs, int fillRevs, float speedRpm) {
 }
 
 bool titrate(int volume, float speedRpm, bool noAccel) {
+  { char hint[48]; snprintf(hint, sizeof(hint), "titrate %d units", volume);
+    setCrashHint(hint); }
   clearStallFlag();
   titrateSGSum = 0; titrateSGCount = 0; titrateSGMin = 65535;
 

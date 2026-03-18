@@ -1771,6 +1771,15 @@ void setup() {
     char bootBuf[64];
     snprintf(bootBuf, sizeof(bootBuf), "BOOT (reason=%d, heap=%u)", reason, ESP.getFreeHeap());
     publishMessage(bootBuf);
+    if (reason == ESP_RST_PANIC) {
+      const char* hint = getMotorCrashHint();
+      if (hint) {
+        char hintBuf[64];
+        snprintf(hintBuf, sizeof(hintBuf), "CRASH during: %s", hint);
+        publishMessage(hintBuf);
+      }
+    }
+    clearMotorCrashHint();
     if (isExternalADCActive()) {
       publishMessage("ADS1115 external ADC active");
     } else if (isExternalADCFallback()) {
