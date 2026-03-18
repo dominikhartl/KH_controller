@@ -400,6 +400,10 @@ void initExternalADC() {
   if (sensorType == PH_SENSOR_AUTO || sensorType == PH_SENSOR_EZO) {
     initEZOpH();
     if (ezoActive()) return;  // EZO found — skip ADS1115
+    // EZO NACK may leave ESP32 I2C bus in bad state — reset before probing ADS1115
+    Wire.end();
+    Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN);
+    Wire.setClock(100000);
   }
 
   // Try ADS1115 (auto or explicit ADS1115 mode)

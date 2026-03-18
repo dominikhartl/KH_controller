@@ -335,14 +335,23 @@ void ConfigStore::setNumWashes(int n) {
 
 // pH sensor type: 0=auto, 1=internal, 2=ADS1115, 3=EZO
 uint8_t ConfigStore::getPhSensorType() {
-  // Migrate from old use_ads boolean on first access
+  // Migrate from old use_ads boolean on first access.
+  // Old default was true (ADS1115 enabled) so absence of the key also means ADS1115.
   if (!prefs.getBool("ph_mig", false)) {
-    if (prefs.isKey("use_ads")) {
-      bool useAds = prefs.getBool("use_ads", true);
-      prefs.putUChar("ph_sensor", useAds ? PH_SENSOR_ADS1115 : PH_SENSOR_INTERNAL);
-      prefs.remove("use_ads");
-    }
+    bool useAds = prefs.getBool("use_ads", true);  // default true = ADS1115
+    prefs.putUChar("ph_sensor", useAds ? PH_SENSOR_ADS1115 : PH_SENSOR_INTERNAL);
+    prefs.remove("use_ads");
     prefs.putBool("ph_mig", true);
+    prefs.putBool("ph_mig2", true);  // mark second migration done too
+  }
+  // Second migration: devices that ran the first migration before the fix above landed
+  // ended up with ph_sensor=AUTO (0) because use_ads was never stored (default was true).
+  // Upgrade AUTO → ADS1115 to restore the original behaviour.
+  if (!prefs.getBool("ph_mig2", false)) {
+    if (prefs.getUChar("ph_sensor", PH_SENSOR_AUTO) == PH_SENSOR_AUTO) {
+      prefs.putUChar("ph_sensor", PH_SENSOR_ADS1115);
+    }
+    prefs.putBool("ph_mig2", true);
   }
   return prefs.getUChar("ph_sensor", PH_SENSOR_AUTO);
 }
