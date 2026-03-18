@@ -47,7 +47,9 @@ inline float rpmToHalfPeriodUs(float rpm) { return 18750.0f / rpm; }
 // Motor speeds (RPM) — all stepper speeds defined here, converted to us internally
 static const float MOTOR_TARGET_RPM   = 80.0f;   // Sample pump cruising speed
 static const float MOTOR_START_RPM    = 9.4f;     // Acceleration ramp start speed (~2000 us)
-static const float TITRATION_RPM      = 47.0f;    // Titration pump speed (~400 us)
+static const float TITRATION_RPM      = 47.0f;    // Titration pump speed for cal/prefill/fill (~400 us)
+static const float GRAN_BURST_RPM     = 250.0f;   // Gran zone burst ejection speed (RPM)
+static const uint32_t GRAN_BURST_ACCEL = 200000;  // Gran zone burst acceleration (steps/s²)
 static const float PREFILL_RPM        = 63.0f;    // Prefill/fill pump speed (~300 us)
 static const float MOTOR_ACCEL_FACTOR = 0.999;    // Acceleration/deceleration factor (per step)
 
@@ -61,7 +63,7 @@ static const int MAX_TITRATION_UNITS = 50000;  // Absolute hard cap (user sets s
 static const int FILL_VOLUME = 100;
 static const int STIRRER_SPEED_PCT = 90;           // Stirrer duty cycle (%)
 static const float SAMPLE_MAX_RPM = 250.0f;        // Sample pump max speed (RPM)
-static const float TITRATE_MAX_RPM = 150.0f;       // Titration pump max speed (RPM)
+static const float TITRATE_MAX_RPM = 250.0f;       // Titration pump max speed (RPM)
 static const int STIRRER_WARMUP_MS = 3000;
 static const int MEASUREMENT_DELAY_MS = 50;
 

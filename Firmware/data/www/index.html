@@ -244,7 +244,7 @@
         <label>Prefill Volume (uL)
           <input type="number" id="cfg-prefill_ul" step="10" min="10" max="500">
         </label>
-        <label>Gran Phase RPM
+        <label>Cal / Prefill RPM
           <input type="number" id="cfg-titration_rpm" step="1" min="10" max="200">
         </label>
         <label>Fast Phase RPM
@@ -256,7 +256,16 @@
         <label>Fast Step Size (uL)
           <input type="number" id="cfg-fast_step_ul" step="10" min="50" max="2000">
         </label>
+        <label>Gran Burst RPM
+          <input type="number" id="cfg-gran_burst_rpm" step="5" min="80" max="250">
+        </label>
+        <label>Gran Burst Accel (steps/s²)
+          <input type="number" id="cfg-gran_burst_accel" step="10000" min="50000" max="500000">
+        </label>
       </div>
+      <h3 class="cal-heading">Gran Burst Test</h3>
+      <button class="cmd-btn" data-cmd="gran_test" id="btn-gran-test">Test 5 Drops</button>
+      <p style="font-size:.75em;color:var(--text-tertiary);margin:4px 0 0">Dispenses 5 &times; Gran burst drops using current burst settings</p>
     </div>
   </section>
 

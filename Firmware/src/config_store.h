@@ -44,8 +44,12 @@ public:
   void setGranMixDelay(int ms);
   float getDropVolumeUL();       // Gran zone drop volume in µL (default 26.0)
   void setDropVolumeUL(float ul);
-  float getTitrationRPM();       // Gran zone ejection speed in RPM (default TITRATION_RPM)
+  float getTitrationRPM();       // Cal/prefill/fill pump speed in RPM (default TITRATION_RPM)
   void setTitrationRPM(float rpm);
+  float getGranBurstRPM();       // Gran zone burst ejection speed in RPM (default GRAN_BURST_RPM)
+  void setGranBurstRPM(float rpm);
+  uint32_t getGranBurstAccel();  // Gran zone burst acceleration in steps/s² (default GRAN_BURST_ACCEL)
+  void setGranBurstAccel(uint32_t accel);
   float getFastPhaseRPM();       // Fast titration phase speed in RPM (default 50)
   void setFastPhaseRPM(float rpm);
   float getPrefillVolumeUL();    // Prefill volume in µL (default 100.0)

@@ -27,7 +27,7 @@ bool removeSample(int volume, float speedRpm);
 bool takeSample(int volume, float speedRpm);
 bool washSample(float remPart, float fillPart, float speedRpm);   // Legacy: uses SAMPLE_PUMP_VOLUME
 bool washSampleVol(int removeRevs, int fillRevs, float speedRpm); // Absolute revolution counts
-bool titrate(int volume, float speedRpm, bool noAccel = false);
+bool titrate(int volume, float speedRpm, bool noAccel = false, uint32_t accelOverride = 0);
 
 // Per-operation SG stats for tube wear tracking
 void getLastSampleSGStats(uint16_t* avg, uint16_t* min);

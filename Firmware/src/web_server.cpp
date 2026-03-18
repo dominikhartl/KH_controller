@@ -303,7 +303,9 @@ static void handleWebSocketMessage(AsyncWebSocketClient* client, void* arg, uint
       }
       else if (strcmp(key, "num_washes") == 0) { configStore.setNumWashes((int)value); }
       else if (strcmp(key, "drop_ul") == 0) { configStore.setDropVolumeUL(value); }
-      else if (strcmp(key, "titration_rpm") == 0) { configStore.setTitrationRPM(value); }
+      else if (strcmp(key, "titration_rpm") == 0)   { configStore.setTitrationRPM(value); }
+      else if (strcmp(key, "gran_burst_rpm") == 0)   { configStore.setGranBurstRPM(value); }
+      else if (strcmp(key, "gran_burst_accel") == 0) { configStore.setGranBurstAccel((uint32_t)value); }
       else if (strcmp(key, "fast_phase_rpm") == 0) { configStore.setFastPhaseRPM(value); }
       else if (strcmp(key, "sample_pump_rpm") == 0 && value >= 20.0f && value <= 250.0f) { configStore.setSamplePumpRPM(value); }
       else if (strcmp(key, "sample_cal_revs") == 0 && (int)value >= 50) {
@@ -690,6 +692,10 @@ void executeCommand(const char* cmd) {
     // Defer precision test to loopTask — runs 3 full measurements (~2+ hours)
     queueCommand('P');
     return;
+  } else if (strcmp(cmd, "gran_test") == 0) {
+    // Defer Gran burst test to loopTask — dispenses 5 burst drops
+    queueCommand('G');
+    return;
   } else if (strcmp(cmd, "abort") == 0) {
     requestAbort();
     publishMessage("Aborting measurement...");
@@ -814,7 +820,9 @@ void broadcastState() {
   cfg["stab_timeout"] = configStore.getStabilizationTimeout();
   cfg["gran_mix_delay"] = configStore.getGranMixDelay();
   cfg["drop_ul"] = configStore.getDropVolumeUL();
-  cfg["titration_rpm"] = configStore.getTitrationRPM();
+  cfg["titration_rpm"]   = configStore.getTitrationRPM();
+  cfg["gran_burst_rpm"]  = configStore.getGranBurstRPM();
+  cfg["gran_burst_accel"] = configStore.getGranBurstAccel();
   cfg["fast_phase_rpm"] = configStore.getFastPhaseRPM();
   cfg["sample_pump_rpm"] = configStore.getSamplePumpRPM();
   cfg["sample_cal_revs_per_ml"] = configStore.getSampleCalRevsPerML();
@@ -1591,7 +1599,7 @@ void setupWebServer() {
               "\"hcl_volume\":%.1f,\"cal_units\":%d,"
               "\"fast_ph\":%.1f,\"endpoint_method\":%d,"
               "\"min_start_ph\":%.1f,\"stab_timeout\":%d,\"gran_mix_delay\":%d,"
-              "\"drop_ul\":%.1f,\"titration_rpm\":%.1f,\"fast_phase_rpm\":%.1f,\"prefill_ul\":%.1f,"
+              "\"drop_ul\":%.1f,\"titration_rpm\":%.1f,\"gran_burst_rpm\":%.1f,\"gran_burst_accel\":%u,\"fast_phase_rpm\":%.1f,\"prefill_ul\":%.1f,"
               "\"max_acid_ml\":%.1f,\"fast_step_ul\":%d,"
               "\"cal_v4\":%.2f,\"cal_v7\":%.2f,\"cal_v10\":%.2f,"
               "\"schedule_mode\":%d,\"interval_hours\":%d,\"anchor_time\":%d"
@@ -1604,7 +1612,7 @@ void setupWebServer() {
               configStore.getHClVolume(), configStore.getCalUnits(),
               configStore.getFastTitrationPH(), (int)configStore.getEndpointMethod(),
               configStore.getMinStartPH(), configStore.getStabilizationTimeout(), configStore.getGranMixDelay(),
-              configStore.getDropVolumeUL(), configStore.getTitrationRPM(), configStore.getFastPhaseRPM(), configStore.getPrefillVolumeUL(),
+              configStore.getDropVolumeUL(), configStore.getTitrationRPM(), configStore.getGranBurstRPM(), configStore.getGranBurstAccel(), configStore.getFastPhaseRPM(), configStore.getPrefillVolumeUL(),
               configStore.getMaxAcidML(), configStore.getFastStepUL(),
               voltage_4PH, voltage_7PH, voltage_10PH,
               (int)configStore.getScheduleMode(),

@@ -151,6 +151,28 @@ void ConfigStore::setTitrationRPM(float rpm) {
   if (rpm > 200.0) rpm = 200.0;
   prefs.putFloat("tit_rpm", rpm);
 }
+float ConfigStore::getGranBurstRPM() {
+  float rpm = prefs.getFloat("gran_brpm", GRAN_BURST_RPM);
+  if (rpm < 80.0f)  rpm = 80.0f;
+  if (rpm > 250.0f) rpm = 250.0f;
+  return rpm;
+}
+void ConfigStore::setGranBurstRPM(float rpm) {
+  if (rpm < 80.0f)  rpm = 80.0f;
+  if (rpm > 250.0f) rpm = 250.0f;
+  prefs.putFloat("gran_brpm", rpm);
+}
+uint32_t ConfigStore::getGranBurstAccel() {
+  uint32_t a = prefs.getUInt("gran_baccel", GRAN_BURST_ACCEL);
+  if (a < 50000)  a = 50000;
+  if (a > 500000) a = 500000;
+  return a;
+}
+void ConfigStore::setGranBurstAccel(uint32_t accel) {
+  if (accel < 50000)  accel = 50000;
+  if (accel > 500000) accel = 500000;
+  prefs.putUInt("gran_baccel", accel);
+}
 float ConfigStore::getFastPhaseRPM() {
   float rpm = prefs.getFloat("fast_rpm", 50.0);
   if (rpm < 10.0) rpm = 10.0;

@@ -115,7 +115,7 @@ static void publishKHResult(const KHResult& r) {
   uint32_t ts = (uint32_t)time(nullptr);
   appendHistory("kh", r.khValue, ts);
   appendHistory("ph", r.startPH, ts);
-  appendGranHistory(r.granR2, r.hclUsed, r.endpointPH, r.usedGran, r.confidence, r.khGran, r.khEndpoint, r.probeNoiseMv, r.phReversals, configStore.getDropVolumeUL(), configStore.getTitrationRPM(), r.khCI, ts, r.startPH, getAcidEfficiency());
+  appendGranHistory(r.granR2, r.hclUsed, r.endpointPH, r.usedGran, r.confidence, r.khGran, r.khEndpoint, r.probeNoiseMv, r.phReversals, configStore.getDropVolumeUL(), configStore.getGranBurstRPM(), r.khCI, ts, r.startPH, getAcidEfficiency());
 
   // Motor health (SG stats from this measurement's pump operations)
   if (isTMCDetected()) {
@@ -377,6 +377,24 @@ void processPendingCommand() {
       subtractHCl(fUnits);
       digitalWrite(EN_PIN2, HIGH);
       broadcastState();
+      break;
+    }
+    case 'G': {
+      publishMessage("Gran burst test: 5 drops");
+      float gCalU  = (float)configStore.getCalUnits();
+      float gTitV  = configStore.getTitrationVolume();
+      float gDropUL = configStore.getDropVolumeUL();
+      int gStepVol  = max(2, (int)round(gDropUL * gCalU / (gTitV * 1000.0f)));
+      float gRPM    = configStore.getGranBurstRPM();
+      uint32_t gAccel = configStore.getGranBurstAccel();
+      digitalWrite(EN_PIN2, LOW);
+      delay(MOTOR_ENABLE_DELAY_MS);
+      for (int i = 0; i < 5; i++) {
+        titrate(gStepVol, gRPM, false, gAccel);
+        delay(1000);
+      }
+      digitalWrite(EN_PIN2, HIGH);
+      publishMessage("Gran burst test done");
       break;
     }
     case 's': {
@@ -859,10 +877,11 @@ void calibrateTitrationPump() {
 
   // --- Precise phase ---
   publishMessage("Cal: precise phase");
-  float preciseRPM_cal = configStore.getTitrationRPM();
+  float preciseRPM_cal      = configStore.getGranBurstRPM();
+  uint32_t preciseAccel_cal = configStore.getGranBurstAccel();
   while (units < targetUnits) {
     int step = min(PRECISE_STEP, targetUnits - units);
-    if (!titrate(step, preciseRPM_cal)) {
+    if (!titrate(step, preciseRPM_cal, false, preciseAccel_cal)) {
       publishError(wasMotorStall() ? "Error: titration pump stall during calibration" : "Error: titration pump timeout during calibration");
       if (units > 0) subtractHCl(units);
       units = 0;
@@ -996,6 +1015,16 @@ KHResult measureKH() {
     digitalWrite(EN_PIN2, HIGH);
     isMeasuringKH = false;
     return result;
+  }
+  // 5 Gran burst drops to eject any hanging drop from the tip before measurement
+  {
+    float dropUL   = configStore.getDropVolumeUL();
+    int burstStep  = max(2, (int)round(dropUL * calU / (titV * 1000.0f)));
+    float burstRPM = configStore.getGranBurstRPM();
+    uint32_t burstAccel = configStore.getGranBurstAccel();
+    for (int i = 0; i < 5; i++) {
+      titrate(burstStep, burstRPM, false, burstAccel);
+    }
   }
   // Keep titration motor enabled after prefill to prevent suckback
   publishMessage("Taking sample");
@@ -1199,8 +1228,9 @@ KHResult measureKH() {
     int cachedGranStepVol = max(2, (int)round(cachedDropUL * cachedUnitsPerUL));
     // Medium zone: ~40 µL per step (coarser than Gran, just needs to get to Gran region)
     int cachedMediumStepVol = max(4, (int)round(40.0f * cachedUnitsPerUL));
-    float cachedGranRPM = configStore.getTitrationRPM();
-    int cachedGranMixDelay = configStore.getGranMixDelay();
+    float cachedGranRPM      = configStore.getGranBurstRPM();
+    uint32_t cachedGranAccel = configStore.getGranBurstAccel();
+    int cachedGranMixDelay   = configStore.getGranMixDelay();
 
     while (!isnan(pH) && pH > stopPH && units < maxUnits
            && errorflag == 0) {
@@ -1224,7 +1254,7 @@ KHResult measureKH() {
         // Gran zone (pH below GRAN_REGION_PH): smaller steps, stabilization, accurate readings
         curPhase = 2;
         stepVol = cachedGranStepVol;
-        if (!titrate(stepVol, cachedGranRPM)) {
+        if (!titrate(stepVol, cachedGranRPM, false, cachedGranAccel)) {
           errorMessage = wasMotorStall() ? "Error: titration pump stall in Gran zone" : "Error: titration pump timeout in Gran zone";
           errorflag = 1;
           break;

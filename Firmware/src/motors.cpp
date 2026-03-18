@@ -337,7 +337,7 @@ bool washSampleVol(int removeRevs, int fillRevs, float speedRpm) {
   return ok;
 }
 
-bool titrate(int volume, float speedRpm, bool noAccel) {
+bool titrate(int volume, float speedRpm, bool noAccel, uint32_t accelOverride) {
   { char hint[48]; snprintf(hint, sizeof(hint), "titrate %d units", volume);
     setCrashHint(hint); }
   clearStallFlag();
@@ -352,7 +352,9 @@ bool titrate(int volume, float speedRpm, bool noAccel) {
   int totalSteps = volume * MOTOR_STEPS_PER_UNIT;
   titrateStepper->setSpeedInHz(rpmToHz(speedRpm));
   // Small volumes and noAccel: instant acceleration (hardware stepping still precise)
-  if (noAccel || volume <= TITRATE_ACCEL_THRESHOLD) {
+  if (accelOverride > 0) {
+    titrateStepper->setAcceleration(accelOverride);
+  } else if (noAccel || volume <= TITRATE_ACCEL_THRESHOLD) {
     titrateStepper->setAcceleration(100000);
   } else {
     titrateStepper->setAcceleration(MOTOR_ACCEL_STEPS_S2);
