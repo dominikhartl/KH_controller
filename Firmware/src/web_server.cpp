@@ -287,7 +287,6 @@ static void handleWebSocketMessage(AsyncWebSocketClient* client, void* arg, uint
       bool saved = true;
 
       if (strcmp(key, "titration_vol") == 0 && value > 0) configStore.setTitrationVolume(value);
-      else if (strcmp(key, "sample_vol") == 0 && value > 0) configStore.setSampleVolume(value);
       else if (strcmp(key, "correction_factor") == 0 && value >= 0.5f && value <= 2.0f) configStore.setCorrectionFactor(value);
       else if (strcmp(key, "hcl_molarity") == 0 && value > 0 && value <= 1) configStore.setHClMolarity(value);
       else if (strcmp(key, "hcl_volume") == 0 && value >= 0) configStore.setHClVolume(value);
@@ -805,7 +804,6 @@ void broadcastState() {
   JsonObject cfg = doc["config"].to<JsonObject>();
   cfg["device_name"] = deviceName;
   cfg["titration_vol"] = configStore.getTitrationVolume();
-  cfg["sample_vol"] = configStore.getSampleVolume();
   cfg["correction_factor"] = configStore.getCorrectionFactor();
   cfg["hcl_molarity"] = configStore.getHClMolarity();
   cfg["hcl_volume"] = configStore.getHClVolume();
@@ -1588,7 +1586,7 @@ void setupWebServer() {
               "{\"device\":\"%s\",\"firmware\":\"%s\","
               "\"timestamp\":%u,\"uptime\":%lu,\"freeHeap\":%u,\"heapMin\":%u,"
               "\"config\":{"
-              "\"titration_vol\":%.2f,\"sample_vol\":%.1f,"
+              "\"titration_vol\":%.2f,\"sample_vol\":%.1f,"  // sample_vol derived from cal
               "\"correction_factor\":%.3f,\"hcl_molarity\":%.4f,"
               "\"hcl_volume\":%.1f,\"cal_units\":%d,"
               "\"fast_ph\":%.1f,\"endpoint_method\":%d,"
@@ -1600,7 +1598,8 @@ void setupWebServer() {
               "},",
               deviceName, FW_VERSION,
               (uint32_t)time(nullptr), millis() / 1000, ESP.getFreeHeap(), heapMin,
-              configStore.getTitrationVolume(), configStore.getSampleVolume(),
+              configStore.getTitrationVolume(),
+              configStore.getSampleCalRevsPerML() > 0 ? (float)configStore.getSampleCalRevolutions() / configStore.getSampleCalRevsPerML() : 0.0f,
               configStore.getCorrectionFactor(), configStore.getHClMolarity(),
               configStore.getHClVolume(), configStore.getCalUnits(),
               configStore.getFastTitrationPH(), (int)configStore.getEndpointMethod(),

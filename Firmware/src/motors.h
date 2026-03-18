@@ -19,6 +19,9 @@ void setMotorProgressCallback(MotorProgressCallback cb);
 void setMultiWashContext(int numWashes);
 void clearMultiWashContext();
 
+// Initialize FastAccelStepper engine and stepper objects — call once during setup
+void initMotors();
+
 // All motor functions return true on success, false on timeout
 bool removeSample(int volume, float speedRpm);
 bool takeSample(int volume, float speedRpm);
@@ -49,5 +52,9 @@ float diagStallRamp(float startRPM, float maxRPM, float stepRPM, int revsPerStep
 float diagStallRampTitrate(float startRPM, float maxRPM, float stepRPM, int revsPerStep,
                     SGSample* samples, int maxSamples, int* totalSamples,
                     bool dirForward = true, StallRampCallback rpmCb = nullptr);
+
+// Crash hint: RTC memory that survives a panic reset — log on next boot to identify crash location
+const char* getMotorCrashHint();  // returns hint string, or nullptr if none
+void clearMotorCrashHint();
 
 #endif // MOTORS_H
