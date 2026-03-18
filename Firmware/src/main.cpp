@@ -824,15 +824,24 @@ void calibrateTitrationPump() {
   broadcastProgress(0);
 
   units = 0;
-  // Batch size ~65 µL for stall detection between batches
-  float calU_cal = (float)configStore.getCalUnits();
-  float titV_cal = configStore.getTitrationVolume();
+  float calU_cal       = (float)configStore.getCalUnits();
+  float titV_cal       = configStore.getTitrationVolume();
   float unitsPerUL_cal = (titV_cal > 0) ? calU_cal / (titV_cal * 1000.0f) : 1.0f;
-  const int BATCH = max(4, (int)round(65.0f * unitsPerUL_cal));
 
-  while (units < targetUnits) {
-    int batch = min(BATCH, targetUnits - units);
-    if (!titrate(batch, TITRATION_RPM)) {
+  // Fast phase: UI-set step size at fast RPM (bulk volume)
+  const int FAST_STEP  = max(4, (int)round(configStore.getFastStepUL() * unitsPerUL_cal));
+  float fastRPM_cal    = configStore.getFastPhaseRPM();
+
+  // Precise phase: drop-sized steps at titration RPM (final 20 drops)
+  const int PRECISE_STEP      = max(2, (int)round(configStore.getDropVolumeUL() * unitsPerUL_cal));
+  const int precisePhaseUnits = 20 * PRECISE_STEP;
+  const int fastPhaseTarget   = max(0, targetUnits - precisePhaseUnits);
+
+  // --- Fast phase ---
+  publishMessage("Cal: fast phase");
+  while (units < fastPhaseTarget) {
+    int batch = min(FAST_STEP, fastPhaseTarget - units);
+    if (!titrate(batch, fastRPM_cal)) {
       publishError(wasMotorStall() ? "Error: titration pump stall during calibration" : "Error: titration pump timeout during calibration");
       if (units > 0) subtractHCl(units);
       units = 0;
@@ -841,11 +850,31 @@ void calibrateTitrationPump() {
       return;
     }
     units += batch;
-    int pct = (units * 99) / targetUnits;  // cap at 99% until fully done
-    broadcastProgress(pct);
+    broadcastProgress((units * 99) / targetUnits);
     delay(TITRATION_MIX_DELAY_FAST_MS);
     ArduinoOTA.handle();
-    snprintf(buf, sizeof(buf), "Cal: %d / %d revolutions", units / 100, targetUnits / 100);
+    snprintf(buf, sizeof(buf), "Cal: %d / %d rev", units / 100, targetUnits / 100);
+    publishMessage(buf);
+  }
+
+  // --- Precise phase ---
+  publishMessage("Cal: precise phase");
+  float preciseRPM_cal = configStore.getTitrationRPM();
+  while (units < targetUnits) {
+    int step = min(PRECISE_STEP, targetUnits - units);
+    if (!titrate(step, preciseRPM_cal)) {
+      publishError(wasMotorStall() ? "Error: titration pump stall during calibration" : "Error: titration pump timeout during calibration");
+      if (units > 0) subtractHCl(units);
+      units = 0;
+      digitalWrite(EN_PIN2, HIGH);
+      broadcastProgress(100);
+      return;
+    }
+    units += step;
+    broadcastProgress((units * 99) / targetUnits);
+    delay(TITRATION_MIX_DELAY_FAST_MS);
+    ArduinoOTA.handle();
+    snprintf(buf, sizeof(buf), "Cal: %d / %d rev (precise)", units / 100, targetUnits / 100);
     publishMessage(buf);
   }
 
