@@ -638,17 +638,25 @@ const char* getProbeHealthDetail(char* reasonBuf, size_t reasonLen) {
       return "Unknown";
     }
     float acidSlp = ezoAcidSlopeCache;
-    if (isnan(acidSlp)) {
+    float baseSlp = ezoBaseSlopeCache;
+    if (isnan(acidSlp) && isnan(baseSlp)) {
       if (reasonBuf) snprintf(reasonBuf, reasonLen, "slope data unavailable");
       return "Unknown";
     }
+    // Check both slopes — report whichever is worse
     // EZO slope: ideal ~99.7%, acceptable 92-103%
-    if (acidSlp < 85.0f || acidSlp > 110.0f) {
-      if (reasonBuf) snprintf(reasonBuf, reasonLen, "acid slope %.1f%% (need 85-110%%)", acidSlp);
+    float worstSlp = acidSlp;
+    const char* worstLabel = "acid";
+    if (!isnan(baseSlp) && (isnan(worstSlp) || baseSlp < worstSlp)) {
+      worstSlp = baseSlp;
+      worstLabel = "base";
+    }
+    if (worstSlp < 85.0f || worstSlp > 110.0f) {
+      if (reasonBuf) snprintf(reasonBuf, reasonLen, "%s slope %.1f%% (need 85-110%%)", worstLabel, worstSlp);
       return "Replace";
     }
-    if (acidSlp < 92.0f || acidSlp > 103.0f) {
-      if (reasonBuf) snprintf(reasonBuf, reasonLen, "acid slope %.1f%% (ideal 92-103%%)", acidSlp);
+    if (worstSlp < 92.0f || worstSlp > 103.0f) {
+      if (reasonBuf) snprintf(reasonBuf, reasonLen, "%s slope %.1f%% (ideal 92-103%%)", worstLabel, worstSlp);
       return "Fair";
     }
     if (reasonBuf && reasonLen > 0) reasonBuf[0] = '\0';
