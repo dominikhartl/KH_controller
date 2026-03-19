@@ -564,9 +564,9 @@ static void handleWebSocketMessage(AsyncWebSocketClient* client, void* arg, uint
         }
         f.close();
 
-        static char buf[6144];
-        size_t written = serializeJson(resp, buf, sizeof(buf));
-        if (written > 0) ws.textAll(buf);
+        String out;
+        serializeJson(resp, out);
+        if (out.length() > 0) ws.textAll(out);
       } else {
         // KH/pH CSV: timestamp,value
         JsonDocument resp;
@@ -647,6 +647,7 @@ void calibratePH(int bufferPH) {
         snprintf(hBuf, sizeof(hBuf), "Warning: Probe %s — %s", health, reason);
         publishError(hBuf);
       }
+      broadcastState();  // Push updated slopes and health to UI
     } else {
       publishError("EZO calibration failed — check probe and buffer");
     }
@@ -825,16 +826,21 @@ void broadcastState() {
 
   // Probe health
   JsonObject probe = doc["probe"].to<JsonObject>();
+  probe["ezo"] = isEZOActive();
   probe["acidEff"] = getAcidEfficiency();
   probe["alkEff"] = getAlkalineEfficiency();
   probe["asymmetry"] = getProbeAsymmetry();
-  probe["response"] = getLastStabilizationMs();
-  probe["mV"] = voltage;
-  probe["v4"] = voltage_4PH;
-  probe["v7"] = voltage_7PH;
-  probe["v10"] = voltage_10PH;
-  float avgNoise = getAvgStabNoiseMv();
-  if (avgNoise > 0) probe["noise"] = serialized(String(avgNoise, 1));
+  if (isEZOActive()) {
+    probe["calPoints"] = getEZOCalPoints();
+  } else {
+    probe["response"] = getLastStabilizationMs();
+    probe["mV"] = voltage;
+    probe["v4"] = voltage_4PH;
+    probe["v7"] = voltage_7PH;
+    probe["v10"] = voltage_10PH;
+    float avgNoise = getAvgStabNoiseMv();
+    if (avgNoise > 0) probe["noise"] = serialized(String(avgNoise, 1));
+  }
   probe["health"] = getProbeHealth();
   uint32_t calTs = configStore.getCalTimestamp();
   if (calTs > 0) {

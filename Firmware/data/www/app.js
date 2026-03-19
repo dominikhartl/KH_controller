@@ -331,11 +331,22 @@
     if (d.probe) updateProbeHealth(d.probe);
   }
 
-  function effClass(v) {
+  function effClass(v, ezo) {
+    if (ezo) return (v >= 92 && v <= 103) ? 'good' : (v >= 85 && v <= 110) ? 'fair' : 'replace';
     return (v >= 95) ? 'good' : (v >= 85) ? 'fair' : 'replace';
   }
 
   function updateProbeHealth(p) {
+    var isEzo = !!p.ezo;
+
+    // Toggle analog-only / ezo-only items
+    document.querySelectorAll('.probe-grid .analog-only').forEach(function(el) { el.style.display = isEzo ? 'none' : ''; });
+    document.querySelectorAll('.probe-grid .ezo-only').forEach(function(el) { el.style.display = isEzo ? '' : 'none'; });
+
+    // Hide noise chart when EZO (no ADC noise data)
+    var noiseChartContainer = document.getElementById('chart-noise');
+    if (noiseChartContainer) noiseChartContainer.parentElement.style.display = isEzo ? 'none' : '';
+
     var healthEl = document.getElementById('probe-health');
     if (healthEl) {
       var h = p.health || '--';
@@ -349,18 +360,24 @@
       probeInd.className = 'si' + ((h === 'Good') ? ' on' : (h === 'Fair') ? ' warn' : (h === 'Replace') ? ' err' : '');
     }
 
-    // Acid slope Nernst efficiency
+    // Acid slope
     var acidEl = document.getElementById('probe-acid-eff');
     if (acidEl && p.acidEff != null) {
       var av = isNaN(p.acidEff) ? '--' : p.acidEff.toFixed(1);
-      acidEl.innerHTML = '<span class="health-dot ' + (isNaN(p.acidEff) ? '' : effClass(p.acidEff)) + '"></span>' + av + ' <small>%</small>';
+      acidEl.innerHTML = '<span class="health-dot ' + (isNaN(p.acidEff) ? '' : effClass(p.acidEff, isEzo)) + '"></span>' + av + ' <small>%</small>';
     }
 
-    // Alkaline slope Nernst efficiency
+    // Base/alkaline slope
     var alkEl = document.getElementById('probe-alk-eff');
     if (alkEl && p.alkEff != null) {
       var bv = isNaN(p.alkEff) ? '--' : p.alkEff.toFixed(1);
-      alkEl.innerHTML = '<span class="health-dot ' + (isNaN(p.alkEff) ? '' : effClass(p.alkEff)) + '"></span>' + bv + ' <small>%</small>';
+      alkEl.innerHTML = '<span class="health-dot ' + (isNaN(p.alkEff) ? '' : effClass(p.alkEff, isEzo)) + '"></span>' + bv + ' <small>%</small>';
+    }
+
+    // EZO cal points
+    if (isEzo) {
+      var cpEl = document.getElementById('probe-cal-pts');
+      if (cpEl) cpEl.textContent = (p.calPoints != null) ? p.calPoints : '--';
     }
 
     var asymEl = document.getElementById('probe-asymmetry');
