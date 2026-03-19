@@ -31,6 +31,7 @@ static bool ezoFallback = false;
 static uint8_t ezoCalPointsCache = 0;
 static float ezoAcidSlopeCache = NAN;
 static float ezoBaseSlopeCache = NAN;
+static char ezoInitLog[128] = "";  // Deferred log for web UI (Serial not visible via OTA)
 
 // ADS1115 register addresses
 static const uint8_t ADS_REG_CONVERSION = 0x00;
@@ -243,6 +244,35 @@ void ezoQueryCalStatus() {
   }
 }
 
+// Attempt to switch EZO from UART mode (factory default) to I2C mode.
+// Uses UART2 on SDA/SCL pins. EZO pin mapping: TX→SCL(33), RX→SDA(26),
+// so ESP32 RX=SCL_PIN(33), TX=SDA_PIN(26).
+static void ezoSwitchToI2C() {
+  HardwareSerial ezoSerial(2);
+  static const long baudRates[] = {9600, 38400};
+
+  for (int i = 0; i < 2; i++) {
+    ezoSerial.begin(baudRates[i], SERIAL_8N1, I2C_SCL_PIN, I2C_SDA_PIN);
+    delay(200);
+    while (ezoSerial.available()) ezoSerial.read();
+
+    ezoSerial.print("i\r");
+    ezoSerial.flush();
+    delay(400);
+
+    if (ezoSerial.available()) {
+      ezoSerial.print("I2C,99\r");
+      ezoSerial.flush();
+      delay(2000);
+      ezoSerial.end();
+      snprintf(ezoInitLog, sizeof(ezoInitLog), "EZO: UART@%ld → I2C switch sent", baudRates[i]);
+      return;
+    }
+    ezoSerial.end();
+  }
+  snprintf(ezoInitLog, sizeof(ezoInitLog), "EZO: no UART response");
+}
+
 // Initialize EZO pH circuit
 static void initEZOpH() {
   uint8_t sensorType = configStore.getPhSensorType();
@@ -252,7 +282,11 @@ static void initEZOpH() {
   if (!ezoProbe()) {
     if (sensorType == PH_SENSOR_EZO) {
       ezoFallback = true;
-      Serial.println("EZO pH not found at 0x63 — falling back");
+      if (ezoInitLog[0] == '\0')
+        snprintf(ezoInitLog, sizeof(ezoInitLog), "EZO pH not found at 0x63");
+      else
+        snprintf(ezoInitLog + strlen(ezoInitLog), sizeof(ezoInitLog) - strlen(ezoInitLog),
+                 " — still not found at 0x63");
     }
     return;
   }
@@ -260,8 +294,8 @@ static void initEZOpH() {
   ezoAvailable = true;
   useEZO = true;
   ezoQueryCalStatus();
-  Serial.printf("EZO pH initialized (%d cal points, acid slope %.1f%%)\n",
-                ezoCalPointsCache, ezoAcidSlopeCache);
+  snprintf(ezoInitLog, sizeof(ezoInitLog), "EZO pH initialized (%d cal, slope %.1f%%)",
+           ezoCalPointsCache, ezoAcidSlopeCache);
 }
 
 // Public EZO accessors
@@ -276,6 +310,8 @@ const char* getActivePHSensor() {
   if (useExternalADC && adsAvailable) return "ADS1115";
   return "Internal";
 }
+
+const char* getEZOInitLog() { return ezoInitLog; }
 
 // ADS1115 helpers (must precede readADCTrimmed)
 static bool adsActive() { return useExternalADC && adsAvailable && !ezoActive(); }
@@ -393,14 +429,27 @@ void initExternalADC() {
   // Skip I2C entirely if explicitly set to internal ADC
   if (sensorType == PH_SENSOR_INTERNAL) return;
 
+  // Enable internal pull-ups in case no external resistors are fitted
+  pinMode(I2C_SDA_PIN, INPUT_PULLUP);
+  pinMode(I2C_SCL_PIN, INPUT_PULLUP);
+
   Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN);
-  Wire.setClock(100000);  // 100 kHz standard mode
+  Wire.setClock(100000);
 
   // Try EZO first (auto or explicit EZO mode)
   if (sensorType == PH_SENSOR_AUTO || sensorType == PH_SENSOR_EZO) {
     initEZOpH();
-    if (ezoActive()) return;  // EZO found — skip ADS1115
-    // EZO NACK may leave ESP32 I2C bus in bad state — reset before probing ADS1115
+    if (ezoActive()) return;
+
+    // EZO not found via I2C — try switching from UART mode (factory default)
+    Wire.end();
+    ezoSwitchToI2C();
+    Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN);
+    Wire.setClock(100000);
+    initEZOpH();
+    if (ezoActive()) return;
+
+    // Still not found — reset bus before ADS1115
     Wire.end();
     Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN);
     Wire.setClock(100000);
@@ -1119,7 +1168,7 @@ float granAnalysis(TitrationPoint* points, int nPoints,
 
   float k = titVol / calUnits;
 
-  // Adaptive window selection: try multiple pH bounds, keep best R²
+  // Adaptive window selection: try multiple pH bounds, select by minimum eqSE (best precision)
   static const float upperBounds[] = {4.5f, 4.4f, 4.3f, 4.2f, 4.1f};
   static const int nBounds = sizeof(upperBounds) / sizeof(upperBounds[0]);
 
@@ -1186,7 +1235,19 @@ float granAnalysis(TitrationPoint* points, int nPoints,
         windowResults[winCount] = {lowerBounds[lb], upperBounds[b], r2, !isnan(eq), eq, eqSE};
         winCount++;
       }
-      if (!isnan(eq) && r2 > bestR2) {
+      // Select window by minimum eqSE (best precision) among windows passing the R² threshold.
+      // Maximising R² is not the right criterion — curved early points can maintain high R² while
+      // inflating residual variance and therefore widening the CI. Min-eqSE directly optimises
+      // the quantity reported to the user.
+      // Fallback: if eqSE is unavailable (degenerate variance), use R² as tiebreaker.
+      bool better = false;
+      if (!isnan(eq) && r2 >= GRAN_MIN_R2) {
+        if (eqSE > 0)
+          better = isnan(bestEqUnits) || eqSE < bestEqSE;
+        else
+          better = isnan(bestEqUnits) || (bestEqSE == 0 && r2 > bestR2);
+      }
+      if (better) {
         bestR2 = r2;
         bestEqUnits = eq;
         bestLow = lowerBounds[lb];

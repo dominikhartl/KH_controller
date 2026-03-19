@@ -26,6 +26,7 @@ bool ezoCalibrate(const char* point, float pH);  // Send calibration command
 void ezoQueryCalStatus();        // Refresh cal points and slope from device
 float ezoReadPH(float tempC);    // Single pH reading with temperature compensation
 const char* getActivePHSensor(); // "Internal" / "ADS1115" / "EZO pH"
+const char* getEZOInitLog();     // Deferred init log (for web UI display after boot)
 
 // Recompute linear fit coefficients from current calibration voltages
 void updateCalibrationFit();

@@ -1865,15 +1865,20 @@ void setup() {
       }
     }
     clearMotorCrashHint();
-    if (isExternalADCActive()) {
+    if (getEZOInitLog()[0] != '\0') {
+      publishMessage(getEZOInitLog());
+    }
+    if (isEZOActive()) {
+      publishMessage("EZO pH circuit active");
+    } else if (isExternalADCActive()) {
       publishMessage("ADS1115 external ADC active");
     } else if (isExternalADCFallback()) {
       publishError("ADS1115 configured but not detected — using internal ADC");
     }
     if (isTMCDetected()) {
       publishMessage("TMC2209 stepper drivers active");
-      if (!isExternalADCActive()) {
-        publishError("TMC2209 uses IO35 for DIAG — pH requires ADS1115");
+      if (!isExternalADCActive() && !isEZOActive()) {
+        publishError("TMC2209 uses IO35 for DIAG — pH requires ADS1115 or EZO");
       }
     }
     initTemperature();
