@@ -21,6 +21,7 @@ static uint8_t sgThresholdToRegister(int stallSG) {
 static void configureDriver(TMC2209Stepper* driver, int rmsCurrent) {
   driver->rms_current(rmsCurrent);
   driver->microsteps(TMC_MICROSTEPS);
+  driver->intpol(true);           // Interpolate to 256 microsteps for smoother, quieter operation
   driver->en_spreadCycle(false);  // StealthChop (quiet); stall via UART SG_RESULT
   driver->SGTHRS(0);             // Disabled at init; enabled per-motor after config applied
   driver->TCOOLTHRS(0xFFFFF);    // Enable StallGuard at all velocities
