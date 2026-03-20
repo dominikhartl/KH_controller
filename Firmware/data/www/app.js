@@ -7,6 +7,7 @@
 
   // --- WebSocket ---
   var ws, wsOk = false, reconnTimer, reconnDelay = 3000;
+  var chartDays = 7;
 
   function connect() {
     var host = location.hostname;
@@ -16,9 +17,9 @@
       reconnDelay = 3000;  // Reset backoff on successful connection
       wsOk = true;
       setDot('ws', true);
-      ws.send(JSON.stringify({type:'getHistory', sensor:'kh'}));
-      ws.send(JSON.stringify({type:'getHistory', sensor:'ph'}));
-      ws.send(JSON.stringify({type:'getHistory', sensor:'gran'}));
+      ws.send(JSON.stringify({type:'getHistory', sensor:'kh', days: chartDays}));
+      ws.send(JSON.stringify({type:'getHistory', sensor:'ph', days: chartDays}));
+      ws.send(JSON.stringify({type:'getHistory', sensor:'gran', days: chartDays}));
       ws.send(JSON.stringify({type:'getHistory', sensor:'motor'}));
       ws.send(JSON.stringify({type:'getHistory', sensor:'precision'}));
     };
@@ -693,15 +694,27 @@
     // Dataset 0: scatter points
     khChart.data.datasets[0].data = data.map(function(p) { return {x: p[0], y: p[1]}; });
 
-    // Dataset 1: EMA smooth line (12h half-life, time-aware)
-    var smooth = [];
-    var emaVal = data[0][1];
-    smooth.push({x: data[0][0], y: emaVal});
+    // Dataset 1: Bidirectional EMA smooth line (adaptive half-life, time-aware)
+    var hlInp = document.getElementById('ui-smooth-halflife');
+    var hlVal = hlInp ? parseFloat(hlInp.value) : 0;
+    var spanH = (data[data.length - 1][0] - data[0][0]) / 3600;
+    var halfLife = (hlVal > 0) ? hlVal : Math.max(2, Math.min(24, spanH / 8));
+    var fwd = [data[0][1]];
     for (var i = 1; i < data.length; i++) {
       var dtH = (data[i][0] - data[i-1][0]) / 3600;
-      var alpha = 1 - Math.pow(0.5, dtH / 12);
-      emaVal = alpha * data[i][1] + (1 - alpha) * emaVal;
-      smooth.push({x: data[i][0], y: Math.round(emaVal * 1000) / 1000});
+      var alpha = 1 - Math.pow(0.5, dtH / halfLife);
+      fwd.push(alpha * data[i][1] + (1 - alpha) * fwd[i-1]);
+    }
+    var bwd = new Array(data.length);
+    bwd[data.length - 1] = data[data.length - 1][1];
+    for (var i = data.length - 2; i >= 0; i--) {
+      var dtH = (data[i+1][0] - data[i][0]) / 3600;
+      var alpha = 1 - Math.pow(0.5, dtH / halfLife);
+      bwd[i] = alpha * data[i][1] + (1 - alpha) * bwd[i+1];
+    }
+    var smooth = [];
+    for (var i = 0; i < data.length; i++) {
+      smooth.push({x: data[i][0], y: Math.round((fwd[i] + bwd[i]) / 2 * 1000) / 1000});
     }
     khChart.data.datasets[1].data = smooth;
 
@@ -888,21 +901,24 @@
   var motorHistoryData = null; // raw motor history [[ts, sAvg, sMin, tAvg, tMin], ...]
   var lastSGValues = { sample: 0, titrate: 0 };
   // Time-proportional X-axis: uses linear scale with Unix timestamps (seconds)
-  var timeXScale = {
-    type: 'linear',
-    offset: false,
-    ticks: { color: '#8e8e93', maxTicksLimit: 6, font: { size: 10 },
-      callback: function(val) { return fmtDate(val); }
-    },
-    grid: { color: '#38383a' }
-  };
+  // Returns a fresh object each call so charts don't share scale state
+  function timeXScale() {
+    return {
+      type: 'linear',
+      offset: false,
+      ticks: { color: '#8e8e93', maxTicksLimit: 6, font: { size: 10 },
+        callback: function(val) { return fmtDate(val); }
+      },
+      grid: { color: '#38383a' }
+    };
+  }
   var chartOpts = {
     responsive: true,
     maintainAspectRatio: false,
     animation: false,
-    plugins: { legend: { display: false } },
+    plugins: { legend: { display: false }, tooltip: { callbacks: { title: function(items) { if (!items.length) return ''; return fmtDate(items[0].parsed.x); } } } },
     scales: {
-      x: timeXScale,
+      x: timeXScale(),
       y: { ticks: { color: '#8e8e93', font: { size: 10 } }, grid: { color: '#38383a' } }
     }
   };
@@ -921,9 +937,9 @@
       ] },
       options: {
         responsive: true, maintainAspectRatio: false, animation: false,
-        plugins: { legend: { display: false } },
+        plugins: { legend: { display: false }, tooltip: { callbacks: { title: function(items) { if (!items.length) return ''; return fmtDate(items[0].parsed.x); } } } },
         scales: {
-          x: timeXScale,
+          x: timeXScale(),
           y: { ticks: { color: '#8e8e93', font: { size: 10 } }, grid: { color: '#38383a' } }
         }
       }
@@ -976,9 +992,9 @@
       },
       options: {
         responsive: true, maintainAspectRatio: false, animation: false,
-        plugins: { legend: { display: true, labels: { color: '#8e8e93', font: { size: 10 }, boxWidth: 12 } } },
+        plugins: { legend: { display: true, labels: { color: '#8e8e93', font: { size: 10 }, boxWidth: 12 } }, tooltip: { callbacks: { title: function(items) { if (!items.length) return ''; return fmtDate(items[0].parsed.x); } } } },
         scales: {
-          x: timeXScale,
+          x: timeXScale(),
           yR2: { type: 'linear', position: 'left', min: 0.995, max: 1.0, ticks: { color: '#0a84ff', font: { size: 9 }, maxTicksLimit: 4 }, grid: { color: '#38383a' }, title: { display: true, text: 'R\u00b2', color: '#0a84ff', font: { size: 9 }, padding: { top: 0, bottom: 0 } } },
           yRight: { type: 'linear', position: 'right', ticks: { color: '#ff9f0a', font: { size: 9 } }, grid: { drawOnChartArea: false }, title: { display: true, text: 'pH', color: '#ff9f0a', font: { size: 10 } } },
           yCI: { type: 'linear', position: 'right', ticks: { color: '#30d158', font: { size: 9 } }, grid: { drawOnChartArea: false }, title: { display: true, text: '\u00b1dKH', color: '#30d158', font: { size: 10 } } }
@@ -1154,6 +1170,9 @@
         if (khLayers) khLayers.style.display = (sel === 'kh') ? 'flex' : 'none';
         var khToggle = document.getElementById('kh-method-toggle');
         if (khToggle) khToggle.style.display = (sel === 'kh') ? 'flex' : 'none';
+        // Chart range selector visibility (history tabs only)
+        var rangeEl = document.getElementById('chart-range');
+        if (rangeEl) rangeEl.style.display = (sel === 'kh' || sel === 'ph' || sel === 'gran') ? 'flex' : 'none';
         // Gran sub-tabs visibility
         var granSub = document.getElementById('gran-subtabs');
         if (granSub) granSub.style.display = (sel === 'gran') ? 'flex' : 'none';
@@ -1176,6 +1195,20 @@
     if (btnLast) btnLast.addEventListener('click', function() { switchGranView('last'); });
     if (btnHist) btnHist.addEventListener('click', function() { switchGranView('history'); });
     if (btnWin) btnWin.addEventListener('click', function() { switchGranView('windows'); });
+
+    // Chart range selector
+    document.querySelectorAll('.range-btn').forEach(function(btn) {
+      btn.addEventListener('click', function() {
+        document.querySelectorAll('.range-btn').forEach(function(b) { b.classList.remove('active'); });
+        btn.classList.add('active');
+        chartDays = parseInt(btn.getAttribute('data-days'));
+        if (wsOk) {
+          ws.send(JSON.stringify({type:'getHistory', sensor:'kh', days: chartDays}));
+          ws.send(JSON.stringify({type:'getHistory', sensor:'ph', days: chartDays}));
+          ws.send(JSON.stringify({type:'getHistory', sensor:'gran', days: chartDays}));
+        }
+      });
+    });
   }
 
   function switchGranView(view) {
@@ -1359,6 +1392,7 @@
 
   function initConfigInputs() {
     document.querySelectorAll('.config-grid input, .cal-ph-col input').forEach(function(inp) {
+      if (inp.classList.contains('ui-only')) return;
       inp.addEventListener('change', function() {
         var key = inp.id.replace('cfg-', '');
         var val = (inp.type === 'text') ? inp.value : parseFloat(inp.value);
@@ -2028,6 +2062,16 @@
     initButtons();
     initStirrerButton();
     initConfigInputs();
+    // Smooth half-life UI-only setting (localStorage)
+    var hlInp = document.getElementById('ui-smooth-halflife');
+    if (hlInp) {
+      var stored = localStorage.getItem('smoothHalfLife');
+      if (stored !== null) hlInp.value = stored;
+      hlInp.addEventListener('change', function() {
+        localStorage.setItem('smoothHalfLife', hlInp.value);
+        renderKHChart();
+      });
+    }
     initSchedule();
     initKHMethodToggle();
     initMotorDiag();
