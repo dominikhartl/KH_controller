@@ -376,6 +376,7 @@ void processPendingCommand() {
   char cmd = pendingCmd.load(std::memory_order_acquire);
   if (cmd == 0) return;
   pendingCmd.store(0, std::memory_order_release);
+  abortRequested = false;  // Clear stale abort from previous command
 
   switch (cmd) {
     case 'k':
