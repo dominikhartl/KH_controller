@@ -419,7 +419,10 @@ static void handleWebSocketMessage(AsyncWebSocketClient* client, void* arg, uint
 
       bool isGran = (strcmp(sensor, "gran") == 0);
       bool isMotor = (strcmp(sensor, "motor") == 0);
-      uint32_t cutoff = (uint32_t)time(nullptr) - (isMotor ? (90UL * 86400UL) : (7UL * 86400UL));
+      int days = doc["days"] | (isMotor ? 90 : 7);
+      if (days < 1) days = 1;
+      if (days > 90) days = 90;
+      uint32_t cutoff = (uint32_t)time(nullptr) - ((uint32_t)days * 86400UL);
 
       if (isMotor) {
         // Motor CSV: timestamp,sampleAvg,sampleMin,titrateAvg,titrateMin
@@ -1090,9 +1093,9 @@ void appendHistory(const char* sensor, float value, uint32_t ts) {
     }
   }
 
-  // Remove entries older than 7 days (atomic: write to temp file, then rename)
+  // Remove entries older than 10 days (atomic: write to temp file, then rename)
   if (LittleFS.exists(filename)) {
-    uint32_t cutoff = ts - (7 * 86400);
+    uint32_t cutoff = ts - (10UL * 86400UL);
     File f = LittleFS.open(filename, "r");
     if (f) {
       char tmpFile[36];
@@ -1154,9 +1157,9 @@ void appendGranHistory(float r2, float eqML, float endpointPH, bool usedGran, fl
     }
   }
 
-  // Remove entries older than 7 days
+  // Remove entries older than 10 days
   if (LittleFS.exists(filename)) {
-    uint32_t cutoff = ts - (7 * 86400);
+    uint32_t cutoff = ts - (10UL * 86400UL);
     File f = LittleFS.open(filename, "r");
     if (f) {
       String kept;
@@ -1328,6 +1331,43 @@ int getRecentKHValues(float* outValues, int maxCount) {
   int start = (count < cap) ? 0 : head;
   for (int i = 0; i < count; i++) {
     outValues[i] = ring[(start + i) % cap];
+  }
+  return count;
+}
+
+int getRecentKHValuesWithTime(uint32_t* outTimestamps, float* outValues, int maxCount) {
+  const char* filename = "/history/kh.csv";
+  if (!LittleFS.exists(filename)) return 0;
+
+  File f = LittleFS.open(filename, "r");
+  if (!f) return 0;
+
+  int cap = (maxCount > 10) ? 10 : maxCount;
+  uint32_t tsRing[10];
+  float valRing[10];
+  int count = 0;
+  int head = 0;
+
+  while (f.available()) {
+    String line = f.readStringUntil('\n');
+    if (line.length() == 0) continue;
+    int comma = line.indexOf(',');
+    if (comma < 0) continue;
+    uint32_t ts = (uint32_t)strtoul(line.c_str(), nullptr, 10);
+    float val = line.substring(comma + 1).toFloat();
+    if (val <= 0 || ts < 1700000000UL) continue;
+
+    tsRing[head] = ts;
+    valRing[head] = val;
+    head = (head + 1) % cap;
+    if (count < cap) count++;
+  }
+  f.close();
+
+  int start = (count < cap) ? 0 : head;
+  for (int i = 0; i < count; i++) {
+    outTimestamps[i] = tsRing[(start + i) % cap];
+    outValues[i] = valRing[(start + i) % cap];
   }
   return count;
 }

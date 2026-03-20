@@ -146,29 +146,86 @@ static void publishKHResult(const KHResult& r) {
   broadcastState();
 }
 
-// Compute median of a float array (sorts in-place)
-static float computeMedian(float* values, int count) {
-  for (int i = 1; i < count; i++) {
-    float key = values[i];
-    int j = i - 1;
-    while (j >= 0 && values[j] > key) {
-      values[j + 1] = values[j];
-      j--;
-    }
-    values[j + 1] = key;
+// --- Trend-based outlier detection ---
+
+struct KHPrediction {
+  float predicted;  // Expected KH at current time
+  float sigma;      // Residual scatter (StdDev from OLS fit)
+  bool  hasTrend;   // True if ≥3 points and trend is plausible
+};
+
+// Predict expected KH at time 'now' using local linear regression on recent history.
+// Falls back gracefully: ≥3 pts → OLS trend, 1-2 pts → last value, 0 pts → NAN.
+static KHPrediction predictKH(const uint32_t* timestamps, const float* values,
+                               int count, uint32_t now) {
+  KHPrediction p = { NAN, 0, false };
+  if (count == 0) return p;
+
+  if (count < 3) {
+    p.predicted = values[count - 1];  // use most recent value
+    return p;
   }
-  if (count % 2 == 0)
-    return (values[count / 2 - 1] + values[count / 2]) / 2.0f;
-  return values[count / 2];
+
+  // Guard: if newest measurement is >24h old, trend is stale
+  if (now > timestamps[count - 1] + 86400UL) {
+    p.predicted = values[count - 1];
+    return p;
+  }
+
+  // OLS regression: KH = intercept + slope * t_hours
+  // Time in hours relative to oldest point for numerical stability
+  uint32_t t0 = timestamps[0];
+  float sumX = 0, sumY = 0, sumXX = 0, sumXY = 0;
+  for (int i = 0; i < count; i++) {
+    float x = (float)(timestamps[i] - t0) / 3600.0f;
+    float y = values[i];
+    sumX += x;
+    sumY += y;
+    sumXX += x * x;
+    sumXY += x * y;
+  }
+  float n = (float)count;
+  float denom = n * sumXX - sumX * sumX;
+  if (fabsf(denom) < 1e-9f) {
+    // Degenerate: all timestamps identical — use mean
+    p.predicted = sumY / n;
+    return p;
+  }
+
+  float slope = (n * sumXY - sumX * sumY) / denom;
+  float intercept = (sumY - slope * sumX) / n;
+
+  // Guard: reject implausible slopes (>1 dKH/hour is physically impossible)
+  if (fabsf(slope) > 1.0f) {
+    p.predicted = sumY / n;  // fall back to mean
+    return p;
+  }
+
+  float tNow = (float)(now - t0) / 3600.0f;
+  p.predicted = intercept + slope * tNow;
+
+  // Compute residual scatter σ = sqrt(SSR / (n-2))
+  float ssr = 0;
+  for (int i = 0; i < count; i++) {
+    float x = (float)(timestamps[i] - t0) / 3600.0f;
+    float residual = values[i] - (intercept + slope * x);
+    ssr += residual * residual;
+  }
+  p.sigma = sqrtf(ssr / (n - 2.0f));
+  p.hasTrend = true;
+  return p;
 }
 
-// Check if a measurement is suspect (outlier or failed cross-validation)
-static bool isSuspect(const KHResult& r, float median, bool hasMedian, char* reasonBuf, size_t reasonLen) {
-  if (hasMedian) {
-    float dev = fabsf(r.khValue - median);
-    if (dev > KH_OUTLIER_THRESHOLD_DKH) {
-      snprintf(reasonBuf, reasonLen, "Outlier: %.2f dKH (median %.2f, dev %.2f)",
-               r.khValue, median, dev);
+// Check if a measurement is suspect (outlier vs trend, cross-validation, or poor fit)
+static bool isSuspect(const KHResult& r, const KHPrediction& pred, char* reasonBuf, size_t reasonLen) {
+  if (!isnan(pred.predicted)) {
+    float dev = fabsf(r.khValue - pred.predicted);
+    float threshold = pred.hasTrend
+        ? fmaxf(KH_OUTLIER_MIN_THRESHOLD, KH_OUTLIER_SIGMA_MULT * pred.sigma)
+        : KH_OUTLIER_FALLBACK_THRESHOLD;
+    if (dev > threshold) {
+      snprintf(reasonBuf, reasonLen, "Outlier: %.2f dKH (predicted %.2f, dev %.2f, thr %.2f)",
+               r.khValue, pred.predicted, dev, threshold);
       return true;
     }
   }
@@ -183,27 +240,27 @@ static bool isSuspect(const KHResult& r, float median, bool hasMedian, char* rea
   return false;
 }
 
-// Measure KH with outlier and cross-validation checks against recent history
+// Measure KH with trend-based outlier detection and cross-validation checks
 void measureKHWithValidation() {
-  // Read recent history BEFORE measuring (so current measurement is not included)
+  // Read recent timestamped history BEFORE measuring (so current measurement is not included)
+  uint32_t recentTs[10];
   float recent[10];
-  int histCount = getRecentKHValues(recent, KH_OUTLIER_HISTORY_COUNT);
+  int histCount = getRecentKHValuesWithTime(recentTs, recent, KH_OUTLIER_HISTORY_COUNT);
+  uint32_t now = (uint32_t)time(nullptr);
+  KHPrediction pred = predictKH(recentTs, recent, histCount, now);
 
   KHResult r1 = measureKH();
   if (isnan(r1.khValue)) return;  // measurement failed
   storeLastKHResult(r1);  // store immediately so diagnostics always has data
 
-  bool hasMedian = (histCount >= KH_OUTLIER_HISTORY_COUNT);
-  float median = hasMedian ? computeMedian(recent, histCount) : 0;
-
-  char reason[96];
-  if (!isSuspect(r1, median, hasMedian, reason, sizeof(reason))) {
+  char reason[128];
+  if (!isSuspect(r1, pred, reason, sizeof(reason))) {
     publishKHResult(r1);
     return;
   }
 
   // Suspect measurement — re-measure
-  char buf[128];
+  char buf[160];
   snprintf(buf, sizeof(buf), "%s. Re-measuring...", reason);
   publishMessage(buf);
 
@@ -214,17 +271,17 @@ void measureKHWithValidation() {
     return;
   }
 
-  if (!isSuspect(r2, median, hasMedian, reason, sizeof(reason))) {
+  if (!isSuspect(r2, pred, reason, sizeof(reason))) {
     snprintf(buf, sizeof(buf), "Re-measurement %.2f dKH accepted", r2.khValue);
     publishMessage(buf);
     publishKHResult(r2);
     return;
   }
 
-  // Both suspect — pick closest to median if available, else smaller cross-val diff
+  // Both suspect — pick closest to predicted value, else smaller cross-val diff
   bool pickFirst;
-  if (hasMedian) {
-    pickFirst = fabsf(r1.khValue - median) <= fabsf(r2.khValue - median);
+  if (!isnan(pred.predicted)) {
+    pickFirst = fabsf(r1.khValue - pred.predicted) <= fabsf(r2.khValue - pred.predicted);
   } else {
     float cv1 = isnan(r1.crossValDiff) ? 999.0f : r1.crossValDiff;
     float cv2 = isnan(r2.crossValDiff) ? 999.0f : r2.crossValDiff;
@@ -946,15 +1003,17 @@ static float computeConfidence(float granR2, bool usedGran, int nPoints,
   if (!isnan(crossValDiff) && crossValDiff > 0.3f) {
     score -= min(0.15f, (crossValDiff - 0.3f) * 0.3f);
   }
-  // Probe noise — continuous penalty starting at 2 mV
-  score -= min(0.25f, max(0.0f, (probeNoiseMv - 4.0f) * 0.05f));
+  // Probe noise — continuous penalty starting at 4 mV (skip for EZO: no mV noise data)
+  if (!isEZOActive()) {
+    score -= min(0.25f, max(0.0f, (probeNoiseMv - 4.0f) * 0.05f));
+  }
   // Data point count
   if (nPoints < 15) score -= 0.1f;
   if (nPoints < 10) score -= 0.1f;
   // Stabilization timeout penalty
-  // ADS1115 detects sub-mV drift invisible to internal ADC; timeouts are expected and
+  // ADS1115/EZO: timeouts are expected due to slow ADC/read cycles and
   // don't indicate poor measurement quality (R², reversals, cross-val are unaffected)
-  if (!isExternalADCActive()) {
+  if (!isExternalADCActive() && !isEZOActive()) {
     float timeoutRate = (nPoints > 0) ? (float)stabTimeouts / nPoints : 0;
     if (timeoutRate > 0.1f) score -= 0.1f;
     if (timeoutRate > 0.3f) score -= 0.1f;

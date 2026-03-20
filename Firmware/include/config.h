@@ -31,9 +31,11 @@ static const float PH_OUTLIER_THRESHOLD = 0.2f;      // Precise mode: ±0.2 pH f
 static const float PH_FAST_OUTLIER_THRESHOLD = 0.3f;  // Fast mode: ±0.3 pH from median
 static const float VOLTAGE_OUTLIER_THRESHOLD = 30.0f; // ±30 mV from median (~0.2 pH equivalent)
 
-// KH measurement outlier validation
-static const float KH_OUTLIER_THRESHOLD_DKH = 0.5f;   // Re-measure if deviation from median exceeds this
-static const int KH_OUTLIER_HISTORY_COUNT = 5;         // Number of recent measurements for median
+// KH measurement outlier validation (trend-based)
+static const int KH_OUTLIER_HISTORY_COUNT = 6;           // Recent measurements for trend prediction
+static const float KH_OUTLIER_MIN_THRESHOLD = 0.3f;     // Floor: never tighter than this (dKH)
+static const float KH_OUTLIER_SIGMA_MULT = 3.0f;        // Adaptive: 3× residual scatter
+static const float KH_OUTLIER_FALLBACK_THRESHOLD = 0.5f; // Flat threshold when <3 history points
 static const float CROSS_VALIDATION_THRESHOLD_DKH = 0.3f; // Re-measure if Gran vs Endpoint disagree by more
 
 // Motor configuration

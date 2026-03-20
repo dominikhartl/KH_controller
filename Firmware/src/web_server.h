@@ -59,6 +59,7 @@ void appendMotorHealth(uint32_t ts, int sampleAvg, int sampleMin, int titrateAvg
 void appendPrecisionHistory(uint32_t ts, int n, float mean, float sd, float vmin, float vmax, unsigned long elapsedSec);
 const char* getTubeHealth();
 int getRecentKHValues(float* outValues, int maxCount);
+int getRecentKHValuesWithTime(uint32_t* outTimestamps, float* outValues, int maxCount);
 float computeKHSlope();
 extern float lastConfidence;
 extern std::atomic<bool> isMeasuringKH;
