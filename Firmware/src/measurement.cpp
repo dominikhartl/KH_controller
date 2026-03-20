@@ -1152,7 +1152,7 @@ static float tryGranWindow(TitrationPoint* points, int nPoints,
     float s2inv = 1.0f / (slope * slope);
     float varEq = s2inv * varIntercept
                 + eqUnits * eqUnits * s2inv * varSlope
-                - 2.0f * eqUnits * s2inv * covSI;
+                + 2.0f * eqUnits * s2inv * covSI;
     *outEqSE = (varEq > 0) ? sqrtf(varEq) : 0;
   }
   return eqUnits;
