@@ -907,12 +907,21 @@ void calibrateSamplePump() {
   float sampRpm = configStore.getSamplePumpRPM();
   int fillRevs = configStore.getSampleCalRevolutions();
   int removeRevs = (int)(fillRevs * 1.2f);
+  // Match the measurement's multi-wash cycle so the weighed volume
+  // includes the same residual water that remains during a real measurement.
+  int numWashes = configStore.getNumWashes();
+  setMultiWashContext(numWashes);
   publishMessage("Calibrating sample pump...");
-  if (!washSampleVol(removeRevs, fillRevs, sampRpm)) {
-    publishError(wasMotorStall() ? "Error: sample pump stall during calibration" : "Error: sample pump timeout during calibration");
-    broadcastProgress(100);
-    return;
+  for (int w = 0; w < numWashes; w++) {
+    if (!washSampleVol(removeRevs, fillRevs, sampRpm)) {
+      clearMultiWashContext();
+      publishError(wasMotorStall() ? "Error: sample pump stall during calibration" : "Error: sample pump timeout during calibration");
+      broadcastProgress(100);
+      return;
+    }
+    if (w < numWashes - 1) delay(1000);
   }
+  clearMultiWashContext();
   configStore.setSampleCalTimestamp((uint32_t)time(nullptr));
   publishMessage("Sample pump calibration done. Measure dispensed volume and enter in 'Sample Cal Volume (mL)'.");
   broadcastProgress(100);
@@ -930,14 +939,22 @@ void calibrateTitrationPump() {
   float titV_cal       = configStore.getTitrationVolume();
   float unitsPerUL_cal = (titV_cal > 0) ? calU_cal / (titV_cal * 1000.0f) : 1.0f;
 
-  // Fast phase: UI-set step size at fast RPM (bulk volume)
+  // Match measurement's three-phase titration structure so the calibration
+  // volume reflects the same mix of fast/medium/Gran-speed dispensing.
   const int FAST_STEP  = max(4, (int)round(configStore.getFastStepUL() * unitsPerUL_cal));
   float fastRPM_cal    = configStore.getFastPhaseRPM();
 
-  // Precise phase: drop-sized steps at titration RPM (final 20 drops)
-  const int PRECISE_STEP      = max(2, (int)round(configStore.getDropVolumeUL() * unitsPerUL_cal));
-  const int precisePhaseUnits = 20 * PRECISE_STEP;
-  const int fastPhaseTarget   = max(0, targetUnits - precisePhaseUnits);
+  // Medium phase: ~40 µL steps at fast RPM (matches measurement's medium zone)
+  const int MEDIUM_STEP       = max(4, (int)round(40.0f * unitsPerUL_cal));
+  const int MEDIUM_STEPS      = 20;
+  const int mediumPhaseUnits  = MEDIUM_STEPS * MEDIUM_STEP;
+
+  // Gran phase: drop-sized steps at Gran RPM (~100 steps, matches measurement's Gran zone)
+  const int GRAN_STEP         = max(2, (int)round(configStore.getDropVolumeUL() * unitsPerUL_cal));
+  const int GRAN_STEPS        = 100;
+  const int granPhaseUnits    = GRAN_STEPS * GRAN_STEP;
+
+  const int fastPhaseTarget   = max(0, targetUnits - mediumPhaseUnits - granPhaseUnits);
 
   // --- Fast phase ---
   publishMessage("Cal: fast phase");
@@ -959,13 +976,34 @@ void calibrateTitrationPump() {
     publishMessage(buf);
   }
 
-  // --- Precise phase ---
-  publishMessage("Cal: precise phase");
-  float preciseRPM_cal      = configStore.getGranBurstRPM();
-  uint32_t preciseAccel_cal = configStore.getGranBurstAccel();
+  // --- Medium phase ---
+  int mediumTarget = fastPhaseTarget + mediumPhaseUnits;
+  publishMessage("Cal: medium phase");
+  while (units < mediumTarget && units < targetUnits) {
+    int step = min(MEDIUM_STEP, mediumTarget - units);
+    if (!titrate(step, fastRPM_cal)) {
+      publishError(wasMotorStall() ? "Error: titration pump stall during calibration" : "Error: titration pump timeout during calibration");
+      if (units > 0) subtractHCl(units);
+      units = 0;
+      digitalWrite(EN_PIN2, HIGH);
+      broadcastProgress(100);
+      return;
+    }
+    units += step;
+    broadcastProgress((units * 99) / targetUnits);
+    delay(TITRATION_MIX_DELAY_MEDIUM_MS);
+    ArduinoOTA.handle();
+    snprintf(buf, sizeof(buf), "Cal: %d / %d rev (medium)", units / 100, targetUnits / 100);
+    publishMessage(buf);
+  }
+
+  // --- Gran phase ---
+  publishMessage("Cal: Gran phase");
+  float granRPM_cal      = configStore.getGranBurstRPM();
+  uint32_t granAccel_cal = configStore.getGranBurstAccel();
   while (units < targetUnits) {
-    int step = min(PRECISE_STEP, targetUnits - units);
-    if (!titrate(step, preciseRPM_cal, false, preciseAccel_cal)) {
+    int step = min(GRAN_STEP, targetUnits - units);
+    if (!titrate(step, granRPM_cal, false, granAccel_cal)) {
       publishError(wasMotorStall() ? "Error: titration pump stall during calibration" : "Error: titration pump timeout during calibration");
       if (units > 0) subtractHCl(units);
       units = 0;
@@ -977,7 +1015,7 @@ void calibrateTitrationPump() {
     broadcastProgress((units * 99) / targetUnits);
     delay(TITRATION_MIX_DELAY_FAST_MS);
     ArduinoOTA.handle();
-    snprintf(buf, sizeof(buf), "Cal: %d / %d rev (precise)", units / 100, targetUnits / 100);
+    snprintf(buf, sizeof(buf), "Cal: %d / %d rev (Gran)", units / 100, targetUnits / 100);
     publishMessage(buf);
   }
 
