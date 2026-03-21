@@ -18,6 +18,7 @@
 #include <pins.h>
 #include <time.h>
 #include <math.h>
+#include <esp_task_wdt.h>
 
 extern char deviceName[];
 extern char MQmespH[];
@@ -25,6 +26,39 @@ extern void requestAbort();
 extern volatile uint32_t heapMin;
 
 float lastConfidence = NAN;
+
+// RTC memory survives INT_WDT/panic — tracks which FS operation was running
+RTC_NOINIT_ATTR char fsCrashHint[48];
+RTC_NOINIT_ATTR uint32_t fsCrashMagic;
+static const uint32_t FS_CRASH_MAGIC = 0xF5C0DEAD;
+
+static void setFSCrashHint(const char* hint) {
+  strncpy(fsCrashHint, hint, sizeof(fsCrashHint) - 1);
+  fsCrashHint[sizeof(fsCrashHint) - 1] = '\0';
+  fsCrashMagic = FS_CRASH_MAGIC;
+}
+
+static void clearFSCrashHint() { fsCrashMagic = 0; }
+
+const char* getFSCrashHint() {
+  return (fsCrashMagic == FS_CRASH_MAGIC) ? fsCrashHint : nullptr;
+}
+
+// Write a string to flash in chunks with yield() between them
+static void chunkedWrite(File& fw, const String& data) {
+  const char* p = data.c_str();
+  size_t remaining = data.length();
+  while (remaining > 0) {
+    size_t chunk = (remaining > 512) ? 512 : remaining;
+    fw.write((const uint8_t*)p, chunk);
+    p += chunk;
+    remaining -= chunk;
+    if (remaining > 0) {
+      yield();
+      esp_task_wdt_reset();
+    }
+  }
+}
 
 AsyncWebServer server(80);
 AsyncWebSocket ws("/ws");
@@ -433,6 +467,7 @@ static void handleWebSocketMessage(AsyncWebSocketClient* client, void* arg, uint
 
         while (f.available() && dataArr.size() < 500) {
           String line = f.readStringUntil('\n');
+          yield();
           if (line.length() == 0) continue;
           int c1 = line.indexOf(',');
           if (c1 < 0) continue;
@@ -463,6 +498,7 @@ static void handleWebSocketMessage(AsyncWebSocketClient* client, void* arg, uint
 
         while (f.available() && dataArr.size() < 100) {
           String line = f.readStringUntil('\n');
+          yield();
           if (line.length() == 0) continue;
           int c1 = line.indexOf(',');
           if (c1 < 0) continue;
@@ -496,6 +532,7 @@ static void handleWebSocketMessage(AsyncWebSocketClient* client, void* arg, uint
 
         while (f.available() && dataArr.size() < 150) {
           String line = f.readStringUntil('\n');
+          yield();
           if (line.length() == 0) continue;
           int c1 = line.indexOf(',');
           if (c1 < 0) continue;
@@ -579,6 +616,7 @@ static void handleWebSocketMessage(AsyncWebSocketClient* client, void* arg, uint
 
         while (f.available() && dataArr.size() < 150) {
           String line = f.readStringUntil('\n');
+          yield();
           if (line.length() == 0) continue;
           int comma = line.indexOf(',');
           if (comma < 0) continue;
@@ -1095,6 +1133,7 @@ void appendHistory(const char* sensor, float value, uint32_t ts) {
 
   // Remove entries older than 10 days (atomic: write to temp file, then rename)
   if (LittleFS.exists(filename)) {
+    setFSCrashHint("pruneHistory");
     uint32_t cutoff = ts - (10UL * 86400UL);
     File f = LittleFS.open(filename, "r");
     if (f) {
@@ -1107,6 +1146,7 @@ void appendHistory(const char* sensor, float value, uint32_t ts) {
         while (f.available() && lines < 200) {
           String line = f.readStringUntil('\n');
           lines++;
+          yield();
           if (line.length() == 0) continue;
           int comma = line.indexOf(',');
           if (comma < 0) continue;
@@ -1129,6 +1169,7 @@ void appendHistory(const char* sensor, float value, uint32_t ts) {
         Serial.printf("Warning: failed to open %s for pruning\n", tmpFile);
       }
     }
+    clearFSCrashHint();
   }
 
   if (ts < MIN_VALID_EPOCH) {
@@ -1159,6 +1200,7 @@ void appendGranHistory(float r2, float eqML, float endpointPH, bool usedGran, fl
 
   // Remove entries older than 10 days
   if (LittleFS.exists(filename)) {
+    setFSCrashHint("pruneGranHistory");
     uint32_t cutoff = ts - (10UL * 86400UL);
     File f = LittleFS.open(filename, "r");
     if (f) {
@@ -1168,6 +1210,7 @@ void appendGranHistory(float r2, float eqML, float endpointPH, bool usedGran, fl
       while (f.available() && lines < 200) {
         String line = f.readStringUntil('\n');
         lines++;
+        yield();
         if (line.length() == 0) continue;
         int comma = line.indexOf(',');
         if (comma < 0) continue;
@@ -1176,13 +1219,15 @@ void appendGranHistory(float r2, float eqML, float endpointPH, bool usedGran, fl
       }
       f.close();
       File fw = LittleFS.open(filename, "w");
-      if (fw) { fw.print(kept); fw.close(); }
+      if (fw) { chunkedWrite(fw, kept); fw.close(); }
       else { Serial.println("Warning: failed to open gran.csv for pruning"); }
     }
+    clearFSCrashHint();
   }
 
   if (ts < MIN_VALID_EPOCH) return;  // NTP not synced
 
+  setFSCrashHint("appendGran");
   File f = LittleFS.open(filename, "a");
   if (f) {
     f.printf("%u,%.5f,%.3f,%.2f,%d,%.2f,%.2f,%.2f,%.2f,%d,%.1f,%.1f,%.3f,%.2f,%.1f\n", ts, r2, eqML, endpointPH, usedGran ? 1 : 0, confidence,
@@ -1195,6 +1240,7 @@ void appendGranHistory(float r2, float eqML, float endpointPH, bool usedGran, fl
   } else {
     Serial.println("Warning: failed to append to gran.csv");
   }
+  clearFSCrashHint();
 }
 
 static uint16_t lastSampleSGAvgStored = 0;
@@ -1209,6 +1255,7 @@ void appendMotorHealth(uint32_t ts, int sampleAvg, int sampleMin, int titrateAvg
 
   // Remove entries older than 90 days
   if (LittleFS.exists(filename)) {
+    setFSCrashHint("pruneMotorHealth");
     uint32_t cutoff = ts - (90UL * 86400UL);
     File f = LittleFS.open(filename, "r");
     if (f) {
@@ -1218,6 +1265,7 @@ void appendMotorHealth(uint32_t ts, int sampleAvg, int sampleMin, int titrateAvg
       while (f.available() && lines < 500) {
         String line = f.readStringUntil('\n');
         lines++;
+        yield();
         if (line.length() == 0) continue;
         int comma = line.indexOf(',');
         if (comma < 0) continue;
@@ -1226,8 +1274,9 @@ void appendMotorHealth(uint32_t ts, int sampleAvg, int sampleMin, int titrateAvg
       }
       f.close();
       File fw = LittleFS.open(filename, "w");
-      if (fw) { fw.print(kept); fw.close(); }
+      if (fw) { chunkedWrite(fw, kept); fw.close(); }
     }
+    clearFSCrashHint();
   }
 
   lastSampleSGAvgStored = sampleAvg;
@@ -1251,6 +1300,7 @@ void appendPrecisionHistory(uint32_t ts, int n, float mean, float sd, float vmin
 
   // Keep last 90 days (precision tests are infrequent)
   if (LittleFS.exists(filename)) {
+    setFSCrashHint("prunePrecision");
     uint32_t cutoff = ts - (90UL * 86400UL);
     File f = LittleFS.open(filename, "r");
     if (f) {
@@ -1258,6 +1308,7 @@ void appendPrecisionHistory(uint32_t ts, int n, float mean, float sd, float vmin
       kept.reserve(f.size());
       while (f.available()) {
         String line = f.readStringUntil('\n');
+        yield();
         if (line.length() == 0) continue;
         int comma = line.indexOf(',');
         if (comma < 0) continue;
@@ -1266,8 +1317,9 @@ void appendPrecisionHistory(uint32_t ts, int n, float mean, float sd, float vmin
       }
       f.close();
       File fw = LittleFS.open(filename, "w");
-      if (fw) { fw.print(kept); fw.close(); }
+      if (fw) { chunkedWrite(fw, kept); fw.close(); }
     }
+    clearFSCrashHint();
   }
 
   if (ts < MIN_VALID_EPOCH) return;
@@ -1315,6 +1367,7 @@ int getRecentKHValues(float* outValues, int maxCount) {
 
   while (f.available()) {
     String line = f.readStringUntil('\n');
+    yield();
     if (line.length() == 0) continue;
     int comma = line.indexOf(',');
     if (comma < 0) continue;
@@ -1350,6 +1403,7 @@ int getRecentKHValuesWithTime(uint32_t* outTimestamps, float* outValues, int max
 
   while (f.available()) {
     String line = f.readStringUntil('\n');
+    yield();
     if (line.length() == 0) continue;
     int comma = line.indexOf(',');
     if (comma < 0) continue;
@@ -1393,6 +1447,7 @@ float computeKHSlope() {
   if (!f) return NAN;
   while (f.available() && n < MAX_PTS) {
     String line = f.readStringUntil('\n');
+    yield();
     if (line.length() == 0) continue;
     int comma = line.indexOf(',');
     if (comma < 0) continue;
@@ -1520,6 +1575,7 @@ void setupWebServer() {
       File f = LittleFS.open("/history/kh.csv", "r");
       while (f && f.available()) {
         String line = f.readStringUntil('\n');
+        yield();
         int c = line.indexOf(',');
         if (c < 0) continue;
         int idx = findOrAdd(line.substring(0, c).toInt());
@@ -1533,6 +1589,7 @@ void setupWebServer() {
       File f = LittleFS.open("/history/ph.csv", "r");
       while (f && f.available()) {
         String line = f.readStringUntil('\n');
+        yield();
         int c = line.indexOf(',');
         if (c < 0) continue;
         int idx = findOrAdd(line.substring(0, c).toInt());
@@ -1546,6 +1603,7 @@ void setupWebServer() {
       File f = LittleFS.open("/history/gran.csv", "r");
       while (f && f.available()) {
         String line = f.readStringUntil('\n');
+        yield();
         int c1 = line.indexOf(',');
         if (c1 < 0) continue;
         int c2 = line.indexOf(',', c1 + 1);

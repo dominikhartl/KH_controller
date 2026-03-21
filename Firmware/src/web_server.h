@@ -67,4 +67,7 @@ extern std::atomic<bool> isMeasuringKH;
 extern AsyncWebServer server;
 extern AsyncWebSocket ws;
 
+// RTC crash hint for filesystem operations (survives INT_WDT/panic reset)
+const char* getFSCrashHint();
+
 #endif // WEB_SERVER_H

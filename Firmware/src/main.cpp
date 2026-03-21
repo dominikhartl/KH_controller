@@ -1954,11 +1954,17 @@ void setup() {
     char bootBuf[64];
     snprintf(bootBuf, sizeof(bootBuf), "BOOT (reason=%d, heap=%u)", reason, ESP.getFreeHeap());
     publishMessage(bootBuf);
-    if (reason == ESP_RST_PANIC) {
+    if (reason == ESP_RST_PANIC || reason == ESP_RST_INT_WDT) {
       const char* hint = getMotorCrashHint();
       if (hint) {
         char hintBuf[64];
-        snprintf(hintBuf, sizeof(hintBuf), "CRASH during: %s", hint);
+        snprintf(hintBuf, sizeof(hintBuf), "CRASH during motor: %s", hint);
+        publishMessage(hintBuf);
+      }
+      const char* fsHint = getFSCrashHint();
+      if (fsHint) {
+        char hintBuf[64];
+        snprintf(hintBuf, sizeof(hintBuf), "CRASH during FS: %s", fsHint);
         publishMessage(hintBuf);
       }
     }
