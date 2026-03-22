@@ -121,6 +121,10 @@ static int stabTimeoutCount = 0;
 static unsigned long stabTotalMs = 0;
 static bool lastStabTimedOut = false;
 
+// EZO stabilization readings carried into measurement (avoids discarding converged data)
+static float ezoStabReadings[10];
+static int ezoStabCount = 0;
+
 // Noise tracking (per measurement cycle)
 static float lastStabNoiseMv = 0;      // StdDev of mV readings during last stabilization
 static float stabNoiseMvSum = 0;       // Running sum of noise StdDevs
@@ -742,6 +746,16 @@ static void waitForStabilization() {
         stabYieldCallback(); lastYield = millis();
       }
     }
+    // Carry converged readings into next measurePHCore() call
+    ezoStabCount = 0;
+    if (converged && nReadings >= 2) {
+      // Keep last few converged readings (they proved stability)
+      int startIdx = (nReadings > 4) ? nReadings - 4 : 0;
+      for (int i = startIdx; i < nReadings; i++) {
+        ezoStabReadings[ezoStabCount++] = stabReadings[i];
+      }
+    }
+
     unsigned long elapsed = millis() - start;
     if (converged) {
       lastStabilizationMs = elapsed;
@@ -853,8 +867,14 @@ static void measurePHCore(int nreadings) {
 
   if (ezoActive()) {
     // EZO returns pH directly — no voltage conversion needed
+    // Incorporate converged readings from prior stabilization (zero time cost)
+    for (int i = 0; i < ezoStabCount; i++) {
+      pHReadings[validReadings++] = ezoStabReadings[i];
+    }
+    ezoStabCount = 0;
+
     float tempC = hasTemperatureSensor() ? getWaterTemperatureC() : configStore.getMeasTempC();
-    int maxReadings = (nreadings > 5) ? 5 : nreadings;  // Each read is 900ms
+    int maxReadings = (nreadings > 7) ? 7 : nreadings;  // Each read is 900ms
     for (int t = 0; t < maxReadings; t++) {
       float reading = ezoReadPH(tempC);
       if (!isnan(reading) && reading > 0.0f && reading < 14.0f) {

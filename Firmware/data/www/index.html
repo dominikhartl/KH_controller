@@ -98,6 +98,12 @@
       <canvas id="chart-gran-hist" style="display:none"></canvas>
       <canvas id="chart-gran-windows" style="display:none"></canvas>
     </div>
+    <div id="chart-range" class="chart-range">
+      <button class="range-btn active" data-days="7">7d</button>
+      <button class="range-btn" data-days="1">1d</button>
+      <button class="range-btn" data-days="3">3d</button>
+      <button class="range-btn" data-days="10">10d</button>
+    </div>
     <div id="kh-layers" class="kh-layers">
       <label><input type="checkbox" id="kh-show-points" checked> Points</label>
       <label><input type="checkbox" id="kh-show-smooth" checked> Smooth</label>
@@ -211,6 +217,9 @@
         </label>
         <label>KH Trend Window (h)
           <input type="number" id="cfg-slope_hours" step="1" min="24" max="168">
+        </label>
+        <label>Smooth Half-Life (h, 0=auto)
+          <input type="number" id="ui-smooth-halflife" step="1" min="0" max="48" value="0" class="ui-only">
         </label>
         <label>Wash Cycles
           <input type="number" id="cfg-num_washes" step="1" min="1" max="5">

@@ -27,8 +27,8 @@ DEVICE_HOST = env.subst("$UPLOAD_PORT") or "khpro.local"
 # Web assets to gzip (source files kept in git, .gz generated at build time)
 GZIP_EXTENSIONS = (".html", ".js", ".css")
 
-# Track which originals were removed so we can restore them
-_removed_originals = []
+# Track which originals were backed up so we can restore them
+_backed_up = {}  # fname -> backup_path
 
 
 def gzip_web_assets():
@@ -46,25 +46,28 @@ def gzip_web_assets():
                 comp = os.path.getsize(dst)
                 print(f"  Gzipped {fname}: {orig} -> {comp} bytes ({100-comp*100//orig}% smaller)")
 
-    # Remove originals — ESPAsyncWebServer only serves .gz when original is absent
+    # Back up and remove originals — ESPAsyncWebServer only serves .gz when original is absent
     for fname in list(os.listdir(WWW_DIR)):
         if any(fname.endswith(ext) for ext in GZIP_EXTENSIONS):
-            gz_path = os.path.join(WWW_DIR, fname + ".gz")
+            src = os.path.join(WWW_DIR, fname)
+            gz_path = src + ".gz"
             if os.path.exists(gz_path):
-                os.remove(os.path.join(WWW_DIR, fname))
-                _removed_originals.append(fname)
-    if _removed_originals:
-        print(f"  Removed originals for build: {', '.join(_removed_originals)}")
+                bak = src + ".bak"
+                shutil.copy2(src, bak)
+                os.remove(src)
+                _backed_up[fname] = bak
+    if _backed_up:
+        print(f"  Removed originals for build: {', '.join(_backed_up.keys())}")
 
 
 def restore_originals():
-    """Restore original web assets from git after upload."""
-    if _removed_originals:
-        restore = [os.path.join("data", "www", f) for f in _removed_originals]
-        subprocess.run(["git", "checkout", "--"] + restore,
-                       cwd=env.subst("$PROJECT_DIR"),
-                       capture_output=True)
-        print(f"  Restored originals: {', '.join(_removed_originals)}")
+    """Restore original web assets from backups after upload."""
+    for fname, bak in _backed_up.items():
+        dst = os.path.join(WWW_DIR, fname)
+        if os.path.exists(bak):
+            shutil.move(bak, dst)
+    if _backed_up:
+        print(f"  Restored originals: {', '.join(_backed_up.keys())}")
 
 
 def cleanup_after_upload(source, target, env):

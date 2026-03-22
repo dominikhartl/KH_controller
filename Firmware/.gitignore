@@ -19,6 +19,9 @@ data/www/*.gz
 # macOS
 .DS_Store
 
+# Build-time backups (save_history.py)
+*.bak
+
 # Editor backup files
 *.save
 *.swp
