@@ -15,6 +15,7 @@ public:
   void subscribe(const char* topic);
   void setCallback(MQTT_CALLBACK_SIGNATURE);
   void onDisconnect(MQTTDisconnectCallback cb) { onDisconnectCb = cb; }
+  void suppressReconnect(bool suppress) { reconnectSuppressed = suppress; }
   PubSubClient& getClient();
 
 private:
@@ -38,6 +39,7 @@ private:
   const char* subscriptions[MAX_SUBSCRIPTIONS] = {};
   uint8_t subscriptionCount = 0;
 
+  bool reconnectSuppressed = false;
   bool tryConnect();
 };
 

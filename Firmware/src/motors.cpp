@@ -4,6 +4,7 @@
 #include "motors.h"
 #include "tmc_driver.h"
 #include "config_store.h"
+#include "mqtt_manager.h"
 #include <pins.h>
 #include <config.h>
 
@@ -193,6 +194,7 @@ static bool runSamplePump(int volume, bool forward, float speedRpm) {
   { char hint[48]; snprintf(hint, sizeof(hint), "%s %d revs",
       forward ? "takeSample" : "removeSample", volume);
     setCrashHint(hint); }
+  mqttManager.suppressReconnect(true);  // Prevent blocking TCP connects during motor ops
   clearStallFlag();
   sampleSGSum = 0; sampleSGCount = 0; sampleSGMin = 65535;
 
@@ -227,12 +229,14 @@ static bool runSamplePump(int volume, bool forward, float speedRpm) {
       sampleStepper->forceStopAndNewPosition(sampleStepper->getCurrentPosition());
       delay(MOTOR_HOLD_MS);
       digitalWrite(EN_PIN1, HIGH);
+      mqttManager.suppressReconnect(false);
       return false;
     }
     if (millis() - startTime > timeout) {
       sampleStepper->forceStopAndNewPosition(sampleStepper->getCurrentPosition());
       delay(MOTOR_HOLD_MS);
       digitalWrite(EN_PIN1, HIGH);
+      mqttManager.suppressReconnect(false);
       return false;
     }
     if (progressCb && washTotalVol > 0) {
@@ -264,6 +268,7 @@ static bool runSamplePump(int volume, bool forward, float speedRpm) {
 
   delay(MOTOR_HOLD_MS);
   digitalWrite(EN_PIN1, HIGH);
+  mqttManager.suppressReconnect(false);
   return ok;
 }
 

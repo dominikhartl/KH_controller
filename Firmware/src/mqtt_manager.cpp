@@ -24,7 +24,7 @@ void MQTTManager::begin() {
   int mqttPort = configStore.getMqttPort();
   client.setServer(mqttServerBuf, mqttPort);
   client.setBufferSize(768);
-  client.setSocketTimeout(3);  // 3s TCP timeout (default 15s can trigger watchdog)
+  client.setSocketTimeout(2);  // 2s TCP timeout (default 15s can trigger watchdog)
 
   // Build fixed client ID from MAC address
   uint8_t mac[6];
@@ -77,6 +77,8 @@ void MQTTManager::loop() {
   if (now - lastReconnectAttempt < currentReconnectInterval) {
     return;
   }
+  // Skip reconnect during motor operations — tryConnect() TCP handshake can block
+  if (reconnectSuppressed) return;
   lastReconnectAttempt = now;
   esp_task_wdt_reset();  // Feed watchdog before potentially blocking TCP connect
 

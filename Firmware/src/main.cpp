@@ -65,6 +65,7 @@ static void measurementYield() {
   wifiManager.loop();
   mqttManager.loop();
   ArduinoOTA.handle();
+  esp_task_wdt_reset();  // Feed again after potentially blocking network I/O
   static unsigned long lastBroadcast = 0;
   if (millis() - lastBroadcast >= 2000) {
     lastBroadcast = millis();
@@ -485,7 +486,9 @@ void processPendingCommand() {
       stopStirrer();
       publishMessage("Washing sample");
       int wFill = configStore.getSampleCalRevolutions();
-      int wRemove = (int)(wFill * 1.2f);
+      float wRevsPerML = configStore.getSampleCalRevsPerML();
+      float wMaxAcidML = configStore.getMaxAcidML();
+      int wRemove = wFill + (int)((wMaxAcidML + 5.0f) * wRevsPerML);
       if (!washSampleVol(wRemove, wFill, configStore.getSamplePumpRPM())) {
         publishError(wasMotorStall() ? "Error: sample pump stall during wash" : "Error: sample pump timeout during wash");
       } else {
@@ -906,7 +909,9 @@ void calibrateSamplePump() {
   broadcastProgress(0);
   float sampRpm = configStore.getSamplePumpRPM();
   int fillRevs = configStore.getSampleCalRevolutions();
-  int removeRevs = (int)(fillRevs * 1.2f);
+  float revsPerML = configStore.getSampleCalRevsPerML();
+  float maxAcidML = configStore.getMaxAcidML();
+  int removeRevs = fillRevs + (int)((maxAcidML + 5.0f) * revsPerML);
   // Match the measurement's multi-wash cycle so the weighed volume
   // includes the same residual water that remains during a real measurement.
   int numWashes = configStore.getNumWashes();
@@ -1155,7 +1160,8 @@ KHResult measureKH() {
   float revsPerML = configStore.getSampleCalRevsPerML();
   int sampleFillRevs = configStore.getSampleCalRevolutions();
   float sampVolML = (revsPerML > 0) ? (float)sampleFillRevs / revsPerML : 0.0f;
-  int sampleRemoveRevs = (int)(sampleFillRevs * 1.2f);
+  float maxAcidML = configStore.getMaxAcidML();
+  int sampleRemoveRevs = sampleFillRevs + (int)((maxAcidML + 5.0f) * revsPerML);
   // Configurable wash count: rinses clean the chamber, last wash takes the actual sample
   int numWashes = configStore.getNumWashes();
   setMultiWashContext(numWashes);
@@ -1203,7 +1209,7 @@ KHResult measureKH() {
     publishMessage(retryBuf);
     stopStirrer();
     setMultiWashContext(2);
-    bool rinse1 = washSampleVol((int)(sampleFillRevs * 1.5f), sampleFillRevs, sampRpm);
+    bool rinse1 = washSampleVol(sampleRemoveRevs, sampleFillRevs, sampRpm);
     delay(2000);
     bool rinse2 = washSampleVol(sampleRemoveRevs, sampleFillRevs, sampRpm);
     clearMultiWashContext();
@@ -1699,22 +1705,11 @@ KHResult measureKH() {
   Serial.println("Stopping stirrer (post-titration)");
   stopStirrer();
 
-  // Compute extra removal to compensate for HCl volume added during titration
-  // hclPart = HCl volume / sample volume (in mL/mL), adds to removal fraction
-  float hclPart = 0;
-  {
-    float calU = (float)configStore.getCalUnits();
-    float titV = configStore.getTitrationVolume();
-    float revsPerMLpost = configStore.getSampleCalRevsPerML();
-    float samV = (revsPerMLpost > 0) ? (float)configStore.getSampleCalRevolutions() / revsPerMLpost : 0.0f;
-    if (calU > 0 && samV > 0) {
-      hclPart = ((float)(units + prefillUnits) / calU) * titV / samV;
-    }
-  }
-
-  // Single post-wash rinse (pre-measurement double wash handles carryover)
+  // Single post-wash rinse: remove sample + max acid volume + 5ml safety margin
   int postFillRevs = configStore.getSampleCalRevolutions();
-  int postRemoveRevs = (int)(postFillRevs * (1.5f + hclPart));
+  float postRevsPerML = configStore.getSampleCalRevsPerML();
+  float postMaxAcidML = configStore.getMaxAcidML();
+  int postRemoveRevs = postFillRevs + (int)((postMaxAcidML + 5.0f) * postRevsPerML);
   if (!washSampleVol(postRemoveRevs, postFillRevs, configStore.getSamplePumpRPM())) {
     publishError("Warning: sample pump timeout during post-wash");
     errorflag = 1;  // Flag result as unreliable — incomplete wash risks contaminating next measurement
