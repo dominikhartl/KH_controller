@@ -1856,30 +1856,8 @@ void setup() {
   snprintf(MQgranR2, sizeof(MQgranR2), "%s/gran_r2", deviceName);
   snprintf(MQkhCI, sizeof(MQkhCI), "%s/kh_ci", deviceName);
 
-  // --- Triple power-cycle detection for WiFi reset ---
-  {
-    uint8_t bootCount = configStore.getBootCount();
-    uint32_t lastBoot = configStore.getLastBootTime();
-    uint32_t now = (uint32_t)(esp_timer_get_time() / 1000ULL);  // ms since boot (always small)
-    // Use millis() for inter-boot timing — but on fresh boot it's ~0,
-    // so we use the stored timestamp and compare with a flag approach:
-    // If last boot was recent (stored as a monotonic counter), detect rapid cycles.
-    // We store the millis() value AFTER setup completes. On next boot, if the stored
-    // value indicates the previous boot was short-lived (<10s uptime), it's a rapid cycle.
-    // Simpler approach: just use the boot count + a timeout that resets in loop().
-    if (bootCount >= 2) {
-      Serial.println("Triple power-cycle detected — clearing WiFi, entering AP mode");
-      configStore.clearBootCount();
-      configStore.clearWifiCredentials();
-      // Fall through to AP mode below (hasWifiCredentials will be false)
-    } else {
-      configStore.setBootCount(bootCount + 1);
-      Serial.printf("Boot count: %d (power-cycle 3x within 10s to reset WiFi)\n", bootCount + 1);
-    }
-  }
-
   // --- WiFi: AP mode or STA mode ---
-  // BOOT button (GPIO 0) for hardware WiFi reset
+  // BOOT button (GPIO 0) held 5s = clear WiFi, enter AP mode
   pinMode(0, INPUT_PULLUP);
 
   static char wifiSSID[33];
@@ -2013,8 +1991,6 @@ void setup() {
     measureKHWithValidation();
   });
 
-  // Clear boot counter after successful STA setup (prevents false triple-cycle detection)
-  configStore.clearBootCount();
 }
 
 // --- BOOT button (GPIO 0) long-press check ---
@@ -2025,7 +2001,6 @@ static void checkBootButton() {
     } else if (millis() - bootBtnPressStart >= BOOT_BTN_HOLD_MS) {
       Serial.println("BOOT button held 5s — clearing WiFi, entering AP mode");
       configStore.clearWifiCredentials();
-      configStore.clearBootCount();
       delay(500);
       ESP.restart();
     }
@@ -2096,10 +2071,4 @@ void loop() {
     publishDiagnostics();
   }
 
-  // Reset boot counter 10s after boot (prevents false triple power-cycle detection)
-  static bool bootCounterCleared = false;
-  if (!bootCounterCleared && millis() > 10000) {
-    configStore.clearBootCount();
-    bootCounterCleared = true;
-  }
 }

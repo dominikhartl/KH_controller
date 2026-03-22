@@ -316,6 +316,34 @@ static void handleWebSocketMessage(AsyncWebSocketClient* client, void* arg, uint
         }
         return;
       }
+      if (strcmp(key, "mqtt_server") == 0 || strcmp(key, "mqtt_user") == 0 || strcmp(key, "mqtt_pass") == 0) {
+        const char* val = doc["value"].as<const char*>();
+        if (!val) val = "";
+        char srv[65], user[33], pass[33];
+        configStore.getMqttServer(srv, sizeof(srv));
+        configStore.getMqttUsername(user, sizeof(user));
+        configStore.getMqttPassword(pass, sizeof(pass));
+        int port = configStore.getMqttPort();
+        if (strcmp(key, "mqtt_server") == 0) strncpy(srv, val, sizeof(srv) - 1);
+        else if (strcmp(key, "mqtt_user") == 0) strncpy(user, val, sizeof(user) - 1);
+        else if (strcmp(key, "mqtt_pass") == 0) strncpy(pass, val, sizeof(pass) - 1);
+        configStore.setMqttConfig(srv, port, user, pass);
+        sendConfigResult(key, true);
+        broadcastMessage("MQTT config changed. Reboot to apply.");
+        return;
+      }
+      if (strcmp(key, "mqtt_port") == 0) {
+        int port = doc["value"] | 1883;
+        if (port < 1 || port > 65535) { sendConfigResult(key, false); return; }
+        char srv[65], user[33], pass[33];
+        configStore.getMqttServer(srv, sizeof(srv));
+        configStore.getMqttUsername(user, sizeof(user));
+        configStore.getMqttPassword(pass, sizeof(pass));
+        configStore.setMqttConfig(srv, port, user, pass);
+        sendConfigResult(key, true);
+        broadcastMessage("MQTT config changed. Reboot to apply.");
+        return;
+      }
 
       float value = doc["value"];
       if (isnan(value)) { sendConfigResult(key, false); return; }
@@ -942,6 +970,17 @@ void broadcastState() {
   cfg["slope_hours"] = configStore.getSlopeWindowHours();
   cfg["num_washes"] = configStore.getNumWashes();
   cfg["timezone"] = configStore.getTimezone();
+  { char mqSrv[65], mqUser[33];
+    configStore.getMqttServer(mqSrv, sizeof(mqSrv));
+    configStore.getMqttUsername(mqUser, sizeof(mqUser));
+    cfg["mqtt_server"] = mqSrv;
+    cfg["mqtt_port"] = configStore.getMqttPort();
+    cfg["mqtt_user"] = mqUser;
+    // Don't send password — show placeholder instead
+    char mqPass[33];
+    configStore.getMqttPassword(mqPass, sizeof(mqPass));
+    cfg["mqtt_pass"] = strlen(mqPass) > 0 ? "********" : "";
+  }
   cfg["ph_sensor"] = configStore.getPhSensorType();
   cfg["ph_sensor_name"] = getActivePHSensor();
   cfg["ads_active"] = isExternalADCActive();

@@ -205,9 +205,8 @@ static bool runSamplePump(int volume, bool forward, float speedRpm) {
   if (forward != lastSampleDirection) {
     sampleStepper->setSpeedInHz(rpmToHz(MOTOR_START_RPM));
     sampleStepper->setAcceleration(MOTOR_ACCEL_STEPS_S2);
-    int32_t blStart = sampleStepper->getCurrentPosition();
     sampleStepper->move(forward ? BACKLASH_COMPENSATION_STEPS : -BACKLASH_COMPENSATION_STEPS);
-    waitForStepper(sampleStepper, 5000, blStart);
+    while (sampleStepper->isRunning()) { esp_task_wdt_reset(); delay(5); }
   }
   lastSampleDirection = forward;
 

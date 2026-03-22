@@ -368,6 +368,12 @@ void publishAllDiscovery() {
     publishDiscoveryPayload(dt, doc);
   }
 
+  // Remove stale number entity for sample volume (was changed to sensor)
+  { char oldNumTopic[128];
+    snprintf(oldNumTopic, sizeof(oldNumTopic), "homeassistant/number/%s/khv3_sam_vol/config", deviceIdLower);
+    mqttManager.publish(oldNumTopic, "", true);  // empty retained payload = delete
+  }
+
   // Number inputs
   publishNumberDiscovery("khv3_tit_vol", "Titration Volume",
                           topicCfgTitVol, topicCfgTitVolSet, 0.1, 50.0, 0.1, "mL");

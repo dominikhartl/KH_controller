@@ -256,6 +256,10 @@
       setInput('cfg-buf_ph10', d.config.buf_ph10);
       setInput('cfg-slope_hours', d.config.slope_hours);
       setInput('cfg-num_washes', d.config.num_washes);
+      setInput('cfg-mqtt_server', d.config.mqtt_server);
+      setInput('cfg-mqtt_port', d.config.mqtt_port);
+      setInput('cfg-mqtt_user', d.config.mqtt_user);
+      setInput('cfg-mqtt_pass', d.config.mqtt_pass);
       if (d.config.ph_sensor != null) {
         var phSel = document.getElementById('cfg-ph_sensor');
         if (phSel) phSel.value = d.config.ph_sensor;
@@ -1375,7 +1379,8 @@
       if (inp.classList.contains('ui-only')) return;
       inp.addEventListener('change', function() {
         var key = inp.id.replace('cfg-', '');
-        var val = (inp.type === 'text') ? inp.value : parseFloat(inp.value);
+        if (key === 'mqtt_pass' && inp.value === '********') return;
+        var val = (inp.type === 'text' || inp.type === 'password') ? inp.value : parseFloat(inp.value);
         if (typeof val === 'number' && isNaN(val)) return;
         // Convert revolutions back to internal units for titration calibration
         if (key === 'cal_drops') {
