@@ -1269,7 +1269,7 @@ float granAnalysis(TitrationPoint* points, int nPoints,
       // the quantity reported to the user.
       // Fallback: if eqSE is unavailable (degenerate variance), use R² as tiebreaker.
       bool better = false;
-      if (!isnan(eq) && r2 >= GRAN_MIN_R2) {
+      if (!isnan(eq) && r2 >= configStore.getGranMinR2()) {
         if (eqSE > 0)
           better = isnan(bestEqUnits) || eqSE < bestEqSE;
         else
@@ -1298,7 +1298,7 @@ float granAnalysis(TitrationPoint* points, int nPoints,
 
   if (outR2) {
     *outR2 = bestR2;
-    if (bestR2 < GRAN_MIN_R2) {
+    if (bestR2 < configStore.getGranMinR2()) {
       if (reasonBuf && reasonLen > 0)
         snprintf(reasonBuf, reasonLen, "Poor fit (R²=%.3f)", bestR2);
       return NAN;

@@ -129,6 +129,18 @@ void ConfigStore::setGranMixDelay(int ms) {
   prefs.putInt("gran_mix", ms);
 }
 
+float ConfigStore::getGranMinR2() {
+  float v = prefs.getFloat("gran_r2", GRAN_MIN_R2);
+  if (v < 0.990f) v = 0.990f;
+  if (v > 1.000f) v = 1.000f;
+  return v;
+}
+void ConfigStore::setGranMinR2(float v) {
+  if (v < 0.990f) v = 0.990f;
+  if (v > 1.000f) v = 1.000f;
+  prefs.putFloat("gran_r2", v);
+}
+
 float ConfigStore::getDropVolumeUL() {
   float ul = prefs.getFloat("drop_ul", 26.0);
   if (ul < 5.0) ul = 5.0;

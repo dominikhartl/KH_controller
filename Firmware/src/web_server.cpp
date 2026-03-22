@@ -335,6 +335,9 @@ static void handleWebSocketMessage(AsyncWebSocketClient* client, void* arg, uint
       else if (strcmp(key, "gran_mix_delay") == 0) {
         configStore.setGranMixDelay((int)value);
       }
+      else if (strcmp(key, "gran_min_r2") == 0 && value >= 0.990f && value <= 1.000f) {
+        configStore.setGranMinR2(value);
+      }
       else if (strcmp(key, "num_washes") == 0) { configStore.setNumWashes((int)value); }
       else if (strcmp(key, "drop_ul") == 0) { configStore.setDropVolumeUL(value); }
       else if (strcmp(key, "titration_rpm") == 0)   { configStore.setTitrationRPM(value); }
@@ -916,6 +919,7 @@ void broadcastState() {
   cfg["min_start_ph"] = configStore.getMinStartPH();
   cfg["stab_timeout"] = configStore.getStabilizationTimeout();
   cfg["gran_mix_delay"] = configStore.getGranMixDelay();
+  cfg["gran_min_r2"] = configStore.getGranMinR2();
   cfg["drop_ul"] = configStore.getDropVolumeUL();
   cfg["titration_rpm"]   = configStore.getTitrationRPM();
   cfg["gran_burst_rpm"]  = configStore.getGranBurstRPM();
@@ -1787,7 +1791,7 @@ void setupWebServer() {
               "\"constants\":{"
               "\"gran_region_ph\":%.1f,\"gran_stop_ph\":%.1f,"
               "\"endpoint_ph\":%.1f,\"fixed_stop_ph\":%.1f,"
-              "\"min_gran_points\":%d,\"gran_min_r2\":%.2f,"
+              "\"min_gran_points\":%d,\"gran_min_r2\":%.3f,"
               "\"steps_per_rev\":%d,\"motor_steps_per_unit\":%d,"
               "\"titration_step_size\":%d,\"medium_step_mult\":%d,"
               "\"gran_step_mult\":%d,\"fast_batch_max\":%d,"
@@ -1797,7 +1801,7 @@ void setupWebServer() {
               "\"tmc_detected\":%s},",
               GRAN_REGION_PH, GRAN_STOP_PH,
               ENDPOINT_PH, FIXED_ENDPOINT_STOP_PH,
-              MIN_GRAN_POINTS, GRAN_MIN_R2,
+              MIN_GRAN_POINTS, configStore.getGranMinR2(),
               STEPS_PER_REVOLUTION, MOTOR_STEPS_PER_UNIT,
               TITRATION_STEP_SIZE, MEDIUM_STEP_MULTIPLIER,
               GRAN_STEP_MULTIPLIER, FAST_BATCH_MAX,

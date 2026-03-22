@@ -245,6 +245,7 @@
       setInput('cfg-min_start_ph', d.config.min_start_ph);
       setInput('cfg-stab_timeout', d.config.stab_timeout);
       setInput('cfg-gran_mix_delay', d.config.gran_mix_delay);
+      setInput('cfg-gran_min_r2', d.config.gran_min_r2);
       setInput('cfg-drop_ul', d.config.drop_ul);
       setInput('cfg-titration_rpm', d.config.titration_rpm);
       setInput('cfg-gran_burst_rpm', d.config.gran_burst_rpm);

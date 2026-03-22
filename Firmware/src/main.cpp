@@ -234,7 +234,7 @@ static bool isSuspect(const KHResult& r, const KHPrediction& pred, char* reasonB
     snprintf(reasonBuf, reasonLen, "Cross-val failed (diff %.2f dKH)", r.crossValDiff);
     return true;
   }
-  if (r.granR2 > 0 && r.granR2 < GRAN_MIN_R2) {
+  if (r.granR2 > 0 && r.granR2 < configStore.getGranMinR2()) {
     snprintf(reasonBuf, reasonLen, "Poor Gran fit (R²=%.3f)", r.granR2);
     return true;
   }
