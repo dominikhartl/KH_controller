@@ -1180,6 +1180,9 @@ KHResult measureKH() {
   startStirrer();
   delay(STIRRER_WARMUP_MS);  // Wait for solution to homogenize
   measurementYield();
+  // Extra settling time for pH probe to equilibrate from previous
+  // acidified solution to fresh sample (~5 pH unit transition)
+  delay(PROBE_SETTLE_MS);
   measurePH(isExternalADCActive() ? 20 : 100);
   float minStartPH = configStore.getMinStartPH();
   if (isnan(pH)) {
@@ -1954,7 +1957,7 @@ void setup() {
     char bootBuf[64];
     snprintf(bootBuf, sizeof(bootBuf), "BOOT (reason=%d, heap=%u)", reason, ESP.getFreeHeap());
     publishMessage(bootBuf);
-    if (reason == ESP_RST_PANIC || reason == ESP_RST_INT_WDT) {
+    if (reason == ESP_RST_PANIC || reason == ESP_RST_INT_WDT || reason == ESP_RST_TASK_WDT) {
       const char* hint = getMotorCrashHint();
       if (hint) {
         char hintBuf[64];

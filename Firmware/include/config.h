@@ -67,6 +67,7 @@ static const int STIRRER_SPEED_PCT = 90;           // Stirrer duty cycle (%)
 static const float SAMPLE_MAX_RPM = 250.0f;        // Sample pump max speed (RPM)
 static const float TITRATE_MAX_RPM = 250.0f;       // Titration pump max speed (RPM)
 static const int STIRRER_WARMUP_MS = 3000;
+static const int PROBE_SETTLE_MS = 30000;  // Extra settle time before start pH (probe transitions ~5 pH units)
 static const int MEASUREMENT_DELAY_MS = 50;
 
 // Measurement defaults
