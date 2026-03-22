@@ -1197,7 +1197,12 @@ KHResult measureKH() {
   measurementYield();
   // Extra settling time for pH probe to equilibrate from previous
   // acidified solution to fresh sample (~5 pH unit transition)
-  delay(PROBE_SETTLE_MS);
+  { unsigned long settleEnd = millis() + PROBE_SETTLE_MS;
+    while (millis() < settleEnd) {
+      delay(500);
+      measurementYield();
+    }
+  }
   measurePH(isExternalADCActive() ? 20 : 100);
   float minStartPH = configStore.getMinStartPH();
   if (isnan(pH)) {

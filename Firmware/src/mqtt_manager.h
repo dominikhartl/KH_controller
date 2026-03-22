@@ -15,7 +15,14 @@ public:
   void subscribe(const char* topic);
   void setCallback(MQTT_CALLBACK_SIGNATURE);
   void onDisconnect(MQTTDisconnectCallback cb) { onDisconnectCb = cb; }
-  void suppressReconnect(bool suppress) { reconnectSuppressed = suppress; }
+  void suppressReconnect(bool suppress) {
+    reconnectSuppressed = suppress;
+    if (!suppress) {
+      // Reset backoff so MQTT reconnects immediately after motor ops
+      lastReconnectAttempt = 0;
+      currentReconnectInterval = RECONNECT_INTERVAL_MS;
+    }
+  }
   PubSubClient& getClient();
 
 private:
