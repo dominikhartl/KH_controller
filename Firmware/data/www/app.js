@@ -252,7 +252,7 @@
       setInput('cfg-gran_burst_accel', d.config.gran_burst_accel);
       setInput('cfg-fast_phase_rpm', d.config.fast_phase_rpm);
       setInput('cfg-sample_pump_rpm', d.config.sample_pump_rpm);
-      if (d.config.sample_cal_vol > 0) setInput('cfg-sample_cal_vol', d.config.sample_cal_vol.toFixed(1));
+      setText('sample-cal-current', d.config.sample_cal_vol > 0 ? '(current: ' + d.config.sample_cal_vol.toFixed(1) + ' mL)' : '');
       setInput('cfg-prefill_ul', d.config.prefill_ul);
       setInput('cfg-max_acid_ml', d.config.max_acid_ml);
       setInput('cfg-fast_step_ul', d.config.fast_step_ul);

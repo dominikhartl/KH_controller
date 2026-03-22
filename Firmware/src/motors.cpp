@@ -249,14 +249,19 @@ static bool runSamplePump(int volume, bool forward, float speedRpm) {
     }
     delay(50);
   }
-  bool ok = true;
+  int32_t endPos = sampleStepper->getCurrentPosition();
+  int32_t actualSteps = abs(endPos - startPos);
+  bool ok = ((int)actualSteps >= totalSteps - 2);
 
-  if (!ok) {
-    if (abortCb && abortCb()) {
-      Serial.println("Sample pump aborted by user");
-    } else {
-      Serial.println("ERROR: Sample pump timeout!");
-    }
+  Serial.printf("SamplePump %s: %d revs @ %.0f RPM | steps exp=%d act=%d delta=%d\n",
+                forward ? "FILL" : "REMOVE", volume, speedRpm,
+                totalSteps, (int)actualSteps, (int)actualSteps - totalSteps);
+
+  if (actualSteps != (int32_t)totalSteps) {
+    char buf[96];
+    snprintf(buf, sizeof(buf), "Pump %s %d revs: step delta %d",
+             forward ? "fill" : "rem", volume, (int)actualSteps - totalSteps);
+    publishMessage(buf);
   }
 
   // Collect SG after operation

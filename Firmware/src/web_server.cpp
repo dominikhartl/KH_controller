@@ -351,10 +351,13 @@ static void handleWebSocketMessage(AsyncWebSocketClient* client, void* arg, uint
       else if (strcmp(key, "sample_cal_vol") == 0 && value > 0.1f) {
         // User entered measured volume from sample pump calibration
         int calRevs = configStore.getSampleCalRevolutions();
+        float oldRPM = configStore.getSampleCalRevsPerML();
+        float oldVol = (oldRPM > 0) ? (float)calRevs / oldRPM : 0;
         float revsPerML = (float)calRevs / value;
         configStore.setSampleCalRevsPerML(revsPerML);
-        char buf[64];
-        snprintf(buf, sizeof(buf), "Sample pump: %.2f revs/mL (from %.1f mL)", revsPerML, value);
+        char buf[96];
+        snprintf(buf, sizeof(buf), "Sample pump: %.2f revs/mL (%.1f -> %.1f mL @ %d revs)",
+                 revsPerML, oldVol, value, calRevs);
         publishMessage(buf);
       }
       else if (strcmp(key, "prefill_ul") == 0) { configStore.setPrefillVolumeUL(value); }
