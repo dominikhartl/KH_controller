@@ -77,11 +77,11 @@ static MotorYieldCallback yieldCb = nullptr;
 static MotorProgressCallback progressCb = nullptr;
 static MotorAbortCallback abortCb = nullptr;
 
-// Wash progress tracking (shared between removeSample/takeSample when called from washSample)
+// Wash progress tracking (shared between removeSample/takeSample when called from washSampleVol)
 static int washTotalVol = 0;
 static int washBaseVol = 0;  // volume completed before current phase
 
-// Multi-wash context: spans progress across sequential washSample() calls
+// Multi-wash context: spans progress across sequential washSampleVol() calls
 static int multiWashTotal = 0;   // total number of washes in sequence (0 = disabled)
 static int multiWashIndex = 0;   // current wash index (0-based)
 
@@ -205,8 +205,9 @@ static bool runSamplePump(int volume, bool forward, float speedRpm) {
   if (forward != lastSampleDirection) {
     sampleStepper->setSpeedInHz(rpmToHz(MOTOR_START_RPM));
     sampleStepper->setAcceleration(MOTOR_ACCEL_STEPS_S2);
+    int32_t blStart = sampleStepper->getCurrentPosition();
     sampleStepper->move(forward ? BACKLASH_COMPENSATION_STEPS : -BACKLASH_COMPENSATION_STEPS);
-    while (sampleStepper->isRunning()) { esp_task_wdt_reset(); delay(5); }
+    waitForStepper(sampleStepper, 5000, blStart);
   }
   lastSampleDirection = forward;
 
@@ -283,38 +284,6 @@ bool removeSample(int volume, float speedRpm) {
 
 bool takeSample(int volume, float speedRpm) {
   return runSamplePump(volume, true, speedRpm);
-}
-
-bool washSample(float remPart, float fillPart, float speedRpm) {
-  int removeVol = (int)(SAMPLE_PUMP_VOLUME * remPart);
-  int fillVol = (int)(SAMPLE_PUMP_VOLUME * fillPart);
-  washTotalVol = removeVol + fillVol;
-  washBaseVol = 0;
-
-  if (progressCb) {
-    if (multiWashTotal > 0) {
-      progressCb((multiWashIndex * 100) / multiWashTotal);
-    } else {
-      progressCb(0);
-    }
-  }
-
-  bool ok = removeSample(removeVol, speedRpm);
-
-  if (ok) {
-    washBaseVol = removeVol;
-    ok = takeSample(fillVol, speedRpm);
-  }
-
-  washTotalVol = 0;
-
-  if (multiWashTotal > 0) {
-    if (ok) multiWashIndex++;
-    if (progressCb) progressCb((multiWashIndex * 100) / multiWashTotal);
-  } else {
-    if (progressCb) progressCb(ok ? 100 : 0);
-  }
-  return ok;
 }
 
 bool washSampleVol(int removeRevs, int fillRevs, float speedRpm) {
@@ -498,7 +467,6 @@ float diagStallRamp(float startRPM, float maxRPM, float stepRPM, int revsPerStep
   int stepCount = 0;
   float medianAvg = 0;     // Running average of per-step medians
   int medianAvgCount = 0;
-  uint16_t prevIQR = 0;
   int stallConfirmCount = 0;
 
   for (float rpm = startRPM; rpm <= maxRPM; rpm += stepRPM) {
@@ -592,7 +560,6 @@ float diagStallRamp(float startRPM, float maxRPM, float stepRPM, int revsPerStep
       medianAvgCount = 1;
     }
 
-    prevIQR = stepIQR;
     stepCount++;
   }
 
@@ -634,7 +601,6 @@ float diagStallRampTitrate(float startRPM, float maxRPM, float stepRPM, int revs
   int stepCount = 0;
   float medianAvg = 0;
   int medianAvgCount = 0;
-  uint16_t prevIQR = 0;
   int stallConfirmCount = 0;
 
   for (float rpm = startRPM; rpm <= maxRPM; rpm += stepRPM) {
@@ -713,7 +679,6 @@ float diagStallRampTitrate(float startRPM, float maxRPM, float stepRPM, int revs
       medianAvgCount = 1;
     }
 
-    prevIQR = stepIQR;
     stepCount++;
   }
 

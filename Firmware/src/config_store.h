@@ -21,7 +21,7 @@ public:
 
   // KH calculation parameters
   float getTitrationVolume();   // mL per calUnits (default 9.8)
-  float getSampleVolume();      // mL (default 82.0)
+  float getSampleVolume();      // mL (legacy, not used in measurement — volume computed from calibration)
   float getCorrectionFactor();  // unitless (default 1.0)
   float getHClMolarity();       // mol/L (default 0.02)
   float getHClVolume();         // mL remaining (default 5000)

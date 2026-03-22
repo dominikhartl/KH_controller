@@ -33,7 +33,6 @@ char topicDiagnostics[60];
 
 // Set command topics
 static char topicCfgTitVolSet[60];
-static char topicCfgSamVolSet[60];
 static char topicCfgCorrFSet[60];
 static char topicCfgHclMolSet[60];
 static char topicCfgHclVolSet[60];
@@ -67,7 +66,6 @@ static void initTopics() {
   snprintf(topicCfgHclVol, sizeof(topicCfgHclVol), "%s/config/hcl_volume", deviceName);
   snprintf(topicCfgCalDrops, sizeof(topicCfgCalDrops), "%s/config/cal_drops", deviceName);
   snprintf(topicCfgTitVolSet, sizeof(topicCfgTitVolSet), "%s/config/titration_vol/set", deviceName);
-  snprintf(topicCfgSamVolSet, sizeof(topicCfgSamVolSet), "%s/config/sample_vol/set", deviceName);
   snprintf(topicCfgCorrFSet, sizeof(topicCfgCorrFSet), "%s/config/correction_factor/set", deviceName);
   snprintf(topicCfgHclMolSet, sizeof(topicCfgHclMolSet), "%s/config/hcl_molarity/set", deviceName);
   snprintf(topicCfgHclVolSet, sizeof(topicCfgHclVolSet), "%s/config/hcl_volume/set", deviceName);
@@ -105,7 +103,7 @@ static void minsToTimeStr(uint16_t mins, char* buf, size_t len) {
 // Helper: convert "HH:MM" string to minutes from midnight
 static uint16_t timeStrToMins(const char* str) {
   int h = 0, m = 0;
-  sscanf(str, "%d:%d", &h, &m);
+  if (sscanf(str, "%d:%d", &h, &m) != 2) return 0;
   return (uint16_t)(h * 60 + m);
 }
 
@@ -373,8 +371,9 @@ void publishAllDiscovery() {
   // Number inputs
   publishNumberDiscovery("khv3_tit_vol", "Titration Volume",
                           topicCfgTitVol, topicCfgTitVolSet, 0.1, 50.0, 0.1, "mL");
-  publishNumberDiscovery("khv3_sam_vol", "Sample Volume",
-                          topicCfgSamVol, topicCfgSamVolSet, 1.0, 200.0, 0.1, "mL");
+  // Sample volume is read-only — computed from pump calibration (revs / revsPerML)
+  publishSensorDiscovery("khv3_sam_vol", "Sample Volume",
+                          topicCfgSamVol, "mL", nullptr, nullptr, "config");
   publishNumberDiscovery("khv3_corr_f", "Correction Factor",
                           topicCfgCorrF, topicCfgCorrFSet, 0.5, 2.0, 0.01, nullptr);
   publishNumberDiscovery("khv3_hcl_mol", "HCl Molarity",
@@ -474,7 +473,6 @@ void publishAllDiscovery() {
 
   // Subscribe to config set topics
   mqttManager.subscribe(topicCfgTitVolSet);
-  mqttManager.subscribe(topicCfgSamVolSet);
   mqttManager.subscribe(topicCfgCorrFSet);
   mqttManager.subscribe(topicCfgHclMolSet);
   mqttManager.subscribe(topicCfgHclVolSet);
@@ -494,7 +492,10 @@ void publishAllDiscovery() {
 
 void publishAllConfigStates() {
   mqttManager.publish(topicCfgTitVol, String(configStore.getTitrationVolume(), 1).c_str(), true);
-  mqttManager.publish(topicCfgSamVol, String(configStore.getSampleVolume(), 1).c_str(), true);
+  { float rpm = configStore.getSampleCalRevsPerML();
+    float samVol = (rpm > 0) ? (float)configStore.getSampleCalRevolutions() / rpm : 0;
+    mqttManager.publish(topicCfgSamVol, String(samVol, 1).c_str(), true);
+  }
   mqttManager.publish(topicCfgCorrF, String(configStore.getCorrectionFactor(), 2).c_str(), true);
   mqttManager.publish(topicCfgHclMol, String(configStore.getHClMolarity(), 3).c_str(), true);
   mqttManager.publish(topicCfgHclVol, String(configStore.getHClVolume(), 0).c_str(), true);
@@ -580,9 +581,6 @@ void handleConfigSet(const char* topic, const char* payload) {
   if (strcmp(topic, topicCfgTitVolSet) == 0) {
     configStore.setTitrationVolume(val);
     mqttManager.publish(topicCfgTitVol, String(val, 1).c_str(), true);
-  } else if (strcmp(topic, topicCfgSamVolSet) == 0) {
-    configStore.setSampleVolume(val);
-    mqttManager.publish(topicCfgSamVol, String(val, 1).c_str(), true);
   } else if (strcmp(topic, topicCfgCorrFSet) == 0) {
     configStore.setCorrectionFactor(val);
     mqttManager.publish(topicCfgCorrF, String(val, 2).c_str(), true);

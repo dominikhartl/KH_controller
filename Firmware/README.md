@@ -94,7 +94,6 @@ All parameters can be configured via the web interface or Home Assistant. They a
 |-----------|---------|-------------|
 | Device name | KHpro | mDNS hostname, MQTT prefix, HA device ID (reboot to apply) |
 | Titration volume | 13.4 mL | Volume dispensed per `cal_drops` drops |
-| Sample volume | 82.0 mL | Water sample size |
 | Correction factor | 1.0 | Manual adjustment multiplier |
 | HCl molarity | 0.02 mol/L | Concentration of titration acid |
 | HCl volume | 5000 mL | Remaining acid supply |
@@ -135,9 +134,9 @@ The device uses MQTT auto-discovery, so entities appear automatically in Home As
 
 ### Entities Created
 
-**Sensors**: KH value (dKH), pH (start), measured pH (live), KH trend (dKH/day), measurement confidence, Gran R², cross-validation diff, data points, measurement time, WiFi signal, uptime, probe health, acid slope efficiency, alkaline slope efficiency, probe asymmetry, probe response time, calibration age
+**Sensors**: KH value (dKH), pH (start), measured pH (live), KH trend (dKH/day), measurement confidence, Gran R², cross-validation diff, data points, measurement time, sample volume (computed from calibration), WiFi signal, uptime, probe health, acid slope efficiency, alkaline slope efficiency, probe asymmetry, probe response time, calibration age
 
-**Number inputs** (configurable): Titration volume, sample volume, correction factor, HCl molarity, HCl volume, calibration units, fast titration pH, min start pH, stabilization timeout
+**Number inputs** (configurable): Titration volume, correction factor, HCl molarity, HCl volume, calibration units, fast titration pH, min start pH, stabilization timeout
 
 **Select inputs**: Endpoint method (Gran/Fixed pH), schedule mode (Custom/Interval), interval hours
 
@@ -237,6 +236,7 @@ For best results, calibrate the pump (`t`) and carefully measure the dispensed v
 | `src/mqtt_manager.cpp` | MQTT connection with LWT and exponential backoff |
 | `src/wifi_manager.cpp` | Non-blocking WiFi state machine |
 | `src/stirrer.cpp` | PWM stirrer motor control |
+| `src/temperature.cpp` | DS18B20 temperature sensor with Nernst compensation |
 | `src/hw_diagnostics.cpp` | Comprehensive hardware diagnostics (ADC noise, I2C, motors, GPIO, probe) |
 | `src/tmc_driver.cpp` | TMC2209 stepper driver UART interface |
 | `include/config.h` | All tuning parameters and constants |

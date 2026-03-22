@@ -41,7 +41,6 @@ void setupAPWebServer();
 void registerOTAUploadHandler();
 void executeCommand(const char* cmd);
 void calibratePH(int bufferPH);
-void processPendingReplay();
 void broadcastState();
 void broadcastTitrationPH(float ph, int units);
 void broadcastTitrationStart();

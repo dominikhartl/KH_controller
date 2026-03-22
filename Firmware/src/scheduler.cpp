@@ -1,14 +1,21 @@
 #include "scheduler.h"
 #include <config.h>
 #include <time.h>
+#include <Preferences.h>
 
 Scheduler scheduler;
+
+static Preferences schedPrefs;
 
 void Scheduler::begin() {
   // Configure NTP with timezone from config (defaults to CET/CEST for Europe/Zurich)
   const char* tz = configStore.getTimezone();
   configTzTime(tz, "pool.ntp.org", "time.google.com");
   lastMeasurementTime = millis();
+
+  // Load persisted last-measurement epoch (survives reboots for dedup)
+  schedPrefs.begin("scheduler", false);
+  lastMeasurementEpoch = schedPrefs.getULong("last_meas", 0);
 }
 
 uint8_t Scheduler::computeIntervalSlots(uint16_t* outSlots, uint8_t maxSlots) {
@@ -85,14 +92,28 @@ void Scheduler::loop() {
           currentMinutes >= slots[i] &&
           currentMinutes < slots[i] + 2) {
         alreadyRanToday[i] = true;
-        // Deduplication: skip if last measurement was less than 5 minutes ago (rapid reboot protection)
+        // Deduplication: skip if last measurement was less than 5 minutes ago
+        // Uses both millis() (current session) and persisted epoch (survives reboots)
         if (millis() - lastMeasurementTime < 300000 && lastMeasurementTime > 0) {
-          Serial.printf("Skipping schedule slot %d — last measurement was <5min ago\n", i);
+          Serial.printf("Skipping schedule slot %d — last measurement was <5min ago (millis)\n", i);
           continue;
+        }
+        { time_t now = time(nullptr);
+          if (now > MIN_VALID_EPOCH && lastMeasurementEpoch > 0
+              && (uint32_t)now - lastMeasurementEpoch < 300) {
+            Serial.printf("Skipping schedule slot %d — last measurement was <5min ago (epoch)\n", i);
+            continue;
+          }
         }
         Serial.printf("Scheduled measurement %d triggered at %02d:%02d\n",
                        i, timeinfo.tm_hour, timeinfo.tm_min);
         lastMeasurementTime = millis();
+        { time_t now = time(nullptr);
+          if (now > MIN_VALID_EPOCH) {
+            lastMeasurementEpoch = (uint32_t)now;
+            schedPrefs.putULong("last_meas", lastMeasurementEpoch);
+          }
+        }
         callback();
       }
     }

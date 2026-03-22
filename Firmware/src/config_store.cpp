@@ -310,7 +310,7 @@ void ConfigStore::setSamplePumpRPM(float rpm) {
 
 // Sample pump calibration factor (revolutions per mL)
 float ConfigStore::getSampleCalRevsPerML() {
-  float v = prefs.getFloat("samp_cal", 4.55f);  // default: SAMPLE_PUMP_VOLUME / 77.0
+  float v = prefs.getFloat("samp_cal", 4.55f);  // default: 350 revs / 77.0 mL
   if (v < 0.5f) v = 0.5f;
   if (v > 100.0f) v = 100.0f;
   return v;

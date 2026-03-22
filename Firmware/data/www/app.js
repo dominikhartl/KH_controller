@@ -201,12 +201,6 @@
     // Measuring state sync — shows/hides Abort button for all clients
     if (d.measuring != null) setMeasuringMode(!!d.measuring);
 
-    // Stirrer state sync (from device, not local toggle)
-    if (d.stirrer != null && d.stirrer !== stirrerOn) {
-      stirrerOn = d.stirrer;
-      syncStirrerUI();
-    }
-
     // Status bar
     setText('water-temp', d.temp_sensor ? d.water_temp.toFixed(1) + ' \u00B0C' : '--');
     setText('rssi', d.rssi || '--');
@@ -898,7 +892,7 @@
   var granView = 'last'; // 'last' or 'history'
   var khMethod = 'combined'; // 'combined', 'gran', 'endpoint'
   var khHistoryData = null;  // raw kh history [[ts, val], ...]
-  var granHistoryData = null; // raw gran history [[ts, r2, eqML, eph, mth, khG, khE, noiseMv, reversals, conf], ...]
+  var granHistoryData = null; // raw gran history [[ts, r2, eqML, eph, mth, khG, khE, noiseMv, reversals, conf, khCI], ...]
   var motorHistoryData = null; // raw motor history [[ts, sAvg, sMin, tAvg, tMin], ...]
   var lastSGValues = { sample: 0, titrate: 0 };
   // Time-proportional X-axis: uses linear scale with Unix timestamps (seconds)
@@ -1357,21 +1351,6 @@
     });
   }
 
-  // --- Stirrer toggle ---
-  var stirrerOn = false;
-  function syncStirrerUI() {
-    var btn = document.getElementById('btn-stirrer');
-    if (btn) btn.textContent = stirrerOn ? 'Stop Stirrer' : 'Start Stirrer';
-  }
-  function initStirrerButton() {
-    var btn = document.getElementById('btn-stirrer');
-    if (!btn) return;
-    btn.addEventListener('click', function() {
-      // Send command; let server state update drive the UI (line 196)
-      send({ type: 'cmd', cmd: stirrerOn ? 'e' : 'm' });
-    });
-  }
-
   // --- Config inputs ---
   function showConfigFeedback(el, ok) {
     var fb = el.parentElement && el.parentElement.querySelector('.config-fb');
@@ -1397,6 +1376,7 @@
       inp.addEventListener('change', function() {
         var key = inp.id.replace('cfg-', '');
         var val = (inp.type === 'text') ? inp.value : parseFloat(inp.value);
+        if (typeof val === 'number' && isNaN(val)) return;
         // Convert revolutions back to internal units for titration calibration
         if (key === 'cal_drops') {
           val = Math.round(val * 100);
@@ -2061,7 +2041,6 @@
     initTabs();
     initCollapsible();
     initButtons();
-    initStirrerButton();
     initConfigInputs();
     // Smooth half-life UI-only setting (localStorage)
     var hlInp = document.getElementById('ui-smooth-halflife');

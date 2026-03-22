@@ -10,11 +10,11 @@ void setMotorYieldCallback(MotorYieldCallback cb);
 typedef bool (*MotorAbortCallback)();
 void setMotorAbortCallback(MotorAbortCallback cb);
 
-// Progress callback called during washSample with completion percentage (0-100)
+// Progress callback called during wash operations with completion percentage (0-100)
 typedef void (*MotorProgressCallback)(int percent);
 void setMotorProgressCallback(MotorProgressCallback cb);
 
-// Multi-wash progress: tracks overall progress across sequential washSample() calls
+// Multi-wash progress: tracks overall progress across sequential washSampleVol() calls
 // Call before a sequence of washes, then clearMultiWashContext() after
 void setMultiWashContext(int numWashes);
 void clearMultiWashContext();
@@ -25,7 +25,6 @@ void initMotors();
 // All motor functions return true on success, false on timeout
 bool removeSample(int volume, float speedRpm);
 bool takeSample(int volume, float speedRpm);
-bool washSample(float remPart, float fillPart, float speedRpm);   // Legacy: uses SAMPLE_PUMP_VOLUME
 bool washSampleVol(int removeRevs, int fillRevs, float speedRpm); // Absolute revolution counts
 bool titrate(int volume, float speedRpm, bool noAccel = false, uint32_t accelOverride = 0);
 

@@ -27,6 +27,7 @@ private:
 
   // Fallback interval-based scheduling
   unsigned long lastMeasurementTime = 0;
+  uint32_t lastMeasurementEpoch = 0;  // persisted to NVS — survives reboots
   static const unsigned long FALLBACK_INTERVAL_MS = 21600000; // 6 hours
 
   // Schedule state (24 slots max for 1h interval mode)

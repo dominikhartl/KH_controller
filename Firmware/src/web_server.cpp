@@ -318,6 +318,7 @@ static void handleWebSocketMessage(AsyncWebSocketClient* client, void* arg, uint
       }
 
       float value = doc["value"];
+      if (isnan(value)) { sendConfigResult(key, false); return; }
       bool saved = true;
 
       if (strcmp(key, "titration_vol") == 0 && value > 0) configStore.setTitrationVolume(value);
@@ -827,10 +828,6 @@ void broadcastTitrationStart() {
   mesCount = 0;
   granBufCount = 0;
   ws.textAll("{\"type\":\"mesStart\"}");
-}
-
-void processPendingReplay() {
-  // Replay now happens directly in WS_EVT_CONNECT; kept as no-op for API compat
 }
 
 void broadcastState() {

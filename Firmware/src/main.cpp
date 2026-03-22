@@ -1822,7 +1822,7 @@ void setup() {
   // Initialize ADS1115 external ADC if configured (must be after configStore.begin())
   initExternalADC();
 
-  // Keep MQTT/OTA alive during long motor operations (washSample takes ~16 min)
+  // Keep MQTT/OTA alive during long motor operations (wash cycle takes ~16 min)
   setMotorYieldCallback([]() {
     mqttManager.loop();
     ArduinoOTA.handle();
@@ -2048,7 +2048,6 @@ void loop() {
 
   // --- STA mode: full operation ---
   processPendingCommand();
-  processPendingReplay();
   wifiManager.loop();
   mqttManager.loop();
   ArduinoOTA.handle();
