@@ -432,7 +432,7 @@ void processPendingCommand() {
       float fBurstRPM      = configStore.getGranBurstRPM();
       uint32_t fBurstAccel = configStore.getGranBurstAccel();
 
-      int dropUnits  = max(2, (int)round(configStore.getDropVolumeUL() * fCalU / (fTitV * 1000.0f)));
+      int dropUnits  = max(2, (int)round(50.0f * fCalU / (fTitV * 1000.0f)));
       int pulseUnits = max(2, (int)round(1000.0f * fCalU / (fTitV * 1000.0f)));
 
       digitalWrite(EN_PIN2, LOW);
@@ -441,7 +441,7 @@ void processPendingCommand() {
       int unitsDispensed = 0;
       bool fillOk = true;
 
-      // Phase 1: 10 short drops to detach bubbles
+      // Phase 1: 10 × 50 µL bursts to detach bubbles
       for (int i = 0; i < 10 && fillOk; i++) {
         if (!titrate(dropUnits, fBurstRPM, false, fBurstAccel)) { fillOk = false; break; }
         unitsDispensed += dropUnits;
