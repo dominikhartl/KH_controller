@@ -13,7 +13,9 @@ static constexpr float SENSOR_ERROR_FALLBACK_C = 21.0f;
 
 void initTemperature() {
   oneWire = new OneWire(TEMP_SENSOR_PIN);
+  if (!oneWire) { Serial.println("FATAL: OneWire alloc failed"); return; }
   sensors = new DallasTemperature(oneWire);
+  if (!sensors) { Serial.println("FATAL: DallasTemp alloc failed"); return; }
   sensors->begin();
   sensorFound = sensors->getDeviceCount() > 0;
   if (sensorFound) {

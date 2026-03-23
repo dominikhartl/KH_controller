@@ -1123,7 +1123,7 @@ KHResult measureKH() {
   publishError("");  // Clear previous error
 
   // Track WiFi RSSI range during measurement
-  int8_t rssiMin = 0, rssiMax = -127;
+  int8_t rssiMin = 127, rssiMax = -127;
 
   // Compute prefill volume in units from µL config
   float prefillUL = configStore.getPrefillVolumeUL();

@@ -3,8 +3,6 @@
 
   var MAX_SCHEDULES = 8;
 
-  // (Volume conversion now done firmware-side)
-
   // --- WebSocket ---
   var ws, wsOk = false, reconnTimer, reconnDelay = 3000;
   var chartDays = 7;
@@ -49,7 +47,7 @@
   }
 
   // --- Event log ---
-  var LOG_MAX = 50;
+  var LOG_MAX = 40;
 
   function addLogEntry(type, text, epochTs) {
     var container = document.getElementById('log-container');
@@ -1665,7 +1663,7 @@
       // EZO pH
       if (d.probe && d.probe.ezo) {
         var ezo = d.probe.ezo;
-        var ezoStatus = ezo.test_ok ? ok() + ' (pH ' + ezo.test_ph.toFixed(1) + ', FW ' + ezo.firmware + ')' : fail('test read failed');
+        var ezoStatus = ezo.test_ok ? ok() + ' (pH ' + ezo.test_ph.toFixed(1) + ', FW ' + escHtml(ezo.firmware) + ')' : fail('test read failed');
         rows.push('<tr><td>EZO pH</td><td>' + ezoStatus + '</td></tr>');
         rows.push('<tr><td>EZO Slope</td><td>Acid ' + ezo.acid_slope_pct.toFixed(1) + '% / Base ' + ezo.base_slope_pct.toFixed(1) + '% (' + ezo.cal_points + ' cal pts)</td></tr>');
       }
@@ -1774,11 +1772,21 @@
       var input = document.getElementById(inputId);
       if (!input || !input.files.length) return;
       var file = input.files[0];
+      var statusEl = document.getElementById('ota-status');
+      // Basic file validation
+      var name = file.name.toLowerCase();
+      if (type === 'firmware' && !name.endsWith('.bin')) {
+        statusEl.textContent = 'Error: Please select a .bin firmware file';
+        statusEl.style.color = 'var(--red)';
+        return;
+      }
+      if (file.size > 1900000) {
+        if (!confirm('File is ' + Math.round(file.size / 1024) + ' KB — larger than expected. Continue?')) return;
+      }
       var xhr = new XMLHttpRequest();
       var progSection = document.getElementById('ota-progress-section');
       var fillEl = document.getElementById('ota-progress-fill');
       var labelEl = document.getElementById('ota-progress-label');
-      var statusEl = document.getElementById('ota-status');
 
       progSection.style.display = 'block';
       statusEl.textContent = 'Uploading ' + type + '...';
@@ -1844,10 +1852,9 @@
     // Smooth half-life UI-only setting (localStorage)
     var hlInp = document.getElementById('ui-smooth-halflife');
     if (hlInp) {
-      var stored = localStorage.getItem('smoothHalfLife');
-      if (stored !== null) hlInp.value = stored;
+      try { var stored = localStorage.getItem('smoothHalfLife'); if (stored !== null) hlInp.value = stored; } catch(e) {}
       hlInp.addEventListener('change', function() {
-        localStorage.setItem('smoothHalfLife', hlInp.value);
+        try { localStorage.setItem('smoothHalfLife', hlInp.value); } catch(e) {}
         renderKHChart();
         // Brief save feedback
         var fb = hlInp.parentNode.querySelector('.save-fb');
