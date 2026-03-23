@@ -96,6 +96,7 @@ void queueCommand(char cmd) {
 void publishMessage(const char* message);
 void publishError(const char* errorMessage);
 void calibrateTitrationPump();
+static void checkBootButton();
 void subtractHCl(int unitsUsed);
 
 KHResult measureKH();
@@ -1879,24 +1880,19 @@ void setup() {
     return;
   }
 
-  // Try to connect to WiFi (blocking wait up to 15s for initial connection)
+  // Connect to WiFi — retry indefinitely (only BOOT button 5s hold enters AP mode)
   wifiManager.begin(wifiSSID, wifiPass);
   {
     unsigned long wifiStart = millis();
-    while (!wifiManager.isConnected() && millis() - wifiStart < 15000) {
+    while (!wifiManager.isConnected()) {
       wifiManager.loop();
+      checkBootButton();  // Allow BOOT button AP mode entry during WiFi wait
       delay(100);
+      // Log progress every 10 seconds
+      if ((millis() - wifiStart) % 10000 < 100) {
+        Serial.printf("WiFi connecting... (%lus)\n", (millis() - wifiStart) / 1000);
+      }
     }
-  }
-
-  if (!wifiManager.isConnected()) {
-    // STA connection failed — fall back to AP mode
-    Serial.println("WiFi connection failed — starting AP mode");
-    WiFi.disconnect(true);
-    wifiManager.beginAP(deviceName);
-    setupAPWebServer();
-    apModeActive = true;
-    return;
   }
 
   // --- STA mode: full operation ---

@@ -1,5 +1,6 @@
 #include "wifi_manager.h"
 #include <ESPmDNS.h>
+#include <esp_wifi.h>
 
 extern char deviceName[];
 
@@ -10,6 +11,8 @@ void WifiManager::begin(const char* ssid, const char* password) {
   this->password = password;
   WiFi.mode(WIFI_STA);
   WiFi.setSleep(false);  // Disable modem sleep — critical at weak RSSI (-79 dBm)
+  WiFi.setTxPower(WIFI_POWER_19_5dBm);  // Max transmit power
+  esp_wifi_set_protocol(WIFI_IF_STA, WIFI_PROTOCOL_11B);  // 802.11b only — better range at cost of speed (fine for small JSON payloads)
   startConnection();
 }
 
