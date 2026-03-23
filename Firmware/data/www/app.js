@@ -162,18 +162,12 @@
       if (d.khIntercept != null) serverIntercept = parseFloat(d.khIntercept);
       if (d.khSlopeDay0 != null) serverSlopeDay0 = d.khSlopeDay0;
       if (d.slopeNDays != null) serverSlopeNDays = d.slopeNDays;
-      if (d.slopeCI != null) lastSlopeCI = parseFloat(d.slopeCI);
       var st = isNaN(serverSlope) ? '--' : (serverSlope >= 0 ? '+' : '') + serverSlope.toFixed(2);
-      if (!isNaN(serverSlope) && lastSlopeCI > 0) st += ' \u00b1' + lastSlopeCI.toFixed(2);
       setText('val-kh-slope', st);
       renderKHChart();  // re-render trend line with updated server params
     }
     if (d.confidence != null) {
       setText('val-confidence', (d.confidence != null && !isNaN(d.confidence)) ? (d.confidence * 100).toFixed(0) + '%' : '--');
-    }
-    if (d.khCI != null && !isNaN(parseFloat(d.khCI))) {
-      var ciEl = document.getElementById('val-kh-ci');
-      if (ciEl) ciEl.textContent = '\u00b1' + parseFloat(d.khCI).toFixed(2) + ' dKH';
     }
 
     // pH gauge (start pH from last KH measurement)
@@ -575,54 +569,6 @@
       info.style.display = '';
     }
 
-    updateGranWindows(d);
-  }
-
-  function updateGranWindows(d) {
-    if (!granWinChart || !d.windows || d.windows.length === 0) return;
-    // Find best window (highest R² among valid)
-    var bestLow = 0, bestHigh = 0, bestR2 = 0;
-    for (var i = 0; i < d.windows.length; i++) {
-      var w = d.windows[i]; // [low, high, r2, valid, kh]
-      if (w[3] && w[2] > bestR2) { bestR2 = w[2]; bestLow = w[0]; bestHigh = w[1]; }
-    }
-    // One horizontal line per window: from lower bound to upper bound at R² height
-    // Blue lines semi-transparent so overlaps appear darker; best (red) on top
-    var datasets = [];
-    for (var i = 0; i < d.windows.length; i++) {
-      var w = d.windows[i];
-      if (!w[3]) continue; // skip invalid
-      var isBest = (w[0] === bestLow && w[1] === bestHigh);
-      var kh = w[4] || 0;
-      if (!isBest) {
-        datasets.push({
-          data: [{ x: w[0], y: w[2] }, { x: w[1], y: w[2] }],
-          borderColor: 'rgba(10,132,255,0.5)',
-          borderWidth: 2,
-          pointRadius: 3,
-          pointBackgroundColor: 'rgba(10,132,255,0.5)',
-          showLine: true,
-          khLabel: kh > 0 ? kh.toFixed(1) : ''
-        });
-      }
-    }
-    // Best window last so it renders on top
-    var bestKh = 0;
-    for (var i = 0; i < d.windows.length; i++) {
-      var w = d.windows[i];
-      if (w[3] && w[0] === bestLow && w[1] === bestHigh) bestKh = w[4] || 0;
-    }
-    datasets.push({
-      data: [{ x: bestLow, y: bestR2 }, { x: bestHigh, y: bestR2 }],
-      borderColor: '#ff453a',
-      borderWidth: 3,
-      pointRadius: 4,
-      pointBackgroundColor: '#ff453a',
-      showLine: true,
-      khLabel: bestKh > 0 ? bestKh.toFixed(1) : ''
-    });
-    granWinChart.data.datasets = datasets;
-    granWinChart.update();
   }
 
   function updateHistory(d) {
@@ -630,7 +576,7 @@
     if (d.sensor === 'gran') {
       granHistoryData = d.data;
       updateGranHistChart();
-      renderKHChart(); // gran data may affect KH chart when method filter is active
+      renderKHChart(); // gran data used for score coloring
       renderNoiseTrend();
       return;
     }
@@ -665,27 +611,12 @@
 
   function renderKHChart() {
     if (!khChart) return;
-    // Build data series based on selected method
-    var data;
-    if (khMethod === 'combined' || !granHistoryData) {
-      data = khHistoryData || [];
-    } else {
-      // Extract from gran history: [ts, r2, eqML, eph, mth, khG, khE]
-      var idx = (khMethod === 'gran') ? 5 : 6;
-      data = [];
-      for (var i = 0; i < granHistoryData.length; i++) {
-        var val = granHistoryData[i][idx];
-        if (val > 0) data.push([granHistoryData[i][0], val]);
-      }
-    }
+    var data = khHistoryData || [];
     if (!data || data.length === 0) {
       khChart.data.labels = [];
       khChart.data.datasets[0].data = [];
       khChart.data.datasets[1].data = [];
       khChart.data.datasets[2].data = [];
-      khChart.data.datasets[3].data = [];
-      khChart.data.datasets[4].data = [];
-      khChart.data.datasets[5].data = [];
       khChart.update();
       setText('val-kh-slope', '--');
       return;
@@ -740,21 +671,6 @@
       khChart.data.datasets[0].pointBackgroundColor = '#0a84ff';
       khChart.data.datasets[0].pointBorderColor = '#0a84ff';
     }
-    khChart.data.datasets[3].data = [];
-
-    // Per-point error bars from Gran regression CI (index 10 in gran history)
-    khErrorBars = [];
-    if (granHistoryData) {
-      var ciByTs = {};
-      for (var i = 0; i < granHistoryData.length; i++) {
-        var ciVal = granHistoryData[i][10];
-        if (ciVal > 0) ciByTs[granHistoryData[i][0]] = ciVal;
-      }
-      for (var i = 0; i < data.length; i++) {
-        var ci = ciByTs[data[i][0]];
-        if (ci > 0) khErrorBars.push({idx: i, val: data[i][1], ci: ci});
-      }
-    }
 
     // Dataset 2: trend line from server regression (slope, intercept, day0)
     // Uses exactly the same slope the device reports — guaranteed match, no knee.
@@ -780,34 +696,11 @@
           {x: data[firstIdx][0], y: serverSlope * xFirst + serverIntercept},
           {x: data[lastIdx][0], y: serverSlope * xLast + serverIntercept}
         ];
-
-        // Datasets 4+5: slope CI band (parallel lines offset by ±slopeCI × timespan)
-        if (lastSlopeCI > 0) {
-          var xMid = (xFirst + xLast) / 2;
-          var upperData = [];
-          var lowerData = [];
-          // CI band widens with distance from center
-          [firstIdx, lastIdx].forEach(function(idx) {
-            var x = data[idx][0] / 86400 - serverSlopeDay0;
-            var yHat = serverSlope * x + serverIntercept;
-            var dx = x - xMid;
-            var band = lastSlopeCI * Math.abs(dx);
-            upperData.push({x: data[idx][0], y: yHat + band});
-            lowerData.push({x: data[idx][0], y: yHat - band});
-          });
-          khChart.data.datasets[4].data = upperData;
-          khChart.data.datasets[5].data = lowerData;
-        } else {
-          khChart.data.datasets[4].data = [];
-          khChart.data.datasets[5].data = [];
-        }
         trendOk = true;
       }
     }
     if (!trendOk) {
       khChart.data.datasets[2].data = [];
-      khChart.data.datasets[4].data = [];
-      khChart.data.datasets[5].data = [];
     }
     // Enforce minimum 1.5 dKH span on y-axis
     var vals = khChart.data.datasets[0].data.map(function(p) { return p.y; }).filter(function(v) { return v != null; });
@@ -833,7 +726,6 @@
     // data: [[ts, r2, eqML, endpointPH, method, khGran, khEndpoint, noiseMv, reversals, conf, khCI], ...]
     granHistChart.data.datasets[0].data = granHistoryData.map(function(p) { return {x: p[0], y: p[1]}; }); // R2
     granHistChart.data.datasets[1].data = granHistoryData.map(function(p) { return {x: p[0], y: p[3]}; }); // endpointPH
-    granHistChart.data.datasets[2].data = granHistoryData.map(function(p) { return p[10] > 0 ? {x: p[0], y: p[10]} : null; }).filter(function(v) { return v !== null; }); // CI
     // Color interpolation points red
     var r2Colors = granHistoryData.map(function(p) { return p[4] === 1 ? '#0a84ff' : '#ff453a'; });
     var phColors = granHistoryData.map(function(p) { return p[4] === 1 ? '#ff9f0a' : '#ff453a'; });
@@ -854,47 +746,10 @@
   }
 
   // --- Charts ---
-  var khChart, phChart, liveChart, granChart, granHistChart, granWinChart, effChart, noiseChart, precisionChart;
-  var khErrorBars = [];  // [{x: index, ci: ±dKH}, ...] for per-point error bars
-  var khErrorBarsVisible = false;
-  var lastSlopeCI = 0;
+  var khChart, phChart, liveChart, granChart, granHistChart, effChart, noiseChart, precisionChart;
   var serverSlope = NaN, serverIntercept = NaN, serverSlopeDay0 = 0, serverSlopeNDays = 0;
-
-  // Custom Chart.js plugin: draws vertical error bars on dataset 0 (KH points)
-  var errorBarPlugin = {
-    id: 'khErrorBars',
-    afterDatasetsDraw: function(chart) {
-      if (!khErrorBarsVisible || khErrorBars.length === 0) return;
-      if (chart !== khChart) return;
-      var meta = chart.getDatasetMeta(0);
-      if (meta.hidden) return;
-      var ctx = chart.ctx;
-      var yScale = chart.scales.y;
-      ctx.save();
-      ctx.strokeStyle = 'rgba(10,132,255,0.5)';
-      ctx.lineWidth = 1.5;
-      for (var i = 0; i < khErrorBars.length; i++) {
-        var eb = khErrorBars[i];
-        var pt = meta.data[eb.idx];
-        if (!pt) continue;
-        var yTop = yScale.getPixelForValue(eb.val + eb.ci);
-        var yBot = yScale.getPixelForValue(eb.val - eb.ci);
-        var x = pt.x;
-        ctx.beginPath();
-        ctx.moveTo(x, yTop); ctx.lineTo(x, yBot);
-        ctx.stroke();
-        // Caps
-        ctx.beginPath();
-        ctx.moveTo(x - 3, yTop); ctx.lineTo(x + 3, yTop);
-        ctx.moveTo(x - 3, yBot); ctx.lineTo(x + 3, yBot);
-        ctx.stroke();
-      }
-      ctx.restore();
-    }
-  };
   var sgSampleChart, sgTitrateChart;
   var granView = 'last'; // 'last' or 'history'
-  var khMethod = 'combined'; // 'combined', 'gran', 'endpoint'
   var khHistoryData = null;  // raw kh history [[ts, val], ...]
   var granHistoryData = null; // raw gran history [[ts, r2, eqML, eph, mth, khG, khE, noiseMv, reversals, conf, khCI], ...]
   var motorHistoryData = null; // raw motor history [[ts, sAvg, sMin, tAvg, tMin], ...]
@@ -925,14 +780,10 @@
   function initCharts() {
     khChart = new Chart(document.getElementById('chart-kh'), {
       type: 'scatter',
-      plugins: [errorBarPlugin],
       data: { datasets: [
         { label: 'KH', data: [], backgroundColor: '#0a84ff', borderColor: '#0a84ff', borderWidth: 0, pointRadius: 3, pointBackgroundColor: '#0a84ff', pointBorderColor: '#0a84ff', showLine: false, yAxisID: 'y', order: 1 },
         { label: 'Smooth', data: [], borderColor: '#0a84ff', borderWidth: 3, pointRadius: 0, showLine: true, cubicInterpolationMode: 'monotone', tension: 0.4, yAxisID: 'y', order: 2 },
-        { label: 'Trend', data: [], borderColor: 'rgba(255,159,10,0.6)', borderWidth: 2, borderDash: [6,3], pointRadius: 0, showLine: true, tension: 0, spanGaps: true, yAxisID: 'y', order: 0 },
-        { label: 'Conf', data: [], backgroundColor: 'rgba(48,209,88,0.35)', borderColor: 'rgba(48,209,88,0.8)', borderWidth: 2, pointRadius: 8, pointStyle: 'rect', yAxisID: 'y', order: 3 },
-        { label: '_trendUpper', data: [], borderColor: 'rgba(255,159,10,0.2)', borderWidth: 1, pointRadius: 0, showLine: true, fill: 5, backgroundColor: 'rgba(255,159,10,0.08)', spanGaps: true, yAxisID: 'y', order: 6 },
-        { label: '_trendLower', data: [], borderColor: 'rgba(255,159,10,0.2)', borderWidth: 1, pointRadius: 0, showLine: true, fill: false, spanGaps: true, yAxisID: 'y', order: 6 }
+        { label: 'Trend', data: [], borderColor: 'rgba(255,159,10,0.6)', borderWidth: 2, borderDash: [6,3], pointRadius: 0, showLine: true, tension: 0, spanGaps: true, yAxisID: 'y', order: 0 }
       ] },
       options: {
         responsive: true, maintainAspectRatio: false, animation: false,
@@ -985,8 +836,7 @@
       data: {
         datasets: [
           { label: 'R\u00b2', data: [], borderColor: '#0a84ff', backgroundColor: 'rgba(10,132,255,0.15)', borderWidth: 2, pointRadius: 2, showLine: true, yAxisID: 'yR2', tension: 0.1 },
-          { label: 'End pH', data: [], borderColor: '#ff9f0a', backgroundColor: 'rgba(255,159,10,0.15)', borderWidth: 2, pointRadius: 2, showLine: true, yAxisID: 'yRight', tension: 0.1 },
-          { label: '\u00b1CI', data: [], borderColor: '#30d158', backgroundColor: 'rgba(48,209,88,0.15)', borderWidth: 2, pointRadius: 2, showLine: true, yAxisID: 'yCI', tension: 0.1 }
+          { label: 'End pH', data: [], borderColor: '#ff9f0a', backgroundColor: 'rgba(255,159,10,0.15)', borderWidth: 2, pointRadius: 2, showLine: true, yAxisID: 'yRight', tension: 0.1 }
         ]
       },
       options: {
@@ -995,39 +845,9 @@
         scales: {
           x: timeXScale(),
           yR2: { type: 'linear', position: 'left', min: 0.995, max: 1.0, ticks: { color: '#0a84ff', font: { size: 9 }, maxTicksLimit: 4 }, grid: { color: '#38383a' }, title: { display: true, text: 'R\u00b2', color: '#0a84ff', font: { size: 9 }, padding: { top: 0, bottom: 0 } } },
-          yRight: { type: 'linear', position: 'right', ticks: { color: '#ff9f0a', font: { size: 9 } }, grid: { drawOnChartArea: false }, title: { display: true, text: 'pH', color: '#ff9f0a', font: { size: 10 } } },
-          yCI: { type: 'linear', position: 'right', ticks: { color: '#30d158', font: { size: 9 } }, grid: { drawOnChartArea: false }, title: { display: true, text: '\u00b1dKH', color: '#30d158', font: { size: 10 } } }
+          yRight: { type: 'linear', position: 'right', ticks: { color: '#ff9f0a', font: { size: 9 } }, grid: { drawOnChartArea: false }, title: { display: true, text: 'pH', color: '#ff9f0a', font: { size: 10 } } }
         }
       }
-    });
-    granWinChart = new Chart(document.getElementById('chart-gran-windows'), {
-      type: 'line',
-      data: { labels: [], datasets: [] },
-      options: {
-        responsive: true, maintainAspectRatio: false, animation: false,
-        plugins: { legend: { display: false } },
-        scales: {
-          x: { type: 'linear', offset: false, title: { display: true, text: 'pH', color: '#8e8e93' }, ticks: { color: '#8e8e93', font: { size: 10 } }, grid: { color: '#38383a' } },
-          y: { title: { display: true, text: 'R\u00b2', color: '#8e8e93' }, min: 0.995, max: 1.0, ticks: { color: '#8e8e93', font: { size: 9 } }, grid: { color: '#38383a' } }
-        }
-      },
-      plugins: [{
-        id: 'khLabels',
-        afterDatasetsDraw: function(chart) {
-          var ctx = chart.ctx;
-          ctx.font = '9px sans-serif';
-          ctx.textAlign = 'center';
-          chart.data.datasets.forEach(function(ds, i) {
-            if (!ds.khLabel) return;
-            var meta = chart.getDatasetMeta(i);
-            if (meta.data.length < 2) return;
-            var x0 = meta.data[0].x, x1 = meta.data[1].x;
-            var y = meta.data[0].y;
-            ctx.fillStyle = ds.borderColor;
-            ctx.fillText(ds.khLabel, (x0 + x1) / 2, y - 4);
-          });
-        }
-      }]
     });
     var probeChartOpts = function(title, yLabel) {
       return {
@@ -1090,12 +910,11 @@
 
   // --- KH Chart Layer Toggles ---
   function initKHLayers() {
-    // Datasets: 0=Points, 1=Smooth, 2=Trend, 3=Conf, 4=TrendUpper, 5=TrendLower
+    // Datasets: 0=Points, 1=Smooth, 2=Trend
     var map = [
       ['kh-show-points', [0]],
       ['kh-show-smooth', [1]],
-      ['kh-show-trend', [2]],
-      ['kh-show-ci', [4, 5]]
+      ['kh-show-trend', [2]]
     ];
     // Restore saved state from localStorage
     var saved = {};
@@ -1111,13 +930,11 @@
           khChart.data.datasets[idx].hidden = !el.checked;
         });
       }
-      if (entry[0] === 'kh-show-ci') khErrorBarsVisible = el.checked;
       el.addEventListener('change', function() {
         if (!khChart) return;
         entry[1].forEach(function(idx) {
           khChart.data.datasets[idx].hidden = !el.checked;
         });
-        if (entry[0] === 'kh-show-ci') khErrorBarsVisible = el.checked;
         // Persist to localStorage
         var state = {};
         try { state = JSON.parse(localStorage.getItem('khLayers') || '{}'); } catch(e) {}
@@ -1151,7 +968,7 @@
         t.classList.add('active');
         var sel = t.getAttribute('data-tab');
         // Hide all chart canvases
-        ['kh','ph','live','gran','gran-hist','gran-windows'].forEach(function(id) {
+        ['kh','ph','live','gran','gran-hist'].forEach(function(id) {
           var el = document.getElementById('chart-' + id);
           if (el) el.style.display = 'none';
         });
@@ -1167,8 +984,6 @@
         if (khTrend) khTrend.style.display = (sel === 'kh') ? '' : 'none';
         var khLayers = document.getElementById('kh-layers');
         if (khLayers) khLayers.style.display = (sel === 'kh') ? 'flex' : 'none';
-        var khToggle = document.getElementById('kh-method-toggle');
-        if (khToggle) khToggle.style.display = (sel === 'kh') ? 'flex' : 'none';
         // Chart range selector visibility (history tabs only)
         var rangeEl = document.getElementById('chart-range');
         if (rangeEl) rangeEl.style.display = (sel === 'kh' || sel === 'ph' || sel === 'gran') ? 'flex' : 'none';
@@ -1190,10 +1005,8 @@
     // Gran sub-tab toggle
     var btnLast = document.getElementById('gran-tab-last');
     var btnHist = document.getElementById('gran-tab-hist');
-    var btnWin = document.getElementById('gran-tab-windows');
     if (btnLast) btnLast.addEventListener('click', function() { switchGranView('last'); });
     if (btnHist) btnHist.addEventListener('click', function() { switchGranView('history'); });
-    if (btnWin) btnWin.addEventListener('click', function() { switchGranView('windows'); });
 
     // Chart range selector
     document.querySelectorAll('.range-btn').forEach(function(btn) {
@@ -1214,10 +1027,8 @@
     granView = view;
     var btnLast = document.getElementById('gran-tab-last');
     var btnHist = document.getElementById('gran-tab-hist');
-    var btnWin = document.getElementById('gran-tab-windows');
     if (btnLast) btnLast.classList.toggle('active', view === 'last');
     if (btnHist) btnHist.classList.toggle('active', view === 'history');
-    if (btnWin) btnWin.classList.toggle('active', view === 'windows');
     showGranView();
     var granInfo = document.getElementById('gran-info');
     if (granInfo) granInfo.style.display = (view === 'last' && granInfo.textContent) ? '' : 'none';
@@ -1228,19 +1039,14 @@
   function showGranView() {
     var scatter = document.getElementById('chart-gran');
     var hist = document.getElementById('chart-gran-hist');
-    var winEl = document.getElementById('chart-gran-windows');
     scatter.style.display = 'none';
     hist.style.display = 'none';
-    winEl.style.display = 'none';
     if (granView === 'last') {
       scatter.style.display = 'block';
       if (granChart) granChart.resize();
-    } else if (granView === 'history') {
+    } else {
       hist.style.display = 'block';
       if (granHistChart) granHistChart.resize();
-    } else {
-      winEl.style.display = 'block';
-      if (granWinChart) granWinChart.resize();
     }
   }
 
@@ -1603,18 +1409,6 @@
   }
 
   function pad(n) { return n < 10 ? '0' + n : '' + n; }
-
-  // --- Init ---
-  function initKHMethodToggle() {
-    document.querySelectorAll('.kh-method-btn').forEach(function(btn) {
-      btn.addEventListener('click', function() {
-        document.querySelectorAll('.kh-method-btn').forEach(function(b) { b.classList.remove('active'); });
-        btn.classList.add('active');
-        khMethod = btn.getAttribute('data-method');
-        renderKHChart();
-      });
-    });
-  }
 
   // --- Motor Diagnostics ---
   var lastDiagResult = null;
@@ -2055,10 +1849,21 @@
       hlInp.addEventListener('change', function() {
         localStorage.setItem('smoothHalfLife', hlInp.value);
         renderKHChart();
+        // Brief save feedback
+        var fb = hlInp.parentNode.querySelector('.save-fb');
+        if (!fb) {
+          fb = document.createElement('span');
+          fb.className = 'save-fb';
+          fb.style.cssText = 'font-size:.75em;color:#30d158;margin-left:6px;transition:opacity .4s';
+          hlInp.parentNode.appendChild(fb);
+        }
+        fb.textContent = 'Saved';
+        fb.style.opacity = '1';
+        clearTimeout(fb._t);
+        fb._t = setTimeout(function() { fb.style.opacity = '0'; }, 1500);
       });
     }
     initSchedule();
-    initKHMethodToggle();
     initMotorDiag();
     initMotorCharts();
     initHWDiag();

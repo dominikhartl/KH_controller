@@ -80,15 +80,9 @@
       <button class="tab" data-tab="live">Live pH</button>
       <button class="tab" data-tab="gran">Gran</button>
     </div>
-    <div id="kh-method-toggle" class="kh-method-toggle">
-      <button class="kh-method-btn active" data-method="combined">Combined</button>
-      <button class="kh-method-btn" data-method="gran">Gran</button>
-      <button class="kh-method-btn" data-method="endpoint">Endpoint</button>
-    </div>
     <div id="gran-subtabs" class="gran-subtabs" style="display:none">
       <button id="gran-tab-last" class="gran-subtab active">Last</button>
       <button id="gran-tab-hist" class="gran-subtab">History</button>
-      <button id="gran-tab-windows" class="gran-subtab">Windows</button>
     </div>
     <div class="chart-container">
       <canvas id="chart-kh"></canvas>
@@ -96,26 +90,23 @@
       <canvas id="chart-live" style="display:none"></canvas>
       <canvas id="chart-gran" style="display:none"></canvas>
       <canvas id="chart-gran-hist" style="display:none"></canvas>
-      <canvas id="chart-gran-windows" style="display:none"></canvas>
     </div>
     <div id="chart-range" class="chart-range">
-      <button class="range-btn active" data-days="7">7d</button>
       <button class="range-btn" data-days="1">1d</button>
       <button class="range-btn" data-days="3">3d</button>
+      <button class="range-btn active" data-days="7">7d</button>
       <button class="range-btn" data-days="10">10d</button>
     </div>
     <div id="kh-layers" class="kh-layers">
       <label><input type="checkbox" id="kh-show-points" checked> Points</label>
       <label><input type="checkbox" id="kh-show-smooth" checked> Smooth</label>
       <label><input type="checkbox" id="kh-show-trend" checked> Trend</label>
-      <label><input type="checkbox" id="kh-show-ci"> &plusmn;CI</label>
       <label><input type="checkbox" id="kh-show-score"> Score</label>
     </div>
     <div id="kh-trend" class="chart-sub">Trend: <strong id="val-kh-slope">--</strong> dKH/day</div>
     <div id="gran-info" class="gran-info" style="display:none"></div>
     <div id="gran-quality" class="gran-quality" style="display:none">
       <span>Confidence: <strong id="val-confidence">--</strong> %</span>
-      <span>CI: &plusmn;<strong id="val-kh-ci">--</strong> dKH</span>
     </div>
   </section>
 
