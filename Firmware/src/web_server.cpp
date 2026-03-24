@@ -19,6 +19,7 @@
 #include <time.h>
 #include <math.h>
 #include <esp_task_wdt.h>
+#include <atomic>
 
 extern char deviceName[];
 extern char MQmespH[];
@@ -62,6 +63,14 @@ static void chunkedWrite(File& fw, const String& data) {
 
 AsyncWebServer server(80);
 AsyncWebSocket ws("/ws");
+
+// Thread-safety: WS_EVT_CONNECT fires on Core 0 (AsyncTCP task).
+// broadcastState/sendMesData/sendLogData/sendGranData must only run on Core 1 (loopTask)
+// to avoid racing on static buffers, NVS reads, and ws.textAll().
+// On connect, we store the client ID and let loop() handle the data sending.
+static std::atomic<uint32_t> pendingWSClientId{0};
+// Config changes from the web UI (Core 0) set this flag instead of calling broadcastState directly.
+static std::atomic<bool> stateDirty{false};
 
 // In-memory buffer for live titration pH data (survives page reload)
 // When full, downsamples by averaging pairs -> halves count, then continues
@@ -242,10 +251,9 @@ void onWebSocketEvent(AsyncWebSocket* server, AsyncWebSocketClient* client,
                       AwsEventType type, void* arg, uint8_t* data, size_t len) {
   switch (type) {
     case WS_EVT_CONNECT:
-      broadcastState();  // lightweight (cached slope, no filesystem I/O)
-      sendMesData(client);
-      sendLogData(client);
-      sendGranData(client);
+      // Defer data sending to loopTask (Core 1) — calling broadcastState/sendMesData
+      // from the AsyncTCP task (Core 0) races on static buffers and ws.textAll()
+      pendingWSClientId.store(client->id(), std::memory_order_release);
       break;
     case WS_EVT_DISCONNECT:
       break;
@@ -255,6 +263,24 @@ void onWebSocketEvent(AsyncWebSocket* server, AsyncWebSocketClient* client,
     case WS_EVT_PONG:
     case WS_EVT_ERROR:
       break;
+  }
+}
+
+// Called from loop() on Core 1 only — sends initial state to newly connected WebSocket clients
+// and processes deferred broadcastState requests from config handlers.
+void handlePendingWSClient() {
+  uint32_t id = pendingWSClientId.exchange(0, std::memory_order_acquire);
+  if (id != 0) {
+    AsyncWebSocketClient* c = ws.client(id);
+    if (c && c->status() == WS_CONNECTED) {
+      broadcastState();
+      sendMesData(c);
+      sendLogData(c);
+      sendGranData(c);
+    }
+  }
+  if (stateDirty.exchange(false, std::memory_order_acquire)) {
+    broadcastState();
   }
 }
 
@@ -296,7 +322,7 @@ static void handleWebSocketMessage(AsyncWebSocketClient* client, void* arg, uint
             configStore.setDeviceName(name);
             sendConfigResult(key, true);
             broadcastMessage("Device name changed. Reboot to apply.");
-            broadcastState();
+            stateDirty.store(true, std::memory_order_release);
           } else {
             sendConfigResult(key, false);
           }
@@ -429,7 +455,7 @@ static void handleWebSocketMessage(AsyncWebSocketClient* client, void* arg, uint
 
       sendConfigResult(key, saved);
       if (saved) {
-        broadcastState();
+        stateDirty.store(true, std::memory_order_release);
       }
     } else if (strcmp(type, "schedule") == 0) {
       // Schedule mode (0=custom, 1=interval, 2=never)
@@ -461,7 +487,7 @@ static void handleWebSocketMessage(AsyncWebSocketClient* client, void* arg, uint
         }
       }
       publishAllConfigStates();
-      broadcastState();
+      stateDirty.store(true, std::memory_order_release);
     } else if (strcmp(type, "getHistory") == 0) {
       const char* sensor = doc["sensor"];
       if (!sensor) return;
@@ -805,7 +831,7 @@ void executeCommand(const char* cmd) {
     queueCommand(strcmp(cmd, "10") == 0 ? 'A' : cmd[0]);  // '4','7','A' (A=pH10)
     return;
   }
-  broadcastState();
+  stateDirty.store(true, std::memory_order_release);
 }
 
 void broadcastTitrationStart() {

@@ -125,9 +125,15 @@ static void publishDiscoveryPayload(const char* discoveryTopic, JsonDocument& do
   size_t len = serializeJson(doc, buf, sizeof(buf));
   bool ok = mqttManager.publish(discoveryTopic, buf, true);
   if (!ok) {
-    Serial.printf("HA Discovery FAILED: %s (len=%u)\n", discoveryTopic, (unsigned)len);
+    // Retry once — TCP buffer may be full from rapid discovery burst
+    delay(200);
+    mqttManager.getClient().loop();
+    ok = mqttManager.publish(discoveryTopic, buf, true);
+    if (!ok) {
+      Serial.printf("HA Discovery FAILED: %s (len=%u)\n", discoveryTopic, (unsigned)len);
+    }
   }
-  delay(100);
+  delay(150);  // Increased from 100ms for TCP headroom during burst
   mqttManager.getClient().loop();
 }
 

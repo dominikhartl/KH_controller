@@ -42,6 +42,7 @@ void registerOTAUploadHandler();
 void executeCommand(const char* cmd);
 void calibratePH(int bufferPH);
 void broadcastState();
+void handlePendingWSClient();  // Process deferred WS connect + config change broadcasts (Core 1 only)
 void broadcastTitrationPH(float ph, int units);
 void broadcastTitrationStart();
 void broadcastMessage(const char* msg);

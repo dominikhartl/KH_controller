@@ -1,6 +1,7 @@
 #include <Arduino.h>
 #include <esp_system.h>
 #include <esp_task_wdt.h>
+#include <esp_log.h>
 #include <FS.h>
 #include <ArduinoOTA.h>
 #include <config.h>
@@ -1607,6 +1608,9 @@ void onMqttMessage(char* topic, byte* message, unsigned int length) {
 // --- Setup ---
 
 void setup() {
+  // Suppress Preferences "NOT_FOUND" errors for optional NVS keys (they return defaults)
+  esp_log_level_set("Preferences", ESP_LOG_NONE);
+
   pinMode(EN_PIN1, OUTPUT);
   pinMode(STEP_PIN1, OUTPUT);
   pinMode(DIR_PIN1, OUTPUT);
@@ -1850,6 +1854,7 @@ void loop() {
   ArduinoOTA.handle();
   scheduler.loop();
   ws.cleanupClients();
+  handlePendingWSClient();  // Send state to newly connected WS clients (deferred from Core 0)
 
   // Publish HA Discovery on first MQTT connect or after HA restart
   if (mqttManager.isConnected() && !discoveryPublished) {
