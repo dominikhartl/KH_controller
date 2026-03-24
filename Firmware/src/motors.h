@@ -34,7 +34,8 @@ bool titrate(int volume, float speedRpm, bool noAccel = false, uint32_t accelOve
 // *stoppedAtRPM is set to the last completed RPM
 typedef void (*RampProgressCallback)(float rpm);
 bool motorRampTest(bool isSample, float startRPM, float maxRPM, float stepRPM,
-                   int revsPerStep, RampProgressCallback rpmCb, float* stoppedAtRPM);
+                   int revsPerStep, RampProgressCallback rpmCb, float* stoppedAtRPM,
+                   uint32_t accel = 0);
 
 // Crash hint: RTC memory that survives a panic reset — log on next boot to identify crash location
 const char* getMotorCrashHint();  // returns hint string, or nullptr if none

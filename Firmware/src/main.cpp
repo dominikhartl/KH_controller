@@ -651,7 +651,8 @@ static void runMotorDiagnostic(char mode) {
     float maxTitrateRPM = configStore.getTitrateMaxRPM();
     if (maxTitrateRPM < 100) maxTitrateRPM = 300;
     float stoppedAt = 0;
-    bool ok = motorRampTest(false, 70, maxTitrateRPM, 10, 3, rpmCb, &stoppedAt);
+    uint32_t burstAccel = configStore.getGranBurstAccel();
+    bool ok = motorRampTest(false, 70, maxTitrateRPM, 10, 3, rpmCb, &stoppedAt, burstAccel);
     tResult.maxRPM = stoppedAt;
     tResult.aborted = !ok;
     if (ok) {

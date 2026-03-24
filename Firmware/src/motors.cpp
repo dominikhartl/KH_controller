@@ -283,7 +283,8 @@ bool titrate(int volume, float speedRpm, bool noAccel, uint32_t accelOverride) {
 // Motor ramp test: run motor at increasing speeds to check for mechanical issues.
 // User listens for abnormal sounds and can abort via the UI.
 bool motorRampTest(bool isSample, float startRPM, float maxRPM, float stepRPM,
-                   int revsPerStep, RampProgressCallback rpmCb, float* stoppedAtRPM) {
+                   int revsPerStep, RampProgressCallback rpmCb, float* stoppedAtRPM,
+                   uint32_t accel) {
   uint8_t enPin = isSample ? EN_PIN1 : EN_PIN2;
   FastAccelStepper* stepper = isSample ? sampleStepper : titrateStepper;
 
@@ -297,7 +298,7 @@ bool motorRampTest(bool isSample, float startRPM, float maxRPM, float stepRPM,
     if (rpmCb) rpmCb(rpm);
 
     stepper->setSpeedInHz(rpmToHz(rpm));
-    stepper->setAcceleration(MOTOR_ACCEL_STEPS_S2);
+    stepper->setAcceleration(accel > 0 ? accel : MOTOR_ACCEL_STEPS_S2);
     int32_t startPos = stepper->getCurrentPosition();
     int totalSteps = revsPerStep * STEPS_PER_REVOLUTION;
     stepper->move(isSample ? -totalSteps : -totalSteps);  // removal direction
