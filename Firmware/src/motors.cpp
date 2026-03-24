@@ -37,6 +37,15 @@ static MotorYieldCallback yieldCb = nullptr;
 static MotorProgressCallback progressCb = nullptr;
 static MotorAbortCallback abortCb = nullptr;
 
+// Blocking delay that yields to WiFi/MQTT/OTA, preventing connection starvation
+static void yieldingDelay(unsigned long ms) {
+  unsigned long end = millis() + ms;
+  while (millis() < end) {
+    if (yieldCb) yieldCb();
+    delay(10);
+  }
+}
+
 // Wash progress tracking (shared between removeSample/takeSample when called from washSampleVol)
 static int washTotalVol = 0;
 static int washBaseVol = 0;  // volume completed before current phase
@@ -123,7 +132,7 @@ static bool runSamplePump(int volume, bool forward, float speedRpm) {
   { char hint[48]; snprintf(hint, sizeof(hint), "%s %d revs",
       forward ? "takeSample" : "removeSample", volume);
     setCrashHint(hint); }
-  mqttManager.suppressReconnect(true);  // Prevent blocking TCP connects during motor ops
+  mqttManager.setMotorMode(true);  // Prevent blocking TCP connects during motor ops
 
   digitalWrite(EN_PIN1, LOW);
   delay(MOTOR_ENABLE_DELAY_MS);
@@ -133,7 +142,7 @@ static bool runSamplePump(int volume, bool forward, float speedRpm) {
     sampleStepper->setSpeedInHz(rpmToHz(MOTOR_START_RPM));
     sampleStepper->setAcceleration(MOTOR_ACCEL_STEPS_S2);
     sampleStepper->move(forward ? BACKLASH_COMPENSATION_STEPS : -BACKLASH_COMPENSATION_STEPS);
-    while (sampleStepper->isRunning()) { esp_task_wdt_reset(); delay(5); }
+    while (sampleStepper->isRunning()) { esp_task_wdt_reset(); if (yieldCb) yieldCb(); delay(5); }
   }
   lastSampleDirection = forward;
 
@@ -154,16 +163,16 @@ static bool runSamplePump(int volume, bool forward, float speedRpm) {
     if (yieldCb) yieldCb();
     if (abortCb && abortCb()) {
       sampleStepper->forceStopAndNewPosition(sampleStepper->getCurrentPosition());
-      delay(MOTOR_HOLD_MS);
+      yieldingDelay(MOTOR_HOLD_MS);
       digitalWrite(EN_PIN1, HIGH);
-      mqttManager.suppressReconnect(false);
+      mqttManager.setMotorMode(false);
       return false;
     }
     if (millis() - startTime > timeout) {
       sampleStepper->forceStopAndNewPosition(sampleStepper->getCurrentPosition());
-      delay(MOTOR_HOLD_MS);
+      yieldingDelay(MOTOR_HOLD_MS);
       digitalWrite(EN_PIN1, HIGH);
-      mqttManager.suppressReconnect(false);
+      mqttManager.setMotorMode(false);
       return false;
     }
     if (progressCb && washTotalVol > 0) {
@@ -191,9 +200,9 @@ static bool runSamplePump(int volume, bool forward, float speedRpm) {
     publishMessage(buf);
   }
 
-  delay(MOTOR_HOLD_MS);
+  yieldingDelay(MOTOR_HOLD_MS);
   digitalWrite(EN_PIN1, HIGH);
-  mqttManager.suppressReconnect(false);
+  mqttManager.setMotorMode(false);
   return ok;
 }
 
@@ -280,7 +289,7 @@ bool motorRampTest(bool isSample, float startRPM, float maxRPM, float stepRPM,
 
   *stoppedAtRPM = 0;
 
-  mqttManager.suppressReconnect(true);
+  mqttManager.setMotorMode(true);
   digitalWrite(enPin, LOW);
   delay(MOTOR_ENABLE_DELAY_MS);
 
@@ -302,17 +311,17 @@ bool motorRampTest(bool isSample, float startRPM, float maxRPM, float stepRPM,
       if (abortCb && abortCb()) {
         stepper->forceStopAndNewPosition(stepper->getCurrentPosition());
         *stoppedAtRPM = rpm;
-        delay(MOTOR_HOLD_MS);
+        yieldingDelay(MOTOR_HOLD_MS);
         digitalWrite(enPin, HIGH);
-        mqttManager.suppressReconnect(false);
+        mqttManager.setMotorMode(false);
         return false;
       }
       if (millis() - startTime > timeout) {
         stepper->forceStopAndNewPosition(stepper->getCurrentPosition());
         *stoppedAtRPM = rpm;
-        delay(MOTOR_HOLD_MS);
+        yieldingDelay(MOTOR_HOLD_MS);
         digitalWrite(enPin, HIGH);
-        mqttManager.suppressReconnect(false);
+        mqttManager.setMotorMode(false);
         return false;
       }
       delay(50);
@@ -321,8 +330,8 @@ bool motorRampTest(bool isSample, float startRPM, float maxRPM, float stepRPM,
     *stoppedAtRPM = rpm;
   }
 
-  delay(MOTOR_HOLD_MS);
+  yieldingDelay(MOTOR_HOLD_MS);
   digitalWrite(enPin, HIGH);
-  mqttManager.suppressReconnect(false);
+  mqttManager.setMotorMode(false);
   return true;
 }

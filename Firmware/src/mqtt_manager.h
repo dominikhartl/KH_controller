@@ -15,9 +15,11 @@ public:
   void subscribe(const char* topic);
   void setCallback(MQTT_CALLBACK_SIGNATURE);
   void onDisconnect(MQTTDisconnectCallback cb) { onDisconnectCb = cb; }
-  void suppressReconnect(bool suppress) {
-    reconnectSuppressed = suppress;
-    if (!suppress) {
+  // Motor mode: allows reconnect attempts at reduced frequency (instead of full suppression)
+  void setMotorMode(bool active) {
+    motorMode = active;
+    if (!active) {
+      motorReconnectFails = 0;
       // Reset backoff so MQTT reconnects immediately after motor ops
       lastReconnectAttempt = 0;
       currentReconnectInterval = RECONNECT_INTERVAL_MS;
@@ -37,6 +39,8 @@ private:
 
   static const unsigned long RECONNECT_INTERVAL_MS = 5000;
   static const unsigned long MAX_RECONNECT_INTERVAL_MS = 60000;
+  static const unsigned long MOTOR_RECONNECT_INTERVAL_MS = 10000;  // Slower retries during motor ops
+  static const uint8_t MOTOR_MAX_FAILS = 3;  // Stop trying after 3 failures during motor ops
   unsigned long currentReconnectInterval = RECONNECT_INTERVAL_MS;
 
   MQTTDisconnectCallback onDisconnectCb = nullptr;
@@ -46,7 +50,8 @@ private:
   const char* subscriptions[MAX_SUBSCRIPTIONS] = {};
   uint8_t subscriptionCount = 0;
 
-  bool reconnectSuppressed = false;
+  bool motorMode = false;
+  uint8_t motorReconnectFails = 0;
   bool tryConnect();
 };
 

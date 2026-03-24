@@ -6,6 +6,7 @@
   // --- WebSocket ---
   var ws, wsOk = false, reconnTimer, reconnDelay = 3000;
   var chartDays = 7;
+  var lastMsgTime = 0;
 
   function connect() {
     var host = location.hostname;
@@ -14,6 +15,7 @@
       if (reconnTimer) { clearTimeout(reconnTimer); reconnTimer = null; }
       reconnDelay = 3000;  // Reset backoff on successful connection
       wsOk = true;
+      lastMsgTime = Date.now();
       setDot('ws', true);
       ws.send(JSON.stringify({type:'getHistory', sensor:'kh', days: chartDays}));
       ws.send(JSON.stringify({type:'getHistory', sensor:'ph', days: chartDays}));
@@ -23,19 +25,33 @@
     ws.onclose = function() {
       wsOk = false;
       setDot('ws', false);
-      reconnTimer = setTimeout(connect, reconnDelay);
-      reconnDelay = Math.min(reconnDelay * 2, 60000);  // Exponential backoff, max 60s
+      if (!reconnTimer) {
+        reconnTimer = setTimeout(connect, reconnDelay);
+        reconnDelay = Math.min(reconnDelay * 2, 10000);  // Exponential backoff, max 10s (was 60s)
+      }
     };
     ws.onerror = function() {
       wsOk = false;
       setDot('ws', false);
+      // Force close to trigger onclose -> reconnect (onerror alone may not fire onclose)
+      if (ws.readyState !== 3) ws.close();
     };
     ws.onmessage = function(e) {
+      lastMsgTime = Date.now();
       var msg;
       try { msg = JSON.parse(e.data); } catch(ex) { console.error('WS JSON parse error:', ex, e.data); return; }
       try { handleMsg(msg); } catch(ex) { console.error('WS handler error:', ex); }
     };
   }
+
+  // Receive watchdog: if no message for 15s (broadcastState fires every 2s), connection is stale
+  setInterval(function() {
+    if (wsOk && lastMsgTime > 0 && Date.now() - lastMsgTime > 15000) {
+      console.log('WS receive watchdog: no message for 15s, reconnecting');
+      wsOk = false;
+      ws.close();
+    }
+  }, 5000);
 
   function send(obj) {
     if (ws && ws.readyState === 1) {

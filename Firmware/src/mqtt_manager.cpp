@@ -74,18 +74,23 @@ void MQTTManager::loop() {
 
   // Non-blocking reconnect with exponential backoff
   unsigned long now = millis();
-  if (now - lastReconnectAttempt < currentReconnectInterval) {
+  unsigned long interval = motorMode ? MOTOR_RECONNECT_INTERVAL_MS : currentReconnectInterval;
+  if (now - lastReconnectAttempt < interval) {
     return;
   }
-  // Skip reconnect during motor operations — tryConnect() TCP handshake can block
-  if (reconnectSuppressed) return;
+  // In motor mode: allow reconnect at reduced frequency, but give up after repeated failures
+  if (motorMode && motorReconnectFails >= MOTOR_MAX_FAILS) return;
   lastReconnectAttempt = now;
+
+  // Use shorter socket timeout during motor ops to limit blocking
+  if (motorMode) client.setSocketTimeout(1);
   esp_task_wdt_reset();  // Feed watchdog before potentially blocking TCP connect
 
   if (tryConnect()) {
     Serial.println("MQTT connected");
     wasConnected = true;
     lastHeartbeat = millis();
+    motorReconnectFails = 0;
 
     // Publish online availability
     client.publish(topicAvailability, "online", true);
@@ -100,9 +105,17 @@ void MQTTManager::loop() {
   } else {
     Serial.print("MQTT connect failed, state: ");
     Serial.println(client.state());
-    // Exponential backoff
-    currentReconnectInterval = min(currentReconnectInterval * 2, MAX_RECONNECT_INTERVAL_MS);
+    if (motorMode) {
+      motorReconnectFails++;
+    }
+    // Exponential backoff (only in normal mode; motor mode uses fixed interval)
+    if (!motorMode) {
+      currentReconnectInterval = min(currentReconnectInterval * 2, MAX_RECONNECT_INTERVAL_MS);
+    }
   }
+
+  // Restore normal socket timeout after motor-mode attempt
+  if (motorMode) client.setSocketTimeout(2);
 }
 
 bool MQTTManager::tryConnect() {

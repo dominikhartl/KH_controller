@@ -61,7 +61,13 @@ bool isAbortRequested() { return abortRequested.load(std::memory_order_relaxed);
 // Full broadcastState runs at most every 2s to avoid flooding WebSocket/SPI flash
 static void measurementYield() {
   esp_task_wdt_reset();  // Feed watchdog during long measurement operations
-  ws.cleanupClients();
+  // Rate-limit cleanupClients to 1/s — too frequent during motor loops (every 50ms)
+  // can kill clients experiencing brief network blips
+  static unsigned long lastCleanup = 0;
+  if (millis() - lastCleanup >= 1000) {
+    lastCleanup = millis();
+    ws.cleanupClients();
+  }
   wifiManager.loop();
   mqttManager.loop();
   ArduinoOTA.handle();
@@ -1632,7 +1638,12 @@ void setup() {
 
   // Keep WiFi/MQTT/OTA alive during long motor operations (wash cycle takes ~16 min)
   setMotorYieldCallback([]() {
-    ws.cleanupClients();
+    // Rate-limit cleanupClients — runs every 50ms in motor loops, too aggressive
+    static unsigned long lastCleanup = 0;
+    if (millis() - lastCleanup >= 1000) {
+      lastCleanup = millis();
+      ws.cleanupClients();
+    }
     wifiManager.loop();
     mqttManager.loop();
     ArduinoOTA.handle();
@@ -1684,11 +1695,13 @@ void setup() {
     return;
   }
 
-  // Connect to WiFi — retry indefinitely (only BOOT button 5s hold enters AP mode)
+  // Connect to WiFi — wait up to 30s, then continue setup regardless.
+  // Web server, MQTT, and OTA must be initialized even without WiFi,
+  // otherwise the device is unreachable (no OTA, no UI) until WiFi connects.
   wifiManager.begin(wifiSSID, wifiPass);
   {
     unsigned long wifiStart = millis();
-    while (!wifiManager.isConnected()) {
+    while (!wifiManager.isConnected() && millis() - wifiStart < 30000) {
       wifiManager.loop();
       checkBootButton();  // Allow BOOT button AP mode entry during WiFi wait
       delay(100);
@@ -1696,6 +1709,9 @@ void setup() {
       if ((millis() - wifiStart) % 10000 < 100) {
         Serial.printf("WiFi connecting... (%lus)\n", (millis() - wifiStart) / 1000);
       }
+    }
+    if (!wifiManager.isConnected()) {
+      Serial.println("WiFi not connected after 30s — continuing setup, will retry in background");
     }
   }
 
@@ -1854,6 +1870,13 @@ void loop() {
   if (millis() - lastBroadcastTime > 2000) {
     lastBroadcastTime = millis();
     broadcastState();
+  }
+
+  // WebSocket ping for dead connection detection (every 15s)
+  static unsigned long lastWsPing = 0;
+  if (millis() - lastWsPing > 15000) {
+    lastWsPing = millis();
+    ws.pingAll();
   }
 
   // Track heap watermark with low-heap warning
