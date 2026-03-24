@@ -95,19 +95,11 @@ public:
   void setVoltage7PHExt(float v);
   void setVoltage10PHExt(float v);
 
-  // TMC2209 per-motor stall detection settings
+  // TMC2209 per-motor chopper mode
   bool getSampleSpreadCycle();        // Use SpreadCycle for sample pump (default false)
   void setSampleSpreadCycle(bool v);
-  int getSampleStallSG();             // SG stall threshold for sample pump (default 30)
-  void setSampleStallSG(int v);
   bool getTitrateSpreadCycle();       // Use SpreadCycle for titration pump (default false)
   void setTitrateSpreadCycle(bool v);
-  int getTitrateStallSG();            // SG stall threshold for titration pump (default 100)
-  void setTitrateStallSG(int v);
-  int getSampleSGBaseline();           // New-tube SG baseline for sample pump (default 0 = not set)
-  void setSampleSGBaseline(int v);
-  int getTitrateSGBaseline();          // New-tube SG baseline for titration pump (default 0 = not set)
-  void setTitrateSGBaseline(int v);
 
   // Motor max speed from diagnostics (RPM, 0 = not tested)
   float getSampleMaxRPM();

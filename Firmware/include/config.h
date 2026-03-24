@@ -184,7 +184,6 @@ static const int TMC_SAMPLE_RMS_MA  = 900;   // Sample pump RMS current (mA)
 static const int TMC_TITRATE_RMS_MA = 900;   // Titration pump RMS current (mA)
 static const float TMC_R_SENSE      = 0.11f; // Current sense resistor (ohms)
 static const int TMC_MICROSTEPS     = 8;     // Must match STEPS_PER_REVOLUTION / 200
-static const float TMC_MIN_SG_RPM   = 15.0f; // StallGuard unreliable below this RPM in StealthChop
 
 // MQTT_MAX_PACKET_SIZE and MQTT_KEEPALIVE are set via build_flags in platformio.ini
 

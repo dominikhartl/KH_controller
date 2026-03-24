@@ -28,29 +28,13 @@ bool takeSample(int volume, float speedRpm);
 bool washSampleVol(int removeRevs, int fillRevs, float speedRpm); // Absolute revolution counts
 bool titrate(int volume, float speedRpm, bool noAccel = false, uint32_t accelOverride = 0);
 
-// Per-operation SG stats for tube wear tracking
-void getLastSampleSGStats(uint16_t* avg, uint16_t* min);
-void getLastTitrateSGStats(uint16_t* avg, uint16_t* min);
-
-// Motor diagnostic: run revolutions and collect SG samples
-// Returns number of samples collected (0 if TMC not detected)
-struct SGSample { uint16_t sg; bool diag; };
-int diagStepSample(int revolutions, float rpm, SGSample* samples, int maxSamples);
-int diagStepTitrate(int revolutions, float rpm, SGSample* samples, int maxSamples);
-
-// Stall speed ramp: run sample pump at increasing RPM until stall detected
-// Returns RPM at which stall occurred (0.0 if no stall within range)
-// dirForward: true = forward (DIR HIGH), false = reverse (DIR LOW)
-// Optional rpmCallback is called at each speed step with the current RPM
-typedef void (*StallRampCallback)(float rpm);
-float diagStallRamp(float startRPM, float maxRPM, float stepRPM, int revsPerStep,
-                    SGSample* samples, int maxSamples, int* totalSamples,
-                    bool dirForward = true, StallRampCallback rpmCb = nullptr);
-
-// Stall speed ramp for titration pump (same interface, uses EN_PIN2/STEP_PIN2/DIR_PIN2)
-float diagStallRampTitrate(float startRPM, float maxRPM, float stepRPM, int revsPerStep,
-                    SGSample* samples, int maxSamples, int* totalSamples,
-                    bool dirForward = true, StallRampCallback rpmCb = nullptr);
+// Motor ramp test: run motor at increasing speeds from startRPM to maxRPM
+// Returns true if completed full range, false if aborted
+// rpmCb is called at each speed step with the current RPM
+// *stoppedAtRPM is set to the last completed RPM
+typedef void (*RampProgressCallback)(float rpm);
+bool motorRampTest(bool isSample, float startRPM, float maxRPM, float stepRPM,
+                   int revsPerStep, RampProgressCallback rpmCb, float* stoppedAtRPM);
 
 // Crash hint: RTC memory that survives a panic reset — log on next boot to identify crash location
 const char* getMotorCrashHint();  // returns hint string, or nullptr if none

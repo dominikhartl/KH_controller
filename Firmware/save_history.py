@@ -46,16 +46,24 @@ def gzip_web_assets():
                 comp = os.path.getsize(dst)
                 print(f"  Gzipped {fname}: {orig} -> {comp} bytes ({100-comp*100//orig}% smaller)")
 
-    # Back up and remove originals — ESPAsyncWebServer only serves .gz when original is absent
+    # Back up originals outside data/ dir, then remove — ESPAsyncWebServer only
+    # serves .gz when original is absent. Backups go to build dir so they don't
+    # get included in the LittleFS image.
+    bak_dir = os.path.join(env.subst("$BUILD_DIR"), "www_bak")
+    os.makedirs(bak_dir, exist_ok=True)
     for fname in list(os.listdir(WWW_DIR)):
         if any(fname.endswith(ext) for ext in GZIP_EXTENSIONS):
             src = os.path.join(WWW_DIR, fname)
             gz_path = src + ".gz"
             if os.path.exists(gz_path):
-                bak = src + ".bak"
+                bak = os.path.join(bak_dir, fname)
                 shutil.copy2(src, bak)
                 os.remove(src)
                 _backed_up[fname] = bak
+    # Also remove any stale .bak files from data/www (legacy cleanup)
+    for fname in list(os.listdir(WWW_DIR)):
+        if fname.endswith(".bak"):
+            os.remove(os.path.join(WWW_DIR, fname))
     if _backed_up:
         print(f"  Removed originals for build: {', '.join(_backed_up.keys())}")
 

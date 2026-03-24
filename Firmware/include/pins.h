@@ -28,10 +28,6 @@
 #define TMC_UART_TX    18
 #define TMC_UART_RX    19
 
-// TMC2209 DIAG pins (active-high stall indication)
-#define DIAG_SAMPLE    23
-#define DIAG_TITRATE   35
-
 // Board noise reference (unconnected ADC1 pin for EMI/noise measurement)
 #define NOISE_REF_PIN 36
 

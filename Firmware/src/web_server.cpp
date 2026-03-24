@@ -419,21 +419,9 @@ static void handleWebSocketMessage(AsyncWebSocketClient* client, void* arg, uint
         configStore.setSampleSpreadCycle((int)value == 1);
         setSampleSpreadCycle((int)value == 1);
       }
-      else if (strcmp(key, "sample_stall_sg") == 0) {
-        configStore.setSampleStallSG((int)value);
-      }
       else if (strcmp(key, "titrate_spreadcycle") == 0) {
         configStore.setTitrateSpreadCycle((int)value == 1);
         setTitrateSpreadCycle((int)value == 1);
-      }
-      else if (strcmp(key, "titrate_stall_sg") == 0) {
-        configStore.setTitrateStallSG((int)value);
-      }
-      else if (strcmp(key, "sample_sg_baseline") == 0) {
-        configStore.setSampleSGBaseline((int)value);
-      }
-      else if (strcmp(key, "titrate_sg_baseline") == 0) {
-        configStore.setTitrateSGBaseline((int)value);
       }
       else {
         saved = false;
@@ -487,44 +475,12 @@ static void handleWebSocketMessage(AsyncWebSocketClient* client, void* arg, uint
       if (!f) return;
 
       bool isGran = (strcmp(sensor, "gran") == 0);
-      bool isMotor = (strcmp(sensor, "motor") == 0);
-      int days = doc["days"] | (isMotor ? 90 : 7);
+      int days = doc["days"] | 7;
       if (days < 1) days = 1;
       if (days > 90) days = 90;
       uint32_t cutoff = (uint32_t)time(nullptr) - ((uint32_t)days * 86400UL);
 
-      if (isMotor) {
-        // Motor CSV: timestamp,sampleAvg,sampleMin,titrateAvg,titrateMin
-        JsonDocument resp;
-        resp["type"] = "history";
-        resp["sensor"] = "motor";
-        JsonArray dataArr = resp["data"].to<JsonArray>();
-
-        while (f.available() && dataArr.size() < 500) {
-          String line = f.readStringUntil('\n');
-          yield();
-          if (line.length() == 0) continue;
-          int c1 = line.indexOf(',');
-          if (c1 < 0) continue;
-          uint32_t ts = line.substring(0, c1).toInt();
-          if (ts < cutoff) continue;
-          int c2 = line.indexOf(',', c1 + 1);
-          int c3 = line.indexOf(',', c2 + 1);
-          int c4 = line.indexOf(',', c3 + 1);
-          if (c2 < 0 || c3 < 0 || c4 < 0) continue;
-          JsonArray pt = dataArr.add<JsonArray>();
-          pt.add(ts);
-          pt.add(line.substring(c1 + 1, c2).toInt());
-          pt.add(line.substring(c2 + 1, c3).toInt());
-          pt.add(line.substring(c3 + 1, c4).toInt());
-          pt.add(line.substring(c4 + 1).toInt());
-        }
-        f.close();
-
-        static char buf[4096];
-        size_t written = serializeJson(resp, buf, sizeof(buf));
-        if (written > 0) ws.textAll(buf);
-      } else if (strcmp(sensor, "precision") == 0) {
+      if (strcmp(sensor, "precision") == 0) {
         // Precision CSV: timestamp,n,mean,sd,min,max,elapsedSec
         JsonDocument resp;
         resp["type"] = "history";
@@ -992,11 +948,7 @@ void broadcastState() {
     cfg["ezo_base_slope"] = getEZOBaseSlope();
   }
   cfg["sample_spreadcycle"] = configStore.getSampleSpreadCycle();
-  cfg["sample_stall_sg"] = configStore.getSampleStallSG();
   cfg["titrate_spreadcycle"] = configStore.getTitrateSpreadCycle();
-  cfg["titrate_stall_sg"] = configStore.getTitrateStallSG();
-  cfg["sample_sg_baseline"] = configStore.getSampleSGBaseline();
-  cfg["titrate_sg_baseline"] = configStore.getTitrateSGBaseline();
 
   // Pump calibration ages (days, -1 = never)
   time_t nowTs = time(nullptr);
@@ -1004,9 +956,6 @@ void broadcastState() {
   cfg["sample_cal_age"] = (sampCalTs > 0 && nowTs > (time_t)sampCalTs) ? (int)((nowTs - sampCalTs) / 86400) : -1;
   uint32_t titCalTs = configStore.getTitrationCalTimestamp();
   cfg["titration_cal_age"] = (titCalTs > 0 && nowTs > (time_t)titCalTs) ? (int)((nowTs - titCalTs) / 86400) : -1;
-
-  const char* th = getTubeHealth();
-  if (th) doc["tubeHealth"] = th;
 
   // Schedule
   doc["schedMode"] = configStore.getScheduleMode();
@@ -1098,6 +1047,11 @@ void broadcastProgress(int percent) {
   char buf[32];
   snprintf(buf, sizeof(buf), "{\"type\":\"progress\",\"pct\":%d}", percent);
   ws.textAll(buf);
+}
+
+void broadcastRawJson(const char* json) {
+  if (ws.count() == 0) return;
+  ws.textAll(json);
 }
 
 void broadcastGranData(float r2, float eqML, bool usedGran,
@@ -1286,54 +1240,6 @@ void appendGranHistory(float r2, float eqML, float endpointPH, bool usedGran, fl
   clearFSCrashHint();
 }
 
-static uint16_t lastSampleSGAvgStored = 0;
-static uint16_t lastTitrateSGAvgStored = 0;
-
-void appendMotorHealth(uint32_t ts, int sampleAvg, int sampleMin, int titrateAvg, int titrateMin) {
-  const char* filename = "/history/motor.csv";
-
-  if (!LittleFS.exists("/history")) {
-    if (!LittleFS.mkdir("/history")) return;
-  }
-
-  // Remove entries older than 90 days
-  if (LittleFS.exists(filename)) {
-    setFSCrashHint("pruneMotorHealth");
-    uint32_t cutoff = ts - (90UL * 86400UL);
-    File f = LittleFS.open(filename, "r");
-    if (f) {
-      String kept;
-      kept.reserve(f.size());
-      int lines = 0;
-      while (f.available() && lines < 500) {
-        String line = f.readStringUntil('\n');
-        lines++;
-        yield();
-        if (line.length() == 0) continue;
-        int comma = line.indexOf(',');
-        if (comma < 0) continue;
-        uint32_t lineTs = line.substring(0, comma).toInt();
-        if (lineTs >= cutoff) kept += line + "\n";
-      }
-      f.close();
-      File fw = LittleFS.open(filename, "w");
-      if (fw) { chunkedWrite(fw, kept); fw.close(); }
-    }
-    clearFSCrashHint();
-  }
-
-  lastSampleSGAvgStored = sampleAvg;
-  lastTitrateSGAvgStored = titrateAvg;
-
-  if (ts < MIN_VALID_EPOCH) return;
-
-  File f = LittleFS.open(filename, "a");
-  if (f) {
-    f.printf("%u,%d,%d,%d,%d\n", ts, sampleAvg, sampleMin, titrateAvg, titrateMin);
-    f.close();
-  }
-}
-
 void appendPrecisionHistory(uint32_t ts, int n, float mean, float sd, float vmin, float vmax, unsigned long elapsedSec) {
   const char* filename = "/history/precision.csv";
 
@@ -1372,27 +1278,6 @@ void appendPrecisionHistory(uint32_t ts, int n, float mean, float sd, float vmin
     f.printf("%u,%d,%.2f,%.3f,%.2f,%.2f,%lu\n", ts, n, mean, sd, vmin, vmax, elapsedSec);
     f.close();
   }
-}
-
-// Tube health: compare latest SG to baseline
-const char* getTubeHealth() {
-  int sampleBL = configStore.getSampleSGBaseline();
-  int titrateBL = configStore.getTitrateSGBaseline();
-  if (sampleBL == 0 && titrateBL == 0) return nullptr;
-
-  // Use the pump with a baseline; if both have baselines, use the worse ratio
-  float ratio = 1.0f;
-  if (sampleBL > 0 && lastSampleSGAvgStored > 0) {
-    float r = (float)lastSampleSGAvgStored / sampleBL;
-    if (r < ratio) ratio = r;
-  }
-  if (titrateBL > 0 && lastTitrateSGAvgStored > 0) {
-    float r = (float)lastTitrateSGAvgStored / titrateBL;
-    if (r < ratio) ratio = r;
-  }
-  if (ratio > 0.8f) return "Good";
-  if (ratio > 0.6f) return "Aging";
-  return "Replace";
 }
 
 int getRecentKHValues(float* outValues, int maxCount) {
@@ -1587,7 +1472,7 @@ void setupWebServer() {
   LittleFS.begin(true); // Format if mount fails
 
   // Serve static files from LittleFS
-  server.serveStatic("/", LittleFS, "/www/").setDefaultFile("index.html").setCacheControl("no-store, must-revalidate");
+  server.serveStatic("/", LittleFS, "/www/").setDefaultFile("index.html").setCacheControl("max-age=86400");
 
   // Serve history files for backup before filesystem upload
   server.serveStatic("/history/", LittleFS, "/history/");

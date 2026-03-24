@@ -277,28 +277,6 @@ void publishAllDiscovery() {
   publishSensorDiscovery("khv3_water_temp", "Water Temperature", topicDiagnostics, "°C", "temperature",
                           "{{ value_json.water_temp }}", nullptr);
 
-  // Motor/tube health sensors
-  publishSensorDiscovery("khv3_sample_sg", "Sample Pump Load", topicDiagnostics, nullptr, nullptr,
-                          "{{ value_json.sample_sg }}", "diagnostic");
-  publishSensorDiscovery("khv3_titrate_sg", "Titration Pump Load", topicDiagnostics, nullptr, nullptr,
-                          "{{ value_json.titrate_sg }}", "diagnostic");
-  {
-    char uid[64];
-    snprintf(uid, sizeof(uid), "%s_tube_health", deviceIdLower);
-    JsonDocument doc;
-    doc["name"] = "Tube Health";
-    doc["stat_t"] = topicDiagnostics;
-    doc["uniq_id"] = uid;
-    doc["avty_t"] = availability_topic;
-    doc["val_tpl"] = "{{ value_json.tube_health }}";
-    doc["ent_cat"] = "diagnostic";
-    JsonObject root = doc.as<JsonObject>();
-    addDeviceBlock(root);
-    char dt[128];
-    snprintf(dt, sizeof(dt), "homeassistant/sensor/%s/tube_health/config", deviceIdLower);
-    publishDiscoveryPayload(dt, doc);
-  }
-
   // Probe health text sensor (no unit, no state_class)
   {
     char uid[64];
@@ -566,15 +544,6 @@ void publishDiagnostics() {
     doc["sample_cal_age"] = (sampCalTs > 0 && now2 > 1000000000) ? (int)((now2 - sampCalTs) / 86400) : -1;
     doc["titrate_cal_age"] = (titCalTs > 0 && now2 > 1000000000) ? (int)((now2 - titCalTs) / 86400) : -1;
   }
-
-  // Motor/tube health
-  uint16_t sAvg, sMin, tAvg, tMin;
-  getLastSampleSGStats(&sAvg, &sMin);
-  getLastTitrateSGStats(&tAvg, &tMin);
-  doc["sample_sg"] = sAvg;
-  doc["titrate_sg"] = tAvg;
-  const char* th = getTubeHealth();
-  doc["tube_health"] = th ? th : "Unknown";
 
   char buf[640];
   serializeJson(doc, buf, sizeof(buf));

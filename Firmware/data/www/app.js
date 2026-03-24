@@ -18,7 +18,6 @@
       ws.send(JSON.stringify({type:'getHistory', sensor:'kh', days: chartDays}));
       ws.send(JSON.stringify({type:'getHistory', sensor:'ph', days: chartDays}));
       ws.send(JSON.stringify({type:'getHistory', sensor:'gran', days: chartDays}));
-      ws.send(JSON.stringify({type:'getHistory', sensor:'motor'}));
       ws.send(JSON.stringify({type:'getHistory', sensor:'precision'}));
     };
     ws.onclose = function() {
@@ -100,7 +99,15 @@
     else if (d.type === 'mesStart') { clearLiveChart(); setMeasuringMode(true); }
     else if (d.type === 'mesData') { loadMesData(d); setMeasuringMode(false); }
     else if (d.type === 'history') updateHistory(d);
-    else if (d.type === 'msg') { addLogEntry('msg', d.text); checkPrecisionResult(d.text); }
+    else if (d.type === 'msg') {
+      addLogEntry('msg', d.text);
+      checkPrecisionResult(d.text);
+      if (motorDiagRunning && d.text.indexOf('Ramp:') === 0) {
+        var prog = document.getElementById('motor-diag-progress');
+        if (prog) prog.textContent = d.text;
+      }
+      if (d.text.indexOf('already running') !== -1) resetHWDiagUI();
+    }
     else if (d.type === 'error') { addLogEntry('error', d.text); updateProgress(100); setMeasuringMode(false); }
     else if (d.type === 'logData') loadLogData(d.entries);
     else if (d.type === 'granData') updateGranChart(d);
@@ -201,20 +208,6 @@
     // Next measurement (server sends formatted string)
     if (d.nextMeas) setText('next-meas', d.nextMeas);
 
-    // Tube health header indicator + section status
-    var th = d.tubeHealth || '';
-    var tubeInd = document.getElementById('ind-tube');
-    if (tubeInd) {
-      tubeInd.className = 'si' + ((th === 'Good') ? ' on' : (th === 'Aging') ? ' warn' : (th === 'Replace') ? ' err' : '');
-    }
-    var tubeStatus = document.getElementById('tube-health-status');
-    if (tubeStatus) {
-      var dot = tubeStatus.querySelector('.health-dot');
-      var cls = (th === 'Good') ? 'good' : (th === 'Aging') ? 'warn' : (th === 'Replace') ? 'replace' : '';
-      if (dot) dot.className = 'health-dot' + (cls ? ' ' + cls : '');
-      if (tubeStatus.lastChild) tubeStatus.lastChild.textContent = th || '--';
-    }
-
     // Config values
     if (d.config) {
       setInput('cfg-device_name', d.config.device_name);
@@ -275,28 +268,6 @@
       }
 
 
-      // Tube baseline info
-      var sbl = d.config.sample_sg_baseline || 0;
-      var tbl = d.config.titrate_sg_baseline || 0;
-      motorBaselines.sample = sbl;
-      motorBaselines.titrate = tbl;
-      var blInfo = document.getElementById('tube-baseline-info');
-      if (blInfo) {
-        if (sbl > 0 || tbl > 0) {
-          var parts = [];
-          if (sbl > 0) parts.push('S:' + sbl);
-          if (tbl > 0) parts.push('T:' + tbl);
-          blInfo.textContent = parts.join(' / ');
-        } else {
-          blInfo.textContent = 'Not set';
-        }
-      }
-      // Update SG values in tube health grid
-      var thSample = document.getElementById('tube-health-sample');
-      if (thSample && lastSGValues.sample > 0) thSample.textContent = 'SG ' + lastSGValues.sample;
-      var thTitrate = document.getElementById('tube-health-titrate');
-      if (thTitrate && lastSGValues.titrate > 0) thTitrate.textContent = 'SG ' + lastSGValues.titrate;
-      renderMotorCharts();
     }
 
     // Schedule
@@ -582,16 +553,6 @@
       renderPrecisionHistory(d.data);
       return;
     }
-    if (d.sensor === 'motor') {
-      motorHistoryData = d.data;
-      if (d.data && d.data.length > 0) {
-        var last = d.data[d.data.length - 1];
-        lastSGValues.sample = last[1];
-        lastSGValues.titrate = last[3];
-      }
-      renderMotorCharts();
-      return;
-    }
     if (d.sensor === 'kh') {
       khHistoryData = d.data;
       renderKHChart();
@@ -746,12 +707,9 @@
   // --- Charts ---
   var khChart, phChart, liveChart, granChart, granHistChart, effChart, noiseChart, precisionChart;
   var serverSlope = NaN, serverIntercept = NaN, serverSlopeDay0 = 0, serverSlopeNDays = 0;
-  var sgSampleChart, sgTitrateChart;
   var granView = 'last'; // 'last' or 'history'
   var khHistoryData = null;  // raw kh history [[ts, val], ...]
   var granHistoryData = null; // raw gran history [[ts, r2, eqML, eph, mth, khG, khE, noiseMv, reversals, conf, khCI], ...]
-  var motorHistoryData = null; // raw motor history [[ts, sAvg, sMin, tAvg, tMin], ...]
-  var lastSGValues = { sample: 0, titrate: 0 };
   // Time-proportional X-axis: uses linear scale with Unix timestamps (seconds)
   // Returns a fresh object each call so charts don't share scale state
   function timeXScale() {
@@ -1150,11 +1108,16 @@
   // --- Buttons ---
   function initButtons() {
     document.querySelectorAll('.cmd-btn').forEach(function(btn) {
+      if (!btn.getAttribute('data-cmd')) return; // skip non-command buttons
       btn.addEventListener('click', function() {
         var cmd = btn.getAttribute('data-cmd');
+        if (!cmd) return;
         if (cmd === 'o' && !confirm('Restart the device?')) return;
         if (cmd === 'p') addLogEntry('msg', 'Measuring pH...');
         send({ type: 'cmd', cmd: cmd });
+        // Brief visual flash on press
+        btn.style.opacity = '0.6';
+        setTimeout(function() { btn.style.opacity = ''; }, 200);
       });
     });
   }
@@ -1409,226 +1372,67 @@
   function pad(n) { return n < 10 ? '0' + n : '' + n; }
 
   // --- Motor Diagnostics ---
-  var lastDiagResult = null;
-
-  function fmtSG(obj) {
-    if (!obj) return '--';
-    return 'SG ' + obj.sgMin + '-' + obj.sgMax + ' (avg ' + obj.sgAvg + ')';
-  }
+  var motorDiagRunning = null; // which button ID is running, or null
 
   function showMotorDiag(d) {
-    lastDiagResult = d;
     var prog = document.getElementById('motor-diag-progress');
     var results = document.getElementById('motor-diag-results');
     if (prog) prog.style.display = 'none';
+
+    // Restore all buttons
     ['btn-motor-diag', 'btn-motor-diag-sample', 'btn-motor-diag-titrate'].forEach(function(id) {
       var b = document.getElementById(id);
-      if (b) b.disabled = false;
+      if (b) { b.disabled = false; b.textContent = b.getAttribute('data-label'); b.style.background = ''; }
     });
+    motorDiagRunning = null;
+
     if (!results) return;
-
-    var m = d.mode || 'd';
-    var sampleRow = document.getElementById('diag-row-sample');
-    var titrateRow = document.getElementById('diag-row-titrate');
-    var stallEl = document.getElementById('diag-stall-result');
-
-    if (sampleRow) sampleRow.style.display = (m === 'd' || m === 'B') ? '' : 'none';
-    if (titrateRow) titrateRow.style.display = (m === 'd' || m === 'C') ? '' : 'none';
-
-    if ((m === 'd' || m === 'B') && d.sample) {
-      setText('diag-sample-sc', fmtSG(d.sample.stealthchop));
-      setText('diag-sample-sp', fmtSG(d.sample.spreadcycle));
-      setText('diag-sample-rec', d.sample.recommended + ' (SG\u2265' + d.sample.suggestedThreshold + ')');
+    var lines = [];
+    if (d.sample) {
+      lines.push('Sample: ' + (d.sample.aborted ? 'aborted at ' : 'OK up to ') + Math.round(d.sample.maxRPM) + ' RPM');
     }
-    if ((m === 'd' || m === 'C') && d.titrate) {
-      setText('diag-titrate-sc', fmtSG(d.titrate.stealthchop));
-      setText('diag-titrate-sp', fmtSG(d.titrate.spreadcycle));
-      setText('diag-titrate-rec', d.titrate.recommended + ' (SG\u2265' + d.titrate.suggestedThreshold + ')');
+    if (d.titrate) {
+      lines.push('Titration: ' + (d.titrate.aborted ? 'aborted at ' : 'OK up to ') + Math.round(d.titrate.maxRPM) + ' RPM');
     }
-
-    if (stallEl) {
-      var parts = [];
-      if ((m === 'd' || m === 'B') && d.sample) {
-        if (d.sample.stallRPM > 0) {
-          parts.push('Sample: stall ' + d.sample.stallRPM + ' RPM \u2192 max ' + Math.round(d.sample.maxRPM) + ' RPM');
-        } else {
-          parts.push('Sample: no stall (30\u2013500 RPM)');
-        }
-      }
-      if ((m === 'd' || m === 'C') && d.titrate) {
-        if (d.titrate.stallRPM > 0) {
-          parts.push('Titration: stall ' + d.titrate.stallRPM + ' RPM \u2192 max ' + Math.round(d.titrate.maxRPM) + ' RPM');
-        } else {
-          parts.push('Titration: no stall (30\u2013300 RPM)');
-        }
-      }
-      stallEl.textContent = '';
-      parts.forEach(function(p, i) {
-        if (i > 0) stallEl.appendChild(document.createElement('br'));
-        stallEl.appendChild(document.createTextNode(p));
-      });
-      stallEl.style.display = parts.length > 0 ? '' : 'none';
-    }
-
-    // SG Profile charts
-    var profileEl = document.getElementById('diag-sg-profile');
-    var profileStats = document.getElementById('sg-profile-stats');
-    if (profileEl && d.sgProfile) {
-      profileEl.style.display = '';
-      var renderProfile = function(canvasId, prof, label) {
-        var canvas = document.getElementById(canvasId);
-        if (!canvas || !prof || !prof.values || prof.values.length === 0) return;
-        var ctx = canvas.getContext('2d');
-        // Destroy existing chart if any
-        if (canvas._chart) canvas._chart.destroy();
-        var data = prof.values.map(function(v, i) { return {x: i + 1, y: v}; });
-        canvas._chart = new Chart(ctx, {
-          type: 'line',
-          data: {
-            datasets: [{
-              data: data,
-              borderColor: '#30d158',
-              borderWidth: 1.5,
-              pointRadius: 2,
-              pointBackgroundColor: '#30d158',
-              fill: false
-            }]
-          },
-          options: {
-            responsive: true, maintainAspectRatio: false, animation: false,
-            plugins: {
-              legend: { display: false },
-              title: { display: true, text: label, color: '#8e8e93', font: { size: 10 }, padding: { bottom: 2 } }
-            },
-            scales: {
-              x: { type: 'linear', title: { display: true, text: 'Revolution', color: '#8e8e93', font: { size: 8 } }, ticks: { color: '#8e8e93', font: { size: 8 } }, grid: { color: '#38383a' } },
-              y: { title: { display: true, text: 'SG', color: '#8e8e93', font: { size: 8 } }, ticks: { color: '#8e8e93', font: { size: 8 } }, grid: { color: '#38383a' },
-                min: 0 }
-            }
-          }
-        });
-      };
-      if (d.sgProfile.sample) renderProfile('sg-profile-sample', d.sgProfile.sample, 'Sample Pump SG Profile');
-      if (d.sgProfile.titrate) renderProfile('sg-profile-titrate', d.sgProfile.titrate, 'Titration Pump SG Profile');
-
-      // Stats text
-      var stats = [];
-      if (d.sgProfile.sample && d.sgProfile.sample.values && d.sgProfile.sample.values.length > 0) {
-        stats.push('Sample: min=' + d.sgProfile.sample.min + ' rec. stallSG=' + d.sgProfile.sample.recSG);
-      }
-      if (d.sgProfile.titrate && d.sgProfile.titrate.values && d.sgProfile.titrate.values.length > 0) {
-        stats.push('Titrate: min=' + d.sgProfile.titrate.min + ' rec. stallSG=' + d.sgProfile.titrate.recSG);
-      }
-      if (profileStats) profileStats.textContent = stats.join(' | ');
-    } else if (profileEl) {
-      profileEl.style.display = 'none';
-    }
-
+    results.textContent = lines.join(' | ');
     results.style.display = 'block';
     try { localStorage.setItem('motorDiagResult', JSON.stringify(d)); } catch(e) {}
   }
-
-  function initMotorCharts() {
-    var sgChartOpts = function(title) {
-      return {
-        responsive: true, maintainAspectRatio: false, animation: false,
-        plugins: {
-          legend: { display: false },
-          title: { display: true, text: title, color: '#8e8e93', font: { size: 10, weight: '500' }, padding: { bottom: 4 } }
-        },
-        scales: {
-          x: { type: 'linear', ticks: { color: '#8e8e93', maxTicksLimit: 4, font: { size: 9 }, callback: function(val) { return fmtDate(val); } }, grid: { color: '#38383a' } },
-          y: { ticks: { color: '#8e8e93', font: { size: 9 } }, grid: { color: '#38383a' }, title: { display: true, text: 'SG', color: '#8e8e93', font: { size: 9 } } }
-        }
-      };
-    };
-    var el1 = document.getElementById('chart-sg-sample');
-    var el2 = document.getElementById('chart-sg-titrate');
-    if (el1) sgSampleChart = new Chart(el1, {
-      type: 'scatter',
-      data: { datasets: [
-        { data: [], borderColor: '#0a84ff', borderWidth: 2, pointRadius: 2, pointBackgroundColor: '#0a84ff', showLine: true, tension: 0.1 },
-        { data: [], borderColor: 'rgba(255,159,10,0.5)', borderWidth: 1, borderDash: [4,4], pointRadius: 0, showLine: true }
-      ] },
-      options: sgChartOpts('Sample Pump SG')
-    });
-    if (el2) sgTitrateChart = new Chart(el2, {
-      type: 'scatter',
-      data: { datasets: [
-        { data: [], borderColor: '#30d158', borderWidth: 2, pointRadius: 2, pointBackgroundColor: '#30d158', showLine: true, tension: 0.1 },
-        { data: [], borderColor: 'rgba(255,159,10,0.5)', borderWidth: 1, borderDash: [4,4], pointRadius: 0, showLine: true }
-      ] },
-      options: sgChartOpts('Titration Pump SG')
-    });
-  }
-
-  function renderMotorCharts() {
-    if (!motorHistoryData || motorHistoryData.length === 0) return;
-    // data: [[ts, sAvg, sMin, tAvg, tMin], ...]
-    if (sgSampleChart) {
-      sgSampleChart.data.datasets[0].data = motorHistoryData.map(function(p) { return {x: p[0], y: p[1]}; });
-      if (motorBaselines.sample > 0) {
-        sgSampleChart.data.datasets[1].data = motorHistoryData.map(function(p) { return {x: p[0], y: motorBaselines.sample}; });
-      }
-      sgSampleChart.options.scales.x.min = motorHistoryData[0][0];
-      sgSampleChart.options.scales.x.max = motorHistoryData[motorHistoryData.length - 1][0];
-      sgSampleChart.update();
-    }
-    if (sgTitrateChart) {
-      sgTitrateChart.data.datasets[0].data = motorHistoryData.map(function(p) { return {x: p[0], y: p[3]}; });
-      if (motorBaselines.titrate > 0) {
-        sgTitrateChart.data.datasets[1].data = motorHistoryData.map(function(p) { return {x: p[0], y: motorBaselines.titrate}; });
-      }
-      sgTitrateChart.options.scales.x.min = motorHistoryData[0][0];
-      sgTitrateChart.options.scales.x.max = motorHistoryData[motorHistoryData.length - 1][0];
-      sgTitrateChart.update();
-    }
-  }
-
-  var motorBaselines = { sample: 0, titrate: 0 };
 
   function initMotorDiag() {
     var diagBtns = ['btn-motor-diag', 'btn-motor-diag-sample', 'btn-motor-diag-titrate'];
     diagBtns.forEach(function(id) {
       var btn = document.getElementById(id);
-      if (btn) {
-        btn.addEventListener('click', function() {
-          var prog = document.getElementById('motor-diag-progress');
-          var results = document.getElementById('motor-diag-results');
-          if (prog) prog.style.display = 'block';
-          if (results) results.style.display = 'none';
-          diagBtns.forEach(function(bid) {
-            var b = document.getElementById(bid);
-            if (b) b.disabled = true;
-          });
+      if (!btn) return;
+      btn.setAttribute('data-label', btn.textContent);
+      btn.addEventListener('click', function() {
+        if (motorDiagRunning) {
+          // Abort
+          send({ type: 'cmd', cmd: 'abort' });
+          return;
+        }
+        var prog = document.getElementById('motor-diag-progress');
+        var results = document.getElementById('motor-diag-results');
+        if (prog) { prog.textContent = 'Starting ramp test...'; prog.style.display = 'block'; }
+        if (results) results.style.display = 'none';
+        motorDiagRunning = id;
+        // Disable other buttons, turn this one into Abort
+        diagBtns.forEach(function(bid) {
+          var b = document.getElementById(bid);
+          if (!b) return;
+          if (bid === id) {
+            b.textContent = 'Abort';
+            b.style.background = 'var(--red, #ff453a)';
+          } else {
+            b.disabled = true;
+          }
         });
-      }
-    });
-    var applyBtn = document.getElementById('btn-apply-diag');
-    if (applyBtn) {
-      applyBtn.addEventListener('click', function() {
-        if (!lastDiagResult) return;
-        var m = lastDiagResult.mode || 'd';
-        var s = lastDiagResult.sample;
-        var t = lastDiagResult.titrate;
-        if ((m === 'd' || m === 'B') && s) {
-          send({ type: 'config', key: 'sample_spreadcycle', value: s.recommended === 'spreadcycle' ? 1 : 0 });
-          send({ type: 'config', key: 'sample_stall_sg', value: s.suggestedThreshold });
-          var sMode = s.recommended === 'spreadcycle' ? s.spreadcycle : s.stealthchop;
-          if (sMode) send({ type: 'config', key: 'sample_sg_baseline', value: sMode.sgAvg });
-        }
-        if ((m === 'd' || m === 'C') && t) {
-          send({ type: 'config', key: 'titrate_spreadcycle', value: t.recommended === 'spreadcycle' ? 1 : 0 });
-          send({ type: 'config', key: 'titrate_stall_sg', value: t.suggestedThreshold });
-          var tMode = t.recommended === 'spreadcycle' ? t.spreadcycle : t.stealthchop;
-          if (tMode) send({ type: 'config', key: 'titrate_sg_baseline', value: tMode.sgAvg });
-        }
-        addLogEntry('msg', 'Motor diagnostic settings applied');
       });
-    }
+    });
   }
 
   function showHWDiagDone() {
+    if (hwDiagTimer) { clearTimeout(hwDiagTimer); hwDiagTimer = null; }
     var status = document.getElementById('hw-diag-status');
     var results = document.getElementById('hw-diag-results');
     var btn = document.getElementById('btn-hw-diag');
@@ -1708,13 +1512,6 @@
         rows.push('<tr><td>TMC2209</td><td>' + skip() + '</td></tr>');
       }
 
-      // Motors
-      if (d.motors && !d.motors.skipped) {
-        rows.push('<tr><td>Motors</td><td>' + ok() + '</td></tr>');
-      } else {
-        rows.push('<tr><td>Motors</td><td>' + skip() + '</td></tr>');
-      }
-
       // GPIO
       if (d.gpio) {
         var gpioOk = true;
@@ -1740,6 +1537,16 @@
     });
   }
 
+  var hwDiagTimer = null;
+
+  function resetHWDiagUI() {
+    var btn = document.getElementById('btn-hw-diag');
+    var status = document.getElementById('hw-diag-status');
+    if (btn) btn.disabled = false;
+    if (status) status.style.display = 'none';
+    if (hwDiagTimer) { clearTimeout(hwDiagTimer); hwDiagTimer = null; }
+  }
+
   function initHWDiag() {
     var btn = document.getElementById('btn-hw-diag');
     if (btn) {
@@ -1750,6 +1557,9 @@
         if (results) results.style.display = 'none';
         btn.disabled = true;
         try { localStorage.removeItem('hwDiagDone'); } catch(e) {}
+        // Safety timeout: re-enable after 3 minutes if no response
+        if (hwDiagTimer) clearTimeout(hwDiagTimer);
+        hwDiagTimer = setTimeout(resetHWDiagUI, 180000);
       });
     }
   }
@@ -1758,7 +1568,10 @@
     // Restore motor diagnostics
     try {
       var md = localStorage.getItem('motorDiagResult');
-      if (md) showMotorDiag(JSON.parse(md));
+      if (md) {
+        var parsed = JSON.parse(md);
+        if (parsed.sample || parsed.titrate) showMotorDiag(parsed);
+      }
     } catch(e) {}
     // Restore HW diagnostics
     try {
@@ -1872,7 +1685,6 @@
     }
     initSchedule();
     initMotorDiag();
-    initMotorCharts();
     initHWDiag();
     restoreDiagResults();
     initOTAUpload();

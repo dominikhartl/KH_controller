@@ -25,9 +25,6 @@
       <span id="ind-probe" class="si" title="Probe Health">
         <svg viewBox="0 0 12 24" width="8" height="16"><rect x="3" y="0" width="6" height="14" rx="3" fill="currentColor"/><rect x="5" y="14" width="2" height="10" fill="currentColor"/></svg>
       </span>
-      <span id="ind-tube" class="si" title="Tube Health">
-        <svg viewBox="0 0 16 16" width="13" height="13"><path d="M7 1h2v2.1a5 5 0 011.7.7l1.5-1.5 1.4 1.4-1.5 1.5a5 5 0 01.7 1.7H15v2h-2.1a5 5 0 01-.7 1.7l1.5 1.5-1.4 1.4-1.5-1.5a5 5 0 01-1.7.7V15H7v-2.1a5 5 0 01-1.7-.7l-1.5 1.5-1.4-1.4 1.5-1.5A5 5 0 013.1 9H1V7h2.1a5 5 0 01.7-1.7L2.3 3.8l1.4-1.4 1.5 1.5A5 5 0 017 3.1V1z" fill="none" stroke="currentColor" stroke-width="1.2"/><circle cx="8" cy="8" r="2" fill="currentColor"/></svg>
-      </span>
     </div>
   </header>
 
@@ -322,40 +319,8 @@
         <button class="cmd-btn" data-cmd="ds" id="btn-motor-diag-sample">Sample Pump</button>
         <button class="cmd-btn" data-cmd="dt" id="btn-motor-diag-titrate">Titration Pump</button>
       </div>
-      <div id="motor-diag-progress" style="display:none;margin-top:0.5em;font-size:0.9em;color:var(--text-secondary)">Running diagnostics...</div>
-      <div id="motor-diag-results" style="display:none;margin-top:0.5em">
-        <table class="diag-table" style="width:100%;font-size:0.85em;border-collapse:collapse">
-          <thead>
-            <tr><th></th><th>StealthChop</th><th>SpreadCycle</th><th>Recommended</th></tr>
-          </thead>
-          <tbody>
-            <tr id="diag-row-sample">
-              <td><b>Sample Pump</b></td>
-              <td id="diag-sample-sc"></td>
-              <td id="diag-sample-sp"></td>
-              <td id="diag-sample-rec"></td>
-            </tr>
-            <tr id="diag-row-titrate">
-              <td><b>Titration Pump</b></td>
-              <td id="diag-titrate-sc"></td>
-              <td id="diag-titrate-sp"></td>
-              <td id="diag-titrate-rec"></td>
-            </tr>
-          </tbody>
-        </table>
-        <div id="diag-stall-result" style="margin-top:0.5em;font-size:0.85em;font-weight:500"></div>
-        <div id="diag-sg-profile" style="display:none;margin-top:0.5em">
-          <div style="font-size:0.85em;font-weight:500;margin-bottom:0.3em">SG Profile (30 rev at operational speed)</div>
-          <div style="display:flex;gap:0.5em;flex-wrap:wrap">
-            <div style="flex:1;min-width:200px;height:120px"><canvas id="sg-profile-sample"></canvas></div>
-            <div style="flex:1;min-width:200px;height:120px"><canvas id="sg-profile-titrate"></canvas></div>
-          </div>
-          <div id="sg-profile-stats" style="font-size:0.8em;color:var(--text-secondary);margin-top:0.3em"></div>
-        </div>
-        <div style="margin-top:0.5em">
-          <button class="cmd-btn" id="btn-apply-diag">Apply Recommended Settings</button>
-        </div>
-      </div>
+      <div id="motor-diag-progress" style="display:none;margin-top:0.5em;font-size:0.9em;color:var(--text-secondary)"></div>
+      <div id="motor-diag-results" style="display:none;margin-top:0.5em;padding:8px;background:var(--card-elevated);border-radius:6px;font-size:0.85em"></div>
 
       <h3 class="cal-heading">Hardware Diagnostics</h3>
       <p style="font-size:0.85em;color:var(--text-secondary);margin:0 0 0.5em">ADC noise, I2C, temperature, motors, GPIO, probe. ~90s runtime.</p>
@@ -410,32 +375,6 @@
       </div>
       <div class="probe-chart-container">
         <canvas id="chart-noise"></canvas>
-      </div>
-
-      <h3 class="cal-heading">Tube Health</h3>
-      <div class="probe-grid">
-        <div class="probe-item">
-          <span class="probe-label">Status</span>
-          <span class="probe-value" id="tube-health-status"><span class="health-dot"></span>--</span>
-        </div>
-        <div class="probe-item">
-          <span class="probe-label">Sample Pump</span>
-          <span class="probe-value" id="tube-health-sample">--</span>
-        </div>
-        <div class="probe-item">
-          <span class="probe-label">Titration Pump</span>
-          <span class="probe-value" id="tube-health-titrate">--</span>
-        </div>
-        <div class="probe-item">
-          <span class="probe-label">Baseline</span>
-          <span class="probe-value" id="tube-baseline-info">--</span>
-        </div>
-      </div>
-      <div class="probe-chart-container">
-        <canvas id="chart-sg-sample"></canvas>
-      </div>
-      <div class="probe-chart-container">
-        <canvas id="chart-sg-titrate"></canvas>
       </div>
 
       <h3 class="cal-heading">System Info</h3>
@@ -519,7 +458,7 @@
   </section>
 
 
-  <script src="chart.min.js?v=2"></script>
-  <script src="app.js?v=43"></script>
+  <script src="chart.min.js?v=3"></script>
+  <script src="app.js?v=44"></script>
 </body>
 </html>

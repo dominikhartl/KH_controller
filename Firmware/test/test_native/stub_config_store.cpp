@@ -140,16 +140,8 @@ void ConfigStore::setVoltage7PHExt(float) {}
 void ConfigStore::setVoltage10PHExt(float) {}
 bool ConfigStore::getSampleSpreadCycle() { return false; }
 void ConfigStore::setSampleSpreadCycle(bool) {}
-int ConfigStore::getSampleStallSG() { return 30; }
-void ConfigStore::setSampleStallSG(int) {}
 bool ConfigStore::getTitrateSpreadCycle() { return false; }
 void ConfigStore::setTitrateSpreadCycle(bool) {}
-int ConfigStore::getTitrateStallSG() { return 100; }
-void ConfigStore::setTitrateStallSG(int) {}
-int ConfigStore::getSampleSGBaseline() { return 0; }
-void ConfigStore::setSampleSGBaseline(int) {}
-int ConfigStore::getTitrateSGBaseline() { return 0; }
-void ConfigStore::setTitrateSGBaseline(int) {}
 float ConfigStore::getSampleMaxRPM() { return 0; }
 void ConfigStore::setSampleMaxRPM(float) {}
 float ConfigStore::getTitrateMaxRPM() { return 0; }

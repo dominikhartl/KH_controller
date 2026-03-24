@@ -2,8 +2,6 @@
 #include <esp_task_wdt.h>
 #include <FastAccelStepper.h>
 #include "motors.h"
-#include "tmc_driver.h"
-#include "config_store.h"
 #include "mqtt_manager.h"
 #include <pins.h>
 #include <config.h>
@@ -35,44 +33,6 @@ static inline uint32_t rpmToHz(float rpm) {
   return (uint32_t)(rpm * STEPS_PER_REVOLUTION / 60.0f + 0.5f);
 }
 
-// --- Stall detection constants ---
-static const int   SG_BUFFER_SIZE        = 8;     // Rolling SG history for median
-static const float SG_STALL_MEDIAN_RATIO = 0.3f;  // Stall if SG < 30% of median
-static const int   SG_STALL_FLOOR        = 10;    // Skip stall check if median < this
-static const int   SG_CONFIRM_STEPS      = 64;    // Steps to run before re-checking after trigger
-static const int   SG_CONFIRM_COUNT      = 2;     // Consecutive fails needed to declare stall
-
-// Rolling median helper for cyclical-load-aware stall detection
-struct SGBuffer {
-  uint16_t buf[SG_BUFFER_SIZE];
-  int count;
-  int idx;
-
-  void reset() { count = 0; idx = 0; }
-
-  void add(uint16_t sg) {
-    buf[idx] = sg;
-    idx = (idx + 1) % SG_BUFFER_SIZE;
-    if (count < SG_BUFFER_SIZE) count++;
-  }
-
-  uint16_t median() const {
-    if (count == 0) return 0;
-    // Copy and sort (small fixed-size array — insertion sort is fine)
-    uint16_t tmp[SG_BUFFER_SIZE];
-    for (int i = 0; i < count; i++) tmp[i] = buf[i];
-    for (int i = 1; i < count; i++) {
-      uint16_t key = tmp[i];
-      int j = i - 1;
-      while (j >= 0 && tmp[j] > key) { tmp[j + 1] = tmp[j]; j--; }
-      tmp[j + 1] = key;
-    }
-    return tmp[count / 2];
-  }
-
-  bool settled() const { return count >= 4; }
-};
-
 static MotorYieldCallback yieldCb = nullptr;
 static MotorProgressCallback progressCb = nullptr;
 static MotorAbortCallback abortCb = nullptr;
@@ -84,14 +44,6 @@ static int washBaseVol = 0;  // volume completed before current phase
 // Multi-wash context: spans progress across sequential washSampleVol() calls
 static int multiWashTotal = 0;   // total number of washes in sequence (0 = disabled)
 static int multiWashIndex = 0;   // current wash index (0-based)
-
-// Per-operation SG stats for tube wear tracking
-// Note: written by loopTask during motor ops, read by AsyncTCP for diagnostics display.
-// No synchronization — acceptable for non-critical diagnostic data.
-static uint32_t sampleSGSum = 0, sampleSGCount = 0;
-static uint16_t sampleSGMin = 65535;
-static uint32_t titrateSGSum = 0, titrateSGCount = 0;
-static uint16_t titrateSGMin = 65535;
 
 void setMotorYieldCallback(MotorYieldCallback cb) {
   yieldCb = cb;
@@ -113,29 +65,6 @@ void setMultiWashContext(int numWashes) {
 void clearMultiWashContext() {
   multiWashTotal = 0;
   multiWashIndex = 0;
-}
-
-// Precise step helper — used by titration motor where volume accuracy matters
-static inline void stepPulse(uint8_t pin, float halfPeriodUs) {
-  unsigned int hp = (unsigned int)(halfPeriodUs + 0.5f);
-  digitalWrite(pin, HIGH);
-  delayMicroseconds(hp);
-  digitalWrite(pin, LOW);
-  delayMicroseconds(hp);
-}
-
-// Spread-spectrum step helper — ±10% jitter to smear stepping tone into broadband noise.
-// Used only by sample pump where audible noise matters more than sub-step timing precision.
-// Jitter is compensated per full step (+d HIGH, -d LOW) so average period is unchanged.
-static inline void stepPulseJittered(uint8_t pin, float halfPeriodUs) {
-  int jitter = (int)(halfPeriodUs * 0.1f);
-  int d = (jitter > 0) ? random(-jitter, jitter + 1) : 0;
-  unsigned int hpHigh = (unsigned int)(halfPeriodUs + 0.5f) + d;
-  unsigned int hpLow  = (unsigned int)(halfPeriodUs + 0.5f) - d;
-  digitalWrite(pin, HIGH);
-  delayMicroseconds(hpHigh);
-  digitalWrite(pin, LOW);
-  delayMicroseconds(hpLow);
 }
 
 // Track last direction for backlash compensation
@@ -195,8 +124,6 @@ static bool runSamplePump(int volume, bool forward, float speedRpm) {
       forward ? "takeSample" : "removeSample", volume);
     setCrashHint(hint); }
   mqttManager.suppressReconnect(true);  // Prevent blocking TCP connects during motor ops
-  clearStallFlag();
-  sampleSGSum = 0; sampleSGCount = 0; sampleSGMin = 65535;
 
   digitalWrite(EN_PIN1, LOW);
   delay(MOTOR_ENABLE_DELAY_MS);
@@ -264,13 +191,6 @@ static bool runSamplePump(int volume, bool forward, float speedRpm) {
     publishMessage(buf);
   }
 
-  // Collect SG after operation
-  if (isTMCDetected()) {
-    uint16_t sg = getSampleSG();
-    sampleSGSum += sg; sampleSGCount++;
-    if (sg < sampleSGMin) sampleSGMin = sg;
-  }
-
   delay(MOTOR_HOLD_MS);
   digitalWrite(EN_PIN1, HIGH);
   mqttManager.suppressReconnect(false);
@@ -318,9 +238,6 @@ bool washSampleVol(int removeRevs, int fillRevs, float speedRpm) {
 bool titrate(int volume, float speedRpm, bool noAccel, uint32_t accelOverride) {
   { char hint[48]; snprintf(hint, sizeof(hint), "titrate %d units", volume);
     setCrashHint(hint); }
-  clearStallFlag();
-  titrateSGSum = 0; titrateSGCount = 0; titrateSGMin = 65535;
-
   // Only add enable settle delay if motor wasn't already on
   if (digitalRead(EN_PIN2) != LOW) {
     digitalWrite(EN_PIN2, LOW);
@@ -349,351 +266,63 @@ bool titrate(int volume, float speedRpm, bool noAccel, uint32_t accelOverride) {
     return false;
   }
 
-  // Collect SG after titration
-  if (isTMCDetected()) {
-    uint16_t sg = getTitrateSG();
-    titrateSGSum += sg; titrateSGCount++;
-    if (sg < titrateSGMin) titrateSGMin = sg;
-  }
-
   // No hold/disable here — caller manages EN_PIN2 to avoid
   // enable/disable overhead on every small titration step
   return true;
 }
 
-// Diagnostic: run sample pump for N revolutions, collect SG every revolution
-int diagStepSample(int revolutions, float rpm, SGSample* samples, int maxSamples) {
-  if (!isTMCDetected()) return 0;
-  float halfPeriodUs = rpmToHalfPeriodUs(rpm);
-  int totalSteps = revolutions * STEPS_PER_REVOLUTION;
-  int nSamples = 0;
+// Motor ramp test: run motor at increasing speeds to check for mechanical issues.
+// User listens for abnormal sounds and can abort via the UI.
+bool motorRampTest(bool isSample, float startRPM, float maxRPM, float stepRPM,
+                   int revsPerStep, RampProgressCallback rpmCb, float* stoppedAtRPM) {
+  uint8_t enPin = isSample ? EN_PIN1 : EN_PIN2;
+  FastAccelStepper* stepper = isSample ? sampleStepper : titrateStepper;
 
-  digitalWrite(EN_PIN1, LOW);
+  *stoppedAtRPM = 0;
+
+  mqttManager.suppressReconnect(true);
+  digitalWrite(enPin, LOW);
   delay(MOTOR_ENABLE_DELAY_MS);
-  digitalWrite(DIR_PIN1, LOW);  // removal direction
-
-  for (int i = 0; i < totalSteps; i++) {
-    stepPulseJittered(STEP_PIN1, halfPeriodUs);
-    if ((i + 1) % STEPS_PER_REVOLUTION == 0) {
-      esp_task_wdt_reset();
-      if (nSamples < maxSamples) {
-        samples[nSamples].sg = getSampleSG();
-        samples[nSamples].diag = digitalRead(DIAG_SAMPLE);
-        nSamples++;
-      }
-    }
-  }
-
-  delay(MOTOR_HOLD_MS);
-  digitalWrite(EN_PIN1, HIGH);
-  return nSamples;
-}
-
-// Diagnostic: run titration pump for N revolutions, collect SG every revolution
-int diagStepTitrate(int revolutions, float rpm, SGSample* samples, int maxSamples) {
-  if (!isTMCDetected()) return 0;
-  float halfPeriodUs = rpmToHalfPeriodUs(rpm);
-  int totalSteps = revolutions * STEPS_PER_REVOLUTION;
-  int nSamples = 0;
-
-  digitalWrite(EN_PIN2, LOW);
-  delay(MOTOR_ENABLE_DELAY_MS);
-  digitalWrite(DIR_PIN2, LOW);
-
-  for (int i = 0; i < totalSteps; i++) {
-    stepPulse(STEP_PIN2, halfPeriodUs);
-    if ((i + 1) % STEPS_PER_REVOLUTION == 0) {
-      esp_task_wdt_reset();
-      if (nSamples < maxSamples) {
-        samples[nSamples].sg = getTitrateSG();
-        samples[nSamples].diag = digitalRead(DIAG_TITRATE);
-        nSamples++;
-      }
-    }
-  }
-
-  delay(MOTOR_HOLD_MS);
-  digitalWrite(EN_PIN2, HIGH);
-  return nSamples;
-}
-
-// Helper: compute median and IQR from an array of SG values
-static void computeMedianIQR(uint16_t* vals, int n, uint16_t* median, uint16_t* iqr) {
-  if (n == 0) { *median = 0; *iqr = 0; return; }
-  // Insertion sort (small arrays)
-  for (int i = 1; i < n; i++) {
-    uint16_t key = vals[i];
-    int j = i - 1;
-    while (j >= 0 && vals[j] > key) { vals[j + 1] = vals[j]; j--; }
-    vals[j + 1] = key;
-  }
-  *median = vals[n / 2];
-  *iqr = (n >= 4) ? (vals[n * 3 / 4] - vals[n / 4]) : vals[n - 1] - vals[0];
-}
-
-static const int RAMP_SGTHRS_BACKSTOP = 0;  // Disabled — rely on software stall criteria during ramp
-
-// Stall speed ramp: ramp sample pump from startRPM to maxRPM in stepRPM increments
-// Returns RPM at which stall detected, or 0.0 if no stall within range
-float diagStallRamp(float startRPM, float maxRPM, float stepRPM, int revsPerStep,
-                    SGSample* samples, int maxSamples, int* totalSamples,
-                    bool dirForward, StallRampCallback rpmCb) {
-  if (!isTMCDetected()) { *totalSamples = 0; return 0.0f; }
-
-  int nSamples = 0;
-
-  // Set conservative SGTHRS as hardware backstop (DIAG fires at SG < 2*BACKSTOP = 10)
-  setSampleSGTHRS(RAMP_SGTHRS_BACKSTOP);
-  clearStallFlag();
-  digitalWrite(EN_PIN1, LOW);
-  delay(MOTOR_ENABLE_DELAY_MS);
-  digitalWrite(DIR_PIN1, dirForward ? HIGH : LOW);
-  delay(100);
-
-  // Warm-up: run 5 revolutions at start speed so StallGuard stabilizes in new direction
-  {
-    float warmupUs = rpmToHalfPeriodUs(startRPM);
-    for (int rev = 0; rev < 5; rev++) {
-      for (int step = 0; step < STEPS_PER_REVOLUTION; step++) {
-        stepPulseJittered(STEP_PIN1, warmupUs);
-      }
-      esp_task_wdt_reset();
-    }
-    delay(50);
-  }
-
-  // Per-step median tracking for stall detection
-  int stepCount = 0;
-  float medianAvg = 0;     // Running average of per-step medians
-  int medianAvgCount = 0;
-  int stallConfirmCount = 0;
 
   for (float rpm = startRPM; rpm <= maxRPM; rpm += stepRPM) {
     if (rpmCb) rpmCb(rpm);
-    float halfPeriodUs = rpmToHalfPeriodUs(rpm);
 
-    // Collect per-revolution SG values for this speed step
-    uint16_t stepSGs[16];  // max revsPerStep
-    int stepSGCount = 0;
+    stepper->setSpeedInHz(rpmToHz(rpm));
+    stepper->setAcceleration(MOTOR_ACCEL_STEPS_S2);
+    int32_t startPos = stepper->getCurrentPosition();
+    int totalSteps = revsPerStep * STEPS_PER_REVOLUTION;
+    stepper->move(isSample ? -totalSteps : -totalSteps);  // removal direction
 
-    for (int rev = 0; rev < revsPerStep; rev++) {
-      for (int step = 0; step < STEPS_PER_REVOLUTION; step++) {
-        stepPulseJittered(STEP_PIN1, halfPeriodUs);
-      }
+    // Wait for this step to complete
+    unsigned long timeout = (unsigned long)((float)revsPerStep / rpm * 60000.0f * 3.0f) + 5000UL;
+    unsigned long startTime = millis();
+    while (stepper->isRunning()) {
       esp_task_wdt_reset();
-
-      if (nSamples < maxSamples) {
-        uint16_t sg = getSampleSG();
-        samples[nSamples].sg = sg;
-        samples[nSamples].diag = false;
-        Serial.printf("SampleRamp: %.0f RPM  SG=%d  medAvg=%.0f\n",
-                       rpm, sg, medianAvg);
-        nSamples++;
-        if (stepSGCount < 16) stepSGs[stepSGCount++] = sg;
+      if (yieldCb) yieldCb();
+      if (abortCb && abortCb()) {
+        stepper->forceStopAndNewPosition(stepper->getCurrentPosition());
+        *stoppedAtRPM = rpm;
+        delay(MOTOR_HOLD_MS);
+        digitalWrite(enPin, HIGH);
+        mqttManager.suppressReconnect(false);
+        return false;
       }
+      if (millis() - startTime > timeout) {
+        stepper->forceStopAndNewPosition(stepper->getCurrentPosition());
+        *stoppedAtRPM = rpm;
+        delay(MOTOR_HOLD_MS);
+        digitalWrite(enPin, HIGH);
+        mqttManager.suppressReconnect(false);
+        return false;
+      }
+      delay(50);
     }
 
-    // Log once per speed step via WebSocket
-    {
-      char buf[80];
-      snprintf(buf, sizeof(buf), "S %.0f RPM SG=%d..%d medAvg=%.0f",
-               rpm, stepSGCount > 0 ? stepSGs[0] : 0,
-               stepSGCount > 0 ? stepSGs[stepSGCount - 1] : 0, medianAvg);
-      publishMessage(buf);
-    }
-
-    // Compute per-step stats
-    uint16_t stepMedian = 0, stepIQR = 0;
-    computeMedianIQR(stepSGs, stepSGCount, &stepMedian, &stepIQR);
-
-    // Stall detection: track peak median and look for sustained SG drop.
-    // In StealthChop, stalled motors don't go to SG=0 — they drop to a floor (~158)
-    // and oscillate wildly. Use step MIN (not median) to catch intermittent stalls
-    // where motor skips steps but partially recovers between revolutions.
-    uint16_t stepMin = stepSGCount > 0 ? stepSGs[0] : 0;  // sorted by computeMedianIQR
-
-    if (stepCount >= 6) {
-      bool stallStep = false;
-      const char* reason = "";
-
-      // Step min < 80% of running average — catches both full and intermittent stalls.
-      // 3 consecutive steps required prevents false triggers from sporadic 158 glitches.
-      if (medianAvg > 50 && stepMin < (uint16_t)(medianAvg * 0.80f)) {
-        stallStep = true; reason = "SG drop";
-      }
-
-      if (stallStep) {
-        stallConfirmCount++;
-        // Require 5 consecutive bad steps — transient dips (peristaltic roller variation)
-        // recover within 3-4 steps, real stalls persist indefinitely
-        if (stallConfirmCount >= 5) {
-          Serial.printf("SampleRamp: STALL at %.0f RPM  min=%d median=%d IQR=%d (%s)\n",
-                         rpm, stepMin, stepMedian, stepIQR, reason);
-          { char buf[96];
-            snprintf(buf, sizeof(buf), "Stall at %.0f RPM: %s (min=%d median=%d peakAvg=%.0f)",
-                     rpm, reason, stepMin, stepMedian, medianAvg);
-            publishMessage(buf);
-          }
-          *totalSamples = nSamples;
-          delay(MOTOR_HOLD_MS);
-          digitalWrite(EN_PIN1, HIGH);
-          enableSampleStallGuard();
-          return rpm;
-        }
-      } else {
-        stallConfirmCount = 0;
-      }
-
-      // Update running average — only when SG is healthy (not during stall candidate steps)
-      if (!stallStep) {
-        if (medianAvgCount == 0) {
-          medianAvg = stepMedian;
-        } else {
-          medianAvg = medianAvg * 0.85f + stepMedian * 0.15f;
-        }
-        medianAvgCount++;
-      }
-    } else if (stepCount == 5) {
-      // Initialize median average from the settling steps
-      medianAvg = stepMedian;
-      medianAvgCount = 1;
-    }
-
-    stepCount++;
+    *stoppedAtRPM = rpm;
   }
 
-  *totalSamples = nSamples;
   delay(MOTOR_HOLD_MS);
-  digitalWrite(EN_PIN1, HIGH);
-  enableSampleStallGuard();  // restore for normal operation
-  return 0.0f;
-}
-
-float diagStallRampTitrate(float startRPM, float maxRPM, float stepRPM, int revsPerStep,
-                    SGSample* samples, int maxSamples, int* totalSamples,
-                    bool dirForward, StallRampCallback rpmCb) {
-  if (!isTMCDetected()) { *totalSamples = 0; return 0.0f; }
-
-  int nSamples = 0;
-
-  // Set conservative SGTHRS as hardware backstop
-  setTitrateSGTHRS(RAMP_SGTHRS_BACKSTOP);
-  clearStallFlag();
-  digitalWrite(EN_PIN2, LOW);
-  delay(MOTOR_ENABLE_DELAY_MS);
-  digitalWrite(DIR_PIN2, dirForward ? LOW : HIGH);
-  delay(100);
-
-  // Warm-up: run 5 revolutions at start speed so StallGuard stabilizes
-  {
-    float warmupUs = rpmToHalfPeriodUs(startRPM);
-    for (int rev = 0; rev < 5; rev++) {
-      for (int step = 0; step < STEPS_PER_REVOLUTION; step++) {
-        stepPulse(STEP_PIN2, warmupUs);
-      }
-      esp_task_wdt_reset();
-    }
-    delay(50);
-  }
-
-  // Per-step median tracking for stall detection
-  int stepCount = 0;
-  float medianAvg = 0;
-  int medianAvgCount = 0;
-  int stallConfirmCount = 0;
-
-  for (float rpm = startRPM; rpm <= maxRPM; rpm += stepRPM) {
-    if (rpmCb) rpmCb(rpm);
-    float halfPeriodUs = rpmToHalfPeriodUs(rpm);
-
-    uint16_t stepSGs[16];
-    int stepSGCount = 0;
-
-    for (int rev = 0; rev < revsPerStep; rev++) {
-      for (int step = 0; step < STEPS_PER_REVOLUTION; step++) {
-        stepPulse(STEP_PIN2, halfPeriodUs);
-      }
-      esp_task_wdt_reset();
-      if (nSamples < maxSamples) {
-        uint16_t sg = getTitrateSG();
-        samples[nSamples].sg = sg;
-        samples[nSamples].diag = false;
-        Serial.printf("TitrateRamp: %.0f RPM  SG=%d  medAvg=%.0f\n",
-                       rpm, sg, medianAvg);
-        nSamples++;
-        if (stepSGCount < 16) stepSGs[stepSGCount++] = sg;
-      }
-    }
-
-    {
-      char buf[80];
-      snprintf(buf, sizeof(buf), "T %.0f RPM SG=%d..%d medAvg=%.0f",
-               rpm, stepSGCount > 0 ? stepSGs[0] : 0,
-               stepSGCount > 0 ? stepSGs[stepSGCount - 1] : 0, medianAvg);
-      publishMessage(buf);
-    }
-
-    uint16_t stepMedian = 0, stepIQR = 0;
-    computeMedianIQR(stepSGs, stepSGCount, &stepMedian, &stepIQR);
-    uint16_t stepMin = stepSGCount > 0 ? stepSGs[0] : 0;  // sorted by computeMedianIQR
-
-    if (stepCount >= 6) {
-      bool stallStep = false;
-      const char* reason = "";
-
-      if (medianAvg > 50 && stepMin < (uint16_t)(medianAvg * 0.80f)) {
-        stallStep = true; reason = "SG drop";
-      }
-
-      if (stallStep) {
-        stallConfirmCount++;
-        if (stallConfirmCount >= 5) {
-          Serial.printf("TitrateRamp: STALL at %.0f RPM  min=%d median=%d IQR=%d (%s)\n",
-                         rpm, stepMin, stepMedian, stepIQR, reason);
-          { char buf[96];
-            snprintf(buf, sizeof(buf), "Stall at %.0f RPM: %s (min=%d median=%d peakAvg=%.0f)",
-                     rpm, reason, stepMin, stepMedian, medianAvg);
-            publishMessage(buf);
-          }
-          *totalSamples = nSamples;
-          delay(MOTOR_HOLD_MS);
-          digitalWrite(EN_PIN2, HIGH);
-          enableTitrateStallGuard();
-          return rpm;
-        }
-      } else {
-        stallConfirmCount = 0;
-      }
-
-      if (!stallStep) {
-        if (medianAvgCount == 0) {
-          medianAvg = stepMedian;
-        } else {
-          medianAvg = medianAvg * 0.85f + stepMedian * 0.15f;
-        }
-        medianAvgCount++;
-      }
-    } else if (stepCount == 5) {
-      medianAvg = stepMedian;
-      medianAvgCount = 1;
-    }
-
-    stepCount++;
-  }
-
-  *totalSamples = nSamples;
-  delay(MOTOR_HOLD_MS);
-  digitalWrite(EN_PIN2, HIGH);
-  enableTitrateStallGuard();  // restore for normal operation
-  return 0.0f;
-}
-
-void getLastSampleSGStats(uint16_t* avg, uint16_t* min) {
-  *avg = sampleSGCount > 0 ? (uint16_t)(sampleSGSum / sampleSGCount) : 0;
-  *min = sampleSGCount > 0 ? sampleSGMin : 0;
-}
-
-void getLastTitrateSGStats(uint16_t* avg, uint16_t* min) {
-  *avg = titrateSGCount > 0 ? (uint16_t)(titrateSGSum / titrateSGCount) : 0;
-  *min = titrateSGCount > 0 ? titrateSGMin : 0;
+  digitalWrite(enPin, HIGH);
+  mqttManager.suppressReconnect(false);
+  return true;
 }
