@@ -21,8 +21,20 @@ void MQTTManager::begin() {
 
   // Load MQTT config from NVS
   configStore.getMqttServer(mqttServerBuf, sizeof(mqttServerBuf));
-  int mqttPort = configStore.getMqttPort();
-  client.setServer(mqttServerBuf, mqttPort);
+  serverPort = configStore.getMqttPort();
+
+  // Try to resolve hostname to IP now (works if WiFi already connected)
+  // This avoids mDNS dependency on reconnect — mDNS often fails after WiFi drops
+  IPAddress ip;
+  if (WiFi.hostByName(mqttServerBuf, ip) && ip != IPAddress(0, 0, 0, 0)) {
+    cachedServerIP = ip;
+    ipResolved = true;
+    client.setServer(cachedServerIP, serverPort);
+    Serial.printf("MQTT: resolved %s -> %s\n", mqttServerBuf, ip.toString().c_str());
+  } else {
+    client.setServer(mqttServerBuf, serverPort);
+  }
+
   client.setBufferSize(768);
   client.setSocketTimeout(2);  // 2s TCP timeout (default 15s can trigger watchdog)
 
@@ -91,6 +103,17 @@ void MQTTManager::loop() {
     wasConnected = true;
     lastHeartbeat = millis();
     motorReconnectFails = 0;
+
+    // Cache resolved IP so reconnects don't depend on mDNS (fails after WiFi drops)
+    if (!ipResolved) {
+      IPAddress remoteIP = espClient.remoteIP();
+      if (remoteIP != IPAddress(0, 0, 0, 0)) {
+        cachedServerIP = remoteIP;
+        ipResolved = true;
+        client.setServer(cachedServerIP, serverPort);
+        Serial.printf("MQTT: cached server IP %s\n", remoteIP.toString().c_str());
+      }
+    }
 
     // Publish online availability
     client.publish(topicAvailability, "online", true);

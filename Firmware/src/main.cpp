@@ -73,6 +73,7 @@ static void measurementYield() {
   mqttManager.loop();
   ArduinoOTA.handle();
   esp_task_wdt_reset();  // Feed again after potentially blocking network I/O
+  handlePendingWSClient();  // Process deferred WS connects during measurement
   static unsigned long lastBroadcast = 0;
   if (millis() - lastBroadcast >= 2000) {
     lastBroadcast = millis();
@@ -1641,7 +1642,7 @@ void setup() {
   // Initialize ADS1115 external ADC if configured (must be after configStore.begin())
   initExternalADC();
 
-  // Keep WiFi/MQTT/OTA alive during long motor operations (wash cycle takes ~16 min)
+  // Keep WiFi/MQTT/OTA/WebSocket alive during long motor operations (pump runs 10-30s each)
   setMotorYieldCallback([]() {
     // Rate-limit cleanupClients — runs every 50ms in motor loops, too aggressive
     static unsigned long lastCleanup = 0;
@@ -1652,6 +1653,13 @@ void setup() {
     wifiManager.loop();
     mqttManager.loop();
     ArduinoOTA.handle();
+    // Broadcast state every 2s to keep WebSocket clients alive (browser watchdog = 15s)
+    static unsigned long lastBroadcast = 0;
+    if (millis() - lastBroadcast >= 2000) {
+      lastBroadcast = millis();
+      handlePendingWSClient();
+      broadcastState();
+    }
   });
 
   // Keep UI responsive during pH stabilization waits (up to 4s per Gran step)

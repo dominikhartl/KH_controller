@@ -2,6 +2,7 @@
 #define MQTT_MANAGER_H
 
 #include <PubSubClient.h>
+#include <WiFi.h>
 #include "wifi_manager.h"
 
 typedef void (*MQTTDisconnectCallback)();
@@ -52,6 +53,9 @@ private:
 
   bool motorMode = false;
   uint8_t motorReconnectFails = 0;
+  IPAddress cachedServerIP;
+  uint16_t serverPort = 1883;
+  bool ipResolved = false;
   bool tryConnect();
 };
 
