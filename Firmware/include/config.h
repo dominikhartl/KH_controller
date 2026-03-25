@@ -149,7 +149,9 @@ static const float PROBE_NOISE_FAIR_MV = 10.0f;   // mV StdDev — below: fair, 
 static const int CALIBRATION_AGE_WARNING_DAYS = 30;
 
 // Heap monitoring
-static const uint32_t HEAP_WARNING_THRESHOLD = 40000;  // Warn on serial when free heap drops below 40KB
+static const uint32_t HEAP_WARNING_THRESHOLD  = 40000;  // Warn on serial when free heap drops below 40KB
+static const uint32_t HEAP_CRITICAL_THRESHOLD = 20000;  // Skip heavy ops (history JSON) below 20KB
+static const uint32_t HEAP_RESTART_THRESHOLD  = 10000;  // Graceful restart if sustained below 10KB for 30s
 
 // Minimum valid Unix timestamp (Nov 2023) — used to detect NTP not yet synced
 static const uint32_t MIN_VALID_EPOCH = 1700000000;

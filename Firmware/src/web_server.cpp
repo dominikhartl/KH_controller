@@ -72,6 +72,19 @@ static std::atomic<uint32_t> pendingWSClientId{0};
 // Config changes from the web UI (Core 0) set this flag instead of calling broadcastState directly.
 static std::atomic<bool> stateDirty{false};
 
+// Deferred history requests: WebSocket handler (Core 0) enqueues parameters,
+// loop() on Core 1 does the actual file I/O and JSON serialization.
+// Ring buffer of 4 slots handles the typical connect burst (kh, ph, gran, precision).
+struct PendingHistoryReq {
+  uint32_t clientId;
+  char sensor[12];
+  int days;
+};
+static const int HIST_QUEUE_SIZE = 4;
+static PendingHistoryReq histQueue[HIST_QUEUE_SIZE];
+static std::atomic<int> histQueueHead{0};  // next write position (Core 0)
+static std::atomic<int> histQueueTail{0};  // next read position (Core 1)
+
 // In-memory buffer for live titration pH data (survives page reload)
 // When full, downsamples by averaging pairs -> halves count, then continues
 static const uint16_t MES_BUF_MAX = 1500;
@@ -143,6 +156,7 @@ static void handleWebSocketMessage(AsyncWebSocketClient* client, void* arg, uint
 static void sendMesData(AsyncWebSocketClient* client);
 static void sendLogData(AsyncWebSocketClient* client);
 static void sendGranData(AsyncWebSocketClient* client);
+static void processHistoryRequest(const PendingHistoryReq& req);
 
 static void addLogEntry(char type, const char* text) {
   LogEntry& e = logBuffer[logHead];
@@ -266,6 +280,108 @@ void onWebSocketEvent(AsyncWebSocket* server, AsyncWebSocketClient* client,
   }
 }
 
+// Read one line from a File into a fixed buffer (no heap allocation).
+// Returns line length, or 0 if no data / empty line.
+static int readCSVLine(File& f, char* buf, int bufSize) {
+  int len = 0;
+  while (f.available() && len < bufSize - 1) {
+    char ch = f.read();
+    if (ch == '\n') break;
+    if (ch == '\r') continue;
+    buf[len++] = ch;
+  }
+  buf[len] = '\0';
+  return len;
+}
+
+// Process a deferred getHistory request on Core 1.
+// Uses sscanf for CSV parsing (zero heap allocation) instead of String::substring().
+static void processHistoryRequest(const PendingHistoryReq& req) {
+  if (ESP.getFreeHeap() < HEAP_CRITICAL_THRESHOLD) {
+    AsyncWebSocketClient* c = ws.client(req.clientId);
+    if (c && c->status() == WS_CONNECTED) {
+      c->text("{\"type\":\"error\",\"text\":\"Low memory — try again later\"}");
+    }
+    Serial.printf("WARNING: History request skipped, heap=%u\n", ESP.getFreeHeap());
+    return;
+  }
+
+  const char* sensor = req.sensor;
+  int days = req.days;
+  uint32_t clientId = req.clientId;
+
+  // Validate sensor name (alphanumeric only, prevents path traversal)
+  for (const char* p = sensor; *p; p++) {
+    if (!isalnum(*p)) return;
+  }
+
+  char filename[32];
+  snprintf(filename, sizeof(filename), "/history/%s.csv", sensor);
+  if (!LittleFS.exists(filename)) return;
+  File f = LittleFS.open(filename, "r");
+  if (!f) return;
+
+  uint32_t cutoff = (uint32_t)time(nullptr) - ((uint32_t)days * 86400UL);
+
+  AsyncWebSocketClient* client = ws.client(clientId);
+  if (!client || client->status() != WS_CONNECTED) {
+    f.close();
+    return;
+  }
+
+  JsonDocument resp;
+  resp["type"] = "history";
+  resp["sensor"] = sensor;
+  JsonArray dataArr = resp["data"].to<JsonArray>();
+
+  char line[256];
+
+  if (strcmp(sensor, "precision") == 0) {
+    while (f.available() && dataArr.size() < 100) {
+      if (readCSVLine(f, line, sizeof(line)) == 0) continue;
+      uint32_t ts; int n, elapsedSec;
+      float mean, sd, vmin, vmax;
+      if (sscanf(line, "%u,%d,%f,%f,%f,%f,%d", &ts, &n, &mean, &sd, &vmin, &vmax, &elapsedSec) != 7) continue;
+      JsonArray pt = dataArr.add<JsonArray>();
+      pt.add(ts); pt.add(n); pt.add(mean); pt.add(sd); pt.add(vmin); pt.add(vmax); pt.add(elapsedSec);
+    }
+  } else if (strcmp(sensor, "gran") == 0) {
+    while (f.available() && dataArr.size() < 150) {
+      if (readCSVLine(f, line, sizeof(line)) == 0) continue;
+      uint32_t ts;
+      float r2, eq, eph, conf = 0, khG = 0, khE = 0, noiseMv = 0, ci = 0;
+      float dropUL = 0, titRPM = 0;
+      int mth = 0, reversals = 0;
+      int parsed = sscanf(line, "%u,%f,%f,%f,%d,%f,%f,%f,%f,%d,%f,%f,%f",
+                          &ts, &r2, &eq, &eph, &mth, &conf, &khG, &khE,
+                          &noiseMv, &reversals, &dropUL, &titRPM, &ci);
+      if (parsed < 4) continue;
+      if (ts < cutoff) continue;
+      // JSON field order matches existing browser expectations
+      JsonArray pt = dataArr.add<JsonArray>();
+      pt.add(ts); pt.add(r2); pt.add(eq); pt.add(eph);
+      pt.add(mth); pt.add(khG); pt.add(khE);
+      pt.add(noiseMv); pt.add(reversals); pt.add(conf); pt.add(ci);
+    }
+  } else {
+    // KH/pH CSV: timestamp,value
+    while (f.available() && dataArr.size() < 150) {
+      if (readCSVLine(f, line, sizeof(line)) == 0) continue;
+      uint32_t ts; float val;
+      if (sscanf(line, "%u,%f", &ts, &val) != 2) continue;
+      if (ts < cutoff) continue;
+      JsonArray pt = dataArr.add<JsonArray>();
+      pt.add(ts); pt.add(val);
+    }
+  }
+  f.close();
+
+  // Serialize to static buffer — avoids heap-fragmenting String allocation
+  static char histBuf[12288];
+  size_t written = serializeJson(resp, histBuf, sizeof(histBuf));
+  if (written > 0) client->text(histBuf);
+}
+
 // Called from loop() on Core 1 only — sends initial state to newly connected WebSocket clients
 // and processes deferred broadcastState requests from config handlers.
 void handlePendingWSClient() {
@@ -281,6 +397,12 @@ void handlePendingWSClient() {
   }
   if (stateDirty.exchange(false, std::memory_order_acquire)) {
     broadcastState();
+  }
+  // Drain pending history request queue (up to HIST_QUEUE_SIZE per loop iteration)
+  while (histQueueTail.load(std::memory_order_acquire) != histQueueHead.load(std::memory_order_acquire)) {
+    int tail = histQueueTail.load(std::memory_order_relaxed);
+    processHistoryRequest(histQueue[tail]);
+    histQueueTail.store((tail + 1) % HIST_QUEUE_SIZE, std::memory_order_release);
   }
 }
 
@@ -321,7 +443,7 @@ static void handleWebSocketMessage(AsyncWebSocketClient* client, void* arg, uint
           if (valid) {
             configStore.setDeviceName(name);
             sendConfigResult(key, true);
-            broadcastMessage("Device name changed. Reboot to apply.");
+            addLogEntry('m', "Device name changed. Reboot to apply.");
             stateDirty.store(true, std::memory_order_release);
           } else {
             sendConfigResult(key, false);
@@ -336,7 +458,7 @@ static void handleWebSocketMessage(AsyncWebSocketClient* client, void* arg, uint
         if (tz && strlen(tz) >= 3 && strlen(tz) <= 45) {
           configStore.setTimezone(tz);
           sendConfigResult(key, true);
-          broadcastMessage("Timezone changed. Reboot to apply.");
+          addLogEntry('m', "Timezone changed. Reboot to apply.");
         } else {
           sendConfigResult(key, false);
         }
@@ -355,7 +477,8 @@ static void handleWebSocketMessage(AsyncWebSocketClient* client, void* arg, uint
         else if (strcmp(key, "mqtt_pass") == 0) strncpy(pass, val, sizeof(pass) - 1);
         configStore.setMqttConfig(srv, port, user, pass);
         sendConfigResult(key, true);
-        broadcastMessage("MQTT config changed. Reboot to apply.");
+        addLogEntry('m', "MQTT config changed. Reboot to apply.");
+        stateDirty.store(true, std::memory_order_release);
         return;
       }
       if (strcmp(key, "mqtt_port") == 0) {
@@ -367,7 +490,8 @@ static void handleWebSocketMessage(AsyncWebSocketClient* client, void* arg, uint
         configStore.getMqttPassword(pass, sizeof(pass));
         configStore.setMqttConfig(srv, port, user, pass);
         sendConfigResult(key, true);
-        broadcastMessage("MQTT config changed. Reboot to apply.");
+        addLogEntry('m', "MQTT config changed. Reboot to apply.");
+        stateDirty.store(true, std::memory_order_release);
         return;
       }
 
@@ -413,7 +537,8 @@ static void handleWebSocketMessage(AsyncWebSocketClient* client, void* arg, uint
         char buf[96];
         snprintf(buf, sizeof(buf), "Sample pump: %.2f revs/mL (%.1f -> %.1f mL @ %d revs)",
                  revsPerML, oldVol, value, calRevs);
-        publishMessage(buf);
+        addLogEntry('m', buf);
+        stateDirty.store(true, std::memory_order_release);
       }
       else if (strcmp(key, "prefill_ul") == 0) { configStore.setPrefillVolumeUL(value); }
       else if (strcmp(key, "max_acid_ml") == 0) { configStore.setMaxAcidML(value); }
@@ -434,12 +559,12 @@ static void handleWebSocketMessage(AsyncWebSocketClient* client, void* arg, uint
       }
       else if (strcmp(key, "ph_sensor") == 0) {
         configStore.setPhSensorType((uint8_t)(int)value);
-        publishMessage("pH sensor setting changed. Reboot to apply.");
+        addLogEntry('m', "pH sensor setting changed. Reboot to apply.");
       }
       else if (strcmp(key, "use_ads1115") == 0) {
         // Legacy: map boolean to sensor type for backward compatibility
         configStore.setPhSensorType((int)value == 1 ? PH_SENSOR_ADS1115 : PH_SENSOR_INTERNAL);
-        publishMessage("pH sensor setting changed. Reboot to apply.");
+        addLogEntry('m', "pH sensor setting changed. Reboot to apply.");
       }
       else if (strcmp(key, "sample_spreadcycle") == 0) {
         configStore.setSampleSpreadCycle((int)value == 1);
@@ -467,7 +592,8 @@ static void handleWebSocketMessage(AsyncWebSocketClient* client, void* arg, uint
         if (configStore.setIntervalHours(doc["intervalHours"].as<uint8_t>())) {
           scheduler.resetDailyFlags();
         } else {
-          broadcastMessage("Invalid interval hours value");
+          addLogEntry('m', "Invalid interval hours value");
+          stateDirty.store(true, std::memory_order_release);
         }
       }
       if (doc["anchorTime"].is<JsonVariant>()) {
@@ -489,166 +615,20 @@ static void handleWebSocketMessage(AsyncWebSocketClient* client, void* arg, uint
       publishAllConfigStates();
       stateDirty.store(true, std::memory_order_release);
     } else if (strcmp(type, "getHistory") == 0) {
+      // Defer to Core 1 — file I/O + JSON serialization too heavy for AsyncTCP stack
       const char* sensor = doc["sensor"];
-      if (!sensor) return;
-
-      char filename[32];
-      snprintf(filename, sizeof(filename), "/history/%s.csv", sensor);
-
-      if (!LittleFS.exists(filename)) return;
-
-      File f = LittleFS.open(filename, "r");
-      if (!f) return;
-
-      bool isGran = (strcmp(sensor, "gran") == 0);
+      if (!sensor || strlen(sensor) > 10) return;
       int days = doc["days"] | 7;
       if (days < 1) days = 1;
       if (days > 90) days = 90;
-      uint32_t cutoff = (uint32_t)time(nullptr) - ((uint32_t)days * 86400UL);
-
-      if (strcmp(sensor, "precision") == 0) {
-        // Precision CSV: timestamp,n,mean,sd,min,max,elapsedSec
-        JsonDocument resp;
-        resp["type"] = "history";
-        resp["sensor"] = "precision";
-        JsonArray dataArr = resp["data"].to<JsonArray>();
-
-        while (f.available() && dataArr.size() < 100) {
-          String line = f.readStringUntil('\n');
-          yield();
-          if (line.length() == 0) continue;
-          int c1 = line.indexOf(',');
-          if (c1 < 0) continue;
-          uint32_t ts = line.substring(0, c1).toInt();
-          int c2 = line.indexOf(',', c1 + 1);
-          int c3 = line.indexOf(',', c2 + 1);
-          int c4 = line.indexOf(',', c3 + 1);
-          int c5 = line.indexOf(',', c4 + 1);
-          int c6 = line.indexOf(',', c5 + 1);
-          if (c2 < 0 || c3 < 0 || c4 < 0 || c5 < 0 || c6 < 0) continue;
-          JsonArray pt = dataArr.add<JsonArray>();
-          pt.add(ts);
-          pt.add(line.substring(c1 + 1, c2).toInt());    // n
-          pt.add(line.substring(c2 + 1, c3).toFloat());  // mean
-          pt.add(line.substring(c3 + 1, c4).toFloat());  // sd
-          pt.add(line.substring(c4 + 1, c5).toFloat());  // min
-          pt.add(line.substring(c5 + 1, c6).toFloat());  // max
-          pt.add(line.substring(c6 + 1).toInt());         // elapsedSec
-        }
-        f.close();
-
-        String out;
-        serializeJson(resp, out);
-        if (out.length() > 0) ws.textAll(out);
-      } else if (isGran) {
-        // Gran CSV: timestamp,r2,eqML,endpointPH,method,confidence,khGran,khEndpoint
-        JsonDocument resp;
-        resp["type"] = "history";
-        resp["sensor"] = "gran";
-        JsonArray dataArr = resp["data"].to<JsonArray>();
-
-        while (f.available() && dataArr.size() < 150) {
-          String line = f.readStringUntil('\n');
-          yield();
-          if (line.length() == 0) continue;
-          int c1 = line.indexOf(',');
-          if (c1 < 0) continue;
-          uint32_t ts = line.substring(0, c1).toInt();
-          if (ts < cutoff) continue;
-          int c2 = line.indexOf(',', c1 + 1);
-          int c3 = line.indexOf(',', c2 + 1);
-          int c4 = line.indexOf(',', c3 + 1);
-          if (c2 < 0 || c3 < 0 || c4 < 0) continue;
-          float r2  = line.substring(c1 + 1, c2).toFloat();
-          float eq  = line.substring(c2 + 1, c3).toFloat();
-          float eph = line.substring(c3 + 1, c4).toFloat();
-          // Parse remaining fields: method, confidence, khGran, khEndpoint, noise, reversals, dropUL, titRPM, khCI
-          int c5 = line.indexOf(',', c4 + 1);
-          int mth = 0;
-          float conf = 0, khG = 0, khE = 0, noiseMv = 0, ci = 0;
-          int reversals = 0;
-          if (c5 > 0) {
-            mth = line.substring(c4 + 1, c5).toInt();
-            int c6 = line.indexOf(',', c5 + 1);
-            if (c6 > 0) {
-              conf = line.substring(c5 + 1, c6).toFloat();
-              int c7 = line.indexOf(',', c6 + 1);
-              if (c7 > 0) {
-                khG = line.substring(c6 + 1, c7).toFloat();
-                int c8 = line.indexOf(',', c7 + 1);
-                if (c8 > 0) {
-                  khE = line.substring(c7 + 1, c8).toFloat();
-                  int c9 = line.indexOf(',', c8 + 1);
-                  if (c9 > 0) {
-                    noiseMv = line.substring(c8 + 1, c9).toFloat();
-                    int c10 = line.indexOf(',', c9 + 1);
-                    if (c10 > 0) {
-                      reversals = line.substring(c9 + 1, c10).toInt();
-                      // Skip dropUL (c10), titrationRPM (c11), read khCI (c12)
-                      int c11 = line.indexOf(',', c10 + 1);
-                      if (c11 > 0) {
-                        int c12 = line.indexOf(',', c11 + 1);
-                        if (c12 > 0) {
-                          ci = line.substring(c12 + 1).toFloat();
-                        }
-                      }
-                    } else {
-                      reversals = line.substring(c9 + 1).toInt();
-                    }
-                  } else {
-                    noiseMv = line.substring(c8 + 1).toFloat();
-                  }
-                } else {
-                  khE = line.substring(c7 + 1).toFloat();
-                }
-              }
-            }
-          } else {
-            mth = line.substring(c4 + 1).toInt();
-          }
-          JsonArray pt = dataArr.add<JsonArray>();
-          pt.add(ts);
-          pt.add(r2);
-          pt.add(eq);
-          pt.add(eph);
-          pt.add(mth);
-          pt.add(khG);
-          pt.add(khE);
-          pt.add(noiseMv);
-          pt.add(reversals);
-          pt.add(conf);
-          pt.add(ci);
-        }
-        f.close();
-
-        String out;
-        serializeJson(resp, out);
-        if (out.length() > 0) ws.textAll(out);
-      } else {
-        // KH/pH CSV: timestamp,value
-        JsonDocument resp;
-        resp["type"] = "history";
-        resp["sensor"] = sensor;
-        JsonArray dataArr = resp["data"].to<JsonArray>();
-
-        while (f.available() && dataArr.size() < 150) {
-          String line = f.readStringUntil('\n');
-          yield();
-          if (line.length() == 0) continue;
-          int comma = line.indexOf(',');
-          if (comma < 0) continue;
-          uint32_t ts = line.substring(0, comma).toInt();
-          if (ts < cutoff) continue;
-          float val = line.substring(comma + 1).toFloat();
-          JsonArray point = dataArr.add<JsonArray>();
-          point.add(ts);
-          point.add(val);
-        }
-        f.close();
-
-        static char buf[6144];
-        size_t written = serializeJson(resp, buf, sizeof(buf));
-        if (written > 0) ws.textAll(buf);
+      int head = histQueueHead.load(std::memory_order_relaxed);
+      int next = (head + 1) % HIST_QUEUE_SIZE;
+      if (next != histQueueTail.load(std::memory_order_acquire)) {
+        histQueue[head].clientId = client->id();
+        strncpy(histQueue[head].sensor, sensor, sizeof(histQueue[head].sensor) - 1);
+        histQueue[head].sensor[sizeof(histQueue[head].sensor) - 1] = '\0';
+        histQueue[head].days = days;
+        histQueueHead.store(next, std::memory_order_release);
       }
     }
   }
@@ -1524,16 +1504,17 @@ void setupWebServer() {
       return nRows++;
     };
 
+    char csvLine[256];
+
     // Read kh.csv
     if (LittleFS.exists("/history/kh.csv")) {
       File f = LittleFS.open("/history/kh.csv", "r");
       while (f && f.available()) {
-        String line = f.readStringUntil('\n');
-        yield();
-        int c = line.indexOf(',');
-        if (c < 0) continue;
-        int idx = findOrAdd(line.substring(0, c).toInt());
-        if (idx >= 0) rows[idx].kh = line.substring(c + 1).toFloat();
+        if (readCSVLine(f, csvLine, sizeof(csvLine)) == 0) continue;
+        uint32_t ts; float val;
+        if (sscanf(csvLine, "%u,%f", &ts, &val) != 2) continue;
+        int idx = findOrAdd(ts);
+        if (idx >= 0) rows[idx].kh = val;
       }
       if (f) f.close();
     }
@@ -1542,12 +1523,11 @@ void setupWebServer() {
     if (LittleFS.exists("/history/ph.csv")) {
       File f = LittleFS.open("/history/ph.csv", "r");
       while (f && f.available()) {
-        String line = f.readStringUntil('\n');
-        yield();
-        int c = line.indexOf(',');
-        if (c < 0) continue;
-        int idx = findOrAdd(line.substring(0, c).toInt());
-        if (idx >= 0) rows[idx].ph = line.substring(c + 1).toFloat();
+        if (readCSVLine(f, csvLine, sizeof(csvLine)) == 0) continue;
+        uint32_t ts; float val;
+        if (sscanf(csvLine, "%u,%f", &ts, &val) != 2) continue;
+        int idx = findOrAdd(ts);
+        if (idx >= 0) rows[idx].ph = val;
       }
       if (f) f.close();
     }
@@ -1556,66 +1536,27 @@ void setupWebServer() {
     if (LittleFS.exists("/history/gran.csv")) {
       File f = LittleFS.open("/history/gran.csv", "r");
       while (f && f.available()) {
-        String line = f.readStringUntil('\n');
-        yield();
-        int c1 = line.indexOf(',');
-        if (c1 < 0) continue;
-        int c2 = line.indexOf(',', c1 + 1);
-        int c3 = line.indexOf(',', c2 + 1);
-        int c4 = line.indexOf(',', c3 + 1);
-        if (c2 < 0 || c3 < 0 || c4 < 0) continue;
-        int idx = findOrAdd(line.substring(0, c1).toInt());
+        if (readCSVLine(f, csvLine, sizeof(csvLine)) == 0) continue;
+        uint32_t ts;
+        float r2, eqML, epPH, conf = 0, khG = 0, khE = 0, noiseMv = 0, ci = 0;
+        float dropUL = 0, titRPM = 0;
+        int mth = 0, reversals = 0;
+        int parsed = sscanf(csvLine, "%u,%f,%f,%f,%d,%f,%f,%f,%f,%d,%f,%f,%f",
+                            &ts, &r2, &eqML, &epPH, &mth, &conf, &khG, &khE,
+                            &noiseMv, &reversals, &dropUL, &titRPM, &ci);
+        if (parsed < 4) continue;
+        int idx = findOrAdd(ts);
         if (idx >= 0) {
-          rows[idx].r2 = line.substring(c1 + 1, c2).toFloat();
-          rows[idx].eqML = line.substring(c2 + 1, c3).toFloat();
-          rows[idx].epPH = line.substring(c3 + 1, c4).toFloat();
-          // Parse method, confidence, khGran, khEndpoint (fields 5-8)
-          int c5 = line.indexOf(',', c4 + 1);
-          if (c5 > 0) {
-            rows[idx].method = line.substring(c4 + 1, c5).toInt();
-            int c6 = line.indexOf(',', c5 + 1);
-            if (c6 > 0) {
-              rows[idx].confidence = line.substring(c5 + 1, c6).toFloat();
-              int c7 = line.indexOf(',', c6 + 1);
-              if (c7 > 0) {
-                float g = line.substring(c6 + 1, c7).toFloat();
-                int c8 = line.indexOf(',', c7 + 1);
-                if (c8 > 0) {
-                  float e = line.substring(c7 + 1, c8).toFloat();
-                  if (g > 0) rows[idx].khGran = g;
-                  if (e > 0) rows[idx].khEndpoint = e;
-                  // Parse noise fields (probeNoiseMv, phReversals, dropUL, titRPM, khCI) if present
-                  int c9 = line.indexOf(',', c8 + 1);
-                  if (c9 > 0) {
-                    rows[idx].probeNoiseMv = line.substring(c8 + 1, c9).toFloat();
-                    int c10 = line.indexOf(',', c9 + 1);
-                    if (c10 > 0) {
-                      rows[idx].phReversals = line.substring(c9 + 1, c10).toInt();
-                      // Skip dropUL (c10), titRPM (c11), read khCI (c12)
-                      int c11 = line.indexOf(',', c10 + 1);
-                      if (c11 > 0) {
-                        int c12 = line.indexOf(',', c11 + 1);
-                        if (c12 > 0) {
-                          float ciVal = line.substring(c12 + 1).toFloat();
-                          if (ciVal > 0) rows[idx].khCI = ciVal;
-                        }
-                      }
-                    } else {
-                      rows[idx].phReversals = line.substring(c9 + 1).toInt();
-                    }
-                  }
-                } else {
-                  float e = line.substring(c7 + 1).toFloat();
-                  if (g > 0) rows[idx].khGran = g;
-                  if (e > 0) rows[idx].khEndpoint = e;
-                }
-              }
-            } else {
-              rows[idx].confidence = line.substring(c5 + 1).toFloat();
-            }
-          } else {
-            rows[idx].method = line.substring(c4 + 1).toInt();
-          }
+          rows[idx].r2 = r2;
+          rows[idx].eqML = eqML;
+          rows[idx].epPH = epPH;
+          if (parsed >= 5) rows[idx].method = mth;
+          if (parsed >= 6) rows[idx].confidence = conf;
+          if (parsed >= 7 && khG > 0) rows[idx].khGran = khG;
+          if (parsed >= 8 && khE > 0) rows[idx].khEndpoint = khE;
+          if (parsed >= 9) rows[idx].probeNoiseMv = noiseMv;
+          if (parsed >= 10) rows[idx].phReversals = reversals;
+          if (parsed >= 13 && ci > 0) rows[idx].khCI = ci;
           rows[idx].hasGran = true;
         }
       }
@@ -2137,22 +2078,24 @@ void setupAPWebServer() {
       request->send(200, "application/json", "[]");
       return;
     }
-    // Scan complete — build JSON response
-    String json = "[";
-    for (int i = 0; i < n; i++) {
-      if (i > 0) json += ",";
-      json += "{\"ssid\":\"";
+    // Scan complete — build JSON response (static buffer, no heap fragmentation)
+    static char json[1024];
+    int pos = 0;
+    json[pos++] = '[';
+    for (int i = 0; i < n && pos < (int)sizeof(json) - 120; i++) {
+      if (i > 0) json[pos++] = ',';
       // Escape quotes in SSID
-      String ssid = WiFi.SSID(i);
-      ssid.replace("\"", "\\\"");
-      json += ssid;
-      json += "\",\"rssi\":";
-      json += WiFi.RSSI(i);
-      json += ",\"open\":";
-      json += (WiFi.encryptionType(i) == WIFI_AUTH_OPEN) ? "true" : "false";
-      json += "}";
+      char ssid[33];
+      strncpy(ssid, WiFi.SSID(i).c_str(), sizeof(ssid) - 1);
+      ssid[sizeof(ssid) - 1] = '\0';
+      for (char* p = ssid; *p; p++) { if (*p == '"') *p = '\''; }
+      pos += snprintf(json + pos, sizeof(json) - pos,
+        "{\"ssid\":\"%s\",\"rssi\":%d,\"open\":%s}",
+        ssid, WiFi.RSSI(i),
+        WiFi.encryptionType(i) == WIFI_AUTH_OPEN ? "true" : "false");
     }
-    json += "]";
+    json[pos++] = ']';
+    json[pos] = '\0';
     WiFi.scanDelete();
     request->send(200, "application/json", json);
   });

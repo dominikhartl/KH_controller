@@ -1907,6 +1907,24 @@ void loop() {
     }
   }
 
+  // Proactive restart if heap stays critically low — better than an uncontrolled panic
+  // that could corrupt an in-progress flash write
+  {
+    static unsigned long heapCriticalSince = 0;
+    if (h < HEAP_RESTART_THRESHOLD) {
+      if (heapCriticalSince == 0) heapCriticalSince = millis();
+      else if (millis() - heapCriticalSince > 30000) {
+        Serial.printf("CRITICAL: Heap below %u for 30s (current: %u). Restarting.\n",
+                      HEAP_RESTART_THRESHOLD, h);
+        publishError("Heap critically low — restarting");
+        delay(100);
+        ESP.restart();
+      }
+    } else {
+      heapCriticalSince = 0;
+    }
+  }
+
   // Publish diagnostics every 60s
   if (mqttManager.isConnected() && millis() - lastDiagnosticsTime > 60000) {
     lastDiagnosticsTime = millis();
