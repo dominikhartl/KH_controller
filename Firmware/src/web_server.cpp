@@ -65,6 +65,19 @@ static void chunkedWrite(File& fw, const String& data) {
 AsyncWebServer server(80);
 AsyncWebSocket ws("/ws");
 
+// Safe WebSocket broadcast: skips clients with full queues to prevent
+// TASK_WDT (blocking on unresponsive client) and PANIC (accessing freed memory).
+// Core 0 may disconnect clients concurrently; canSend()/status() pre-checks
+// shrink the TOCTOU window vs. bare textAll() which has no per-client guards.
+void safeTextAll(const char* msg, size_t len) {
+  for (auto& c : ws.getClients()) {
+    if (c->status() == WS_CONNECTED && c->canSend()) {
+      c->text(msg, len);
+    }
+  }
+}
+void safeTextAll(const char* msg) { safeTextAll(msg, strlen(msg)); }
+
 // Thread-safety: WS_EVT_CONNECT fires on Core 0 (AsyncTCP task).
 // broadcastState/sendMesData/sendLogData/sendGranData must only run on Core 1 (loopTask)
 // to avoid racing on static buffers, NVS reads, and ws.textAll().
@@ -123,6 +136,21 @@ static float cachedKHIntercept = NAN;
 static uint32_t cachedKHSlopeDay0 = 0;
 static float cachedSlopeCI = NAN;
 static int cachedSlopeNDays = 0;
+
+// Cached NVS values for broadcastStateLight() — zero NVS reads during light broadcasts.
+// Written on Core 1 (loopTask) only; reads on Core 1 (broadcastStateLight). No cross-core sync needed.
+static float cachedKH = 0;
+static float cachedLastStartPH = 0;
+static float cachedHClVol = 0;
+
+void initBroadcastCache() {
+  cachedKH = configStore.getLastKH();
+  cachedLastStartPH = configStore.getLastStartPH();
+  cachedHClVol = configStore.getHClVolume();
+}
+void updateCachedKH(float kh) { cachedKH = kh; }
+void updateCachedLastStartPH(float sph) { cachedLastStartPH = sph; }
+void updateCachedHClVol(float vol) { cachedHClVol = vol; }
 
 // Last measurement result (for diagnostics download)
 static KHResult lastKHResult = {};
@@ -503,7 +531,7 @@ static void handleWebSocketMessage(AsyncWebSocketClient* client, void* arg, uint
       if (strcmp(key, "titration_vol") == 0 && value > 0) configStore.setTitrationVolume(value);
       else if (strcmp(key, "correction_factor") == 0 && value >= 0.5f && value <= 2.0f) configStore.setCorrectionFactor(value);
       else if (strcmp(key, "hcl_molarity") == 0 && value > 0 && value <= 1) configStore.setHClMolarity(value);
-      else if (strcmp(key, "hcl_volume") == 0 && value >= 0) configStore.setHClVolume(value);
+      else if (strcmp(key, "hcl_volume") == 0 && value >= 0) { configStore.setHClVolume(value); cachedHClVol = value; }
       else if (strcmp(key, "cal_drops") == 0 && (int)value > 0) configStore.setCalUnits((int)value);
       else if (strcmp(key, "fast_ph") == 0 && value >= 4.0f && value <= 7.0f) configStore.setFastTitrationPH(value);
       else if (strcmp(key, "endpoint_method") == 0) configStore.setEndpointMethod((uint8_t)value);
@@ -821,7 +849,7 @@ void executeCommand(const char* cmd) {
 void broadcastTitrationStart() {
   mesCount = 0;
   granBufCount = 0;
-  ws.textAll("{\"type\":\"mesStart\"}");
+  safeTextAll("{\"type\":\"mesStart\"}");
 }
 
 void broadcastState() {
@@ -986,22 +1014,23 @@ void broadcastState() {
   if (len >= sizeof(buf) - 1) {
     Serial.printf("WARNING: broadcastState JSON truncated! len=%u buf=%u\n", len, sizeof(buf));
   }
-  ws.textAll(buf);
+  safeTextAll(buf, len);
 }
 
 // Lightweight state broadcast for use during motor/measurement yield callbacks.
-// Sends only RAM-resident dynamic values — zero NVS reads, no JsonDocument, no heap alloc.
-// The JS updateState() handles missing fields gracefully (guarded by if(d.config), etc.).
+// Sends only RAM-resident values — zero NVS reads, no JsonDocument, no heap alloc.
+// KH/lastStartPh/hclVol are cached in RAM at boot and after each measurement.
 void broadcastStateLight() {
   if (ws.count() == 0) return;
 
-  static char buf[320];
+  static char buf[400];
   int n = snprintf(buf, sizeof(buf),
     "{\"type\":\"state\",\"ph\":%.3f,\"startPh\":%.2f,\"units\":%d,"
     "\"uptime\":%lu,\"freeHeap\":%lu,\"heapMin\":%lu,"
     "\"measuring\":%s,\"rssi\":%d,"
     "\"wifiOk\":%s,\"mqttOk\":%s,"
-    "\"stirrer\":%s,\"water_temp\":%.1f,\"temp_sensor\":%s",
+    "\"stirrer\":%s,\"water_temp\":%.1f,\"temp_sensor\":%s,"
+    "\"kh\":%.2f,\"lastStartPh\":%.2f,\"hclVol\":%.1f",
     pH, startPH, units.load(),
     millis() / 1000,
     (unsigned long)ESP.getFreeHeap(), (unsigned long)heapMin,
@@ -1011,12 +1040,13 @@ void broadcastStateLight() {
     mqttManager.isConnected() ? "true" : "false",
     isStirrerRunning() ? "true" : "false",
     getWaterTemperatureC(),
-    hasTemperatureSensor() ? "true" : "false");
+    hasTemperatureSensor() ? "true" : "false",
+    cachedKH, cachedLastStartPH, cachedHClVol);
   if (lastCrashInfo[0]) {
     n += snprintf(buf + n, sizeof(buf) - n, ",\"lastCrash\":\"%s\"", lastCrashInfo);
   }
   snprintf(buf + n, sizeof(buf) - n, "}");
-  ws.textAll(buf);
+  safeTextAll(buf);
 }
 
 void broadcastTitrationPH(float phVal, int unitsVal) {
@@ -1057,7 +1087,7 @@ void broadcastTitrationPH(float phVal, int unitsVal) {
 
   char buf[96];
   serializeJson(doc, buf, sizeof(buf));
-  ws.textAll(buf);
+  safeTextAll(buf);
 }
 
 void broadcastMessage(const char* msg) {
@@ -1068,7 +1098,7 @@ void broadcastMessage(const char* msg) {
   doc["text"] = msg;
   char buf[128];
   serializeJson(doc, buf, sizeof(buf));
-  ws.textAll(buf);
+  safeTextAll(buf);
 }
 
 void broadcastError(const char* msg) {
@@ -1080,24 +1110,24 @@ void broadcastError(const char* msg) {
   doc["text"] = msg;
   char buf[128];
   serializeJson(doc, buf, sizeof(buf));
-  ws.textAll(buf);
+  safeTextAll(buf);
 }
 
 void broadcastMotorDiag(const char* json) {
   if (ws.count() == 0) return;
-  ws.textAll(json);
+  safeTextAll(json);
 }
 
 void broadcastProgress(int percent) {
   if (ws.count() == 0) return;
   char buf[32];
   snprintf(buf, sizeof(buf), "{\"type\":\"progress\",\"pct\":%d}", percent);
-  ws.textAll(buf);
+  safeTextAll(buf);
 }
 
 void broadcastRawJson(const char* json) {
   if (ws.count() == 0) return;
-  ws.textAll(json);
+  safeTextAll(json);
 }
 
 void broadcastGranData(float r2, float eqML, bool usedGran,
@@ -1158,7 +1188,7 @@ void broadcastGranData(float r2, float eqML, bool usedGran,
 
   char buf[3072];
   size_t written = serializeJson(doc, buf, sizeof(buf));
-  if (written > 0) ws.textAll(buf);
+  if (written > 0) safeTextAll(buf, written);
 }
 
 void appendHistory(const char* sensor, float value, uint32_t ts) {

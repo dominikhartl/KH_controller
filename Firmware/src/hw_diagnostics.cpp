@@ -742,7 +742,7 @@ void runHardwareDiagnostics() {
   broadcastMessage("Hardware diagnostics complete");
 
   // Notify UI
-  ws.textAll("{\"type\":\"hwDiagDone\"}");
+  safeTextAll("{\"type\":\"hwDiagDone\"}");
 }
 
 bool isHWDiagRunning() { return diagRunning; }

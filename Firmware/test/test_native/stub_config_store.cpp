@@ -1,6 +1,7 @@
 #include "config_store.h"
 #include <cstring>
 #include <cstdio>
+#include <cmath>
 
 ConfigStore configStore;
 
@@ -179,3 +180,11 @@ void ConfigStore::setTitrationCalTimestamp(uint32_t) {}
 void ConfigStore::setTimezone(const char*) {}
 int ConfigStore::getSlopeHistory(SlopeEntry*, int) { return 0; }
 void ConfigStore::addSlopeEntry(uint32_t, float, float) {}
+int ConfigStore::getGranReadings() { return 10; }
+void ConfigStore::setGranReadings(int) {}
+float ConfigStore::getGranInterpSpacing() { return 16.0f; }
+void ConfigStore::setGranInterpSpacing(float) {}
+float ConfigStore::getKHEMA() { return NAN; }
+void ConfigStore::setKHEMA(float) {}
+float ConfigStore::getKHEMAAlpha() { return 0.3f; }
+void ConfigStore::setKHEMAAlpha(float) {}

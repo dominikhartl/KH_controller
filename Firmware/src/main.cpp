@@ -131,6 +131,8 @@ static void publishKHResult(const KHResult& r) {
     mqttManager.publish(MQconfidence, mqBuf, true); }
   configStore.setLastKH(r.khValue);
   configStore.setLastStartPH(r.startPH);
+  updateCachedKH(r.khValue);
+  updateCachedLastStartPH(r.startPH);
   lastConfidence = r.confidence;
   uint32_t ts = (uint32_t)time(nullptr);
   appendHistory("kh", r.khValue, ts);
@@ -733,6 +735,7 @@ void subtractHCl(int unitsUsed) {
   float remaining = hclVol - used;
   if (remaining < 0) remaining = 0;
   configStore.setHClVolume(remaining);
+  updateCachedHClVol(remaining);
 }
 
 
@@ -1795,6 +1798,7 @@ void setup() {
 
   // Web server + WebSocket dashboard
   setupWebServer();
+  initBroadcastCache();  // populate RAM caches (KH, startPH, HCl) from NVS — before first broadcast
   computeKHSlope();  // populate cached slope for broadcastState()
   {
     int reason = esp_reset_reason();
@@ -1842,6 +1846,7 @@ void setup() {
   // Scheduler with NTP
   scheduler.begin();
   scheduler.onMeasurementDue([]() {
+    setLoopHint("sched:measure");
     mqttManager.publish(MQmsg, "Scheduled measurement starting");
     measureKHWithValidation();
   });
@@ -1940,7 +1945,9 @@ void loop() {
   if (millis() - lastWsPing > 15000) {
     lastWsPing = millis();
     setLoopHint("ws.ping");
-    ws.pingAll();
+    for (auto& c : ws.getClients()) {
+      if (c->status() == WS_CONNECTED && c->canSend()) c->ping();
+    }
   }
 
   // Track heap watermark with low-heap warning

@@ -43,6 +43,12 @@ void executeCommand(const char* cmd);
 void calibratePH(int bufferPH);
 void broadcastState();
 void broadcastStateLight();  // Dynamic values only, zero NVS reads — safe during motor/measurement yield
+void safeTextAll(const char* msg, size_t len);
+void safeTextAll(const char* msg);
+void initBroadcastCache();           // Populate RAM caches from NVS (call once in setup)
+void updateCachedKH(float kh);
+void updateCachedLastStartPH(float sph);
+void updateCachedHClVol(float vol);
 void handlePendingWSClient();  // Process deferred WS connect + config change broadcasts (Core 1 only)
 void broadcastTitrationPH(float ph, int units);
 void broadcastTitrationStart();
