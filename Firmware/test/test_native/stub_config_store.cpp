@@ -182,8 +182,6 @@ int ConfigStore::getSlopeHistory(SlopeEntry*, int) { return 0; }
 void ConfigStore::addSlopeEntry(uint32_t, float, float) {}
 int ConfigStore::getGranReadings() { return 10; }
 void ConfigStore::setGranReadings(int) {}
-float ConfigStore::getGranInterpSpacing() { return 16.0f; }
-void ConfigStore::setGranInterpSpacing(float) {}
 float ConfigStore::getKHEMA() { return NAN; }
 void ConfigStore::setKHEMA(float) {}
 float ConfigStore::getKHEMAAlpha() { return 0.3f; }

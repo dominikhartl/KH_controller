@@ -84,8 +84,6 @@ public:
   void setNumWashes(int n);
   int getGranReadings();           // Number of pH readings per Gran step (default 10, range 3-50)
   void setGranReadings(int n);
-  float getGranInterpSpacing();    // Gran interpolation spacing in units (default 16.0, 0=disabled)
-  void setGranInterpSpacing(float v);
 
   // EMA-smoothed KH (persistent across reboots)
   float getKHEMA();                // Last EMA-smoothed KH value (default NAN)

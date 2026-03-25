@@ -85,11 +85,6 @@ static const int MEDIUM_STEP_MULTIPLIER = 12;  // 2 * 12 = 24 units per step
 // Gran zone step multiplier — smaller = more data points for regression robustness
 static const int GRAN_STEP_MULTIPLIER = 8;     // 2 * 8 = 16 units per step
 
-// Gran interpolation: reference spacing for synthetic point insertion (units).
-// Set to TITRATION_STEP_SIZE * GRAN_STEP_MULTIPLIER = 16 to match ~25µL drop density.
-// 0 = disabled. Reduces drop-size-dependent KH bias with larger drops.
-static const float GRAN_INTERP_SPACING = 16.0f;
-
 // Adaptive fast-phase batch sizing — reduces batch as pH approaches threshold
 static const int FAST_BATCH_MAX = 200;
 static const int FAST_BATCH_MIN = 20;
