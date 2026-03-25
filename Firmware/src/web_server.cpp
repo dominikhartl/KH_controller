@@ -25,6 +25,7 @@ extern char deviceName[];
 extern char MQmespH[];
 extern void requestAbort();
 extern volatile uint32_t heapMin;
+extern char lastCrashInfo[];
 
 float lastConfidence = NAN;
 
@@ -80,7 +81,7 @@ struct PendingHistoryReq {
   char sensor[12];
   int days;
 };
-static const int HIST_QUEUE_SIZE = 4;
+static const int HIST_QUEUE_SIZE = 8;  // Ring buffer holds N-1 items; need >=5 for the 4 connect-burst requests
 static PendingHistoryReq histQueue[HIST_QUEUE_SIZE];
 static std::atomic<int> histQueueHead{0};  // next write position (Core 0)
 static std::atomic<int> histQueueTail{0};  // next read position (Core 1)
@@ -978,8 +979,41 @@ void broadcastState() {
     sched.add(configStore.getScheduleTime(i));
   }
 
-  static char buf[2048];
-  serializeJson(doc, buf, sizeof(buf));
+  static char buf[3072];
+  size_t len = serializeJson(doc, buf, sizeof(buf));
+  if (len >= sizeof(buf) - 1) {
+    Serial.printf("WARNING: broadcastState JSON truncated! len=%u buf=%u\n", len, sizeof(buf));
+  }
+  ws.textAll(buf);
+}
+
+// Lightweight state broadcast for use during motor/measurement yield callbacks.
+// Sends only RAM-resident dynamic values — zero NVS reads, no JsonDocument, no heap alloc.
+// The JS updateState() handles missing fields gracefully (guarded by if(d.config), etc.).
+void broadcastStateLight() {
+  if (ws.count() == 0) return;
+
+  static char buf[320];
+  int n = snprintf(buf, sizeof(buf),
+    "{\"type\":\"state\",\"ph\":%.3f,\"startPh\":%.2f,\"units\":%d,"
+    "\"uptime\":%lu,\"freeHeap\":%lu,\"heapMin\":%lu,"
+    "\"measuring\":%s,\"rssi\":%d,"
+    "\"wifiOk\":%s,\"mqttOk\":%s,"
+    "\"stirrer\":%s,\"water_temp\":%.1f,\"temp_sensor\":%s",
+    pH, startPH, units.load(),
+    millis() / 1000,
+    (unsigned long)ESP.getFreeHeap(), (unsigned long)heapMin,
+    isMeasuringKH.load() ? "true" : "false",
+    wifiManager.getRSSI(),
+    wifiManager.isConnected() ? "true" : "false",
+    mqttManager.isConnected() ? "true" : "false",
+    isStirrerRunning() ? "true" : "false",
+    getWaterTemperatureC(),
+    hasTemperatureSensor() ? "true" : "false");
+  if (lastCrashInfo[0]) {
+    n += snprintf(buf + n, sizeof(buf) - n, ",\"lastCrash\":\"%s\"", lastCrashInfo);
+  }
+  snprintf(buf + n, sizeof(buf) - n, "}");
   ws.textAll(buf);
 }
 

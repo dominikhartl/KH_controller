@@ -172,10 +172,12 @@
       if (dlLink) dlLink.download = d.deviceName + '_hw_diagnostics.json';
     }
 
-    // KH gauge
-    var khVal = (d.kh > 0) ? d.kh : 0;
-    setGaugeArc('gauge-kh-arc', khVal, 0, 15);
-    setText('val-kh', (d.kh > 0) ? d.kh.toFixed(1) : '--');
+    // KH gauge (only update when field present — light broadcasts omit NVS-backed values)
+    if (d.kh !== undefined) {
+      var khVal = (d.kh > 0) ? d.kh : 0;
+      setGaugeArc('gauge-kh-arc', khVal, 0, 15);
+      setText('val-kh', (d.kh > 0) ? d.kh.toFixed(1) : '--');
+    }
 
     // KH slope, intercept, and trend line parameters from server
     if (d.khSlope != null) {
@@ -192,34 +194,49 @@
     }
 
     // pH gauge (start pH from last KH measurement)
-    var phVal = (d.lastStartPh > 0) ? d.lastStartPh : 0;
-    setGaugeArc('gauge-ph-arc', phVal, 6, 9);
-    setText('val-ph', (d.lastStartPh > 0) ? d.lastStartPh.toFixed(2) : '--');
+    if (d.lastStartPh !== undefined) {
+      var phVal = (d.lastStartPh > 0) ? d.lastStartPh : 0;
+      setGaugeArc('gauge-ph-arc', phVal, 6, 9);
+      setText('val-ph', (d.lastStartPh > 0) ? d.lastStartPh.toFixed(2) : '--');
+    }
 
     // Measured pH gauge (latest pH reading from any source)
-    var mesPhVal = (d.ph > 0) ? d.ph : 0;
-    setGaugeArc('gauge-mesph-arc', mesPhVal, 6, 9);
-    setText('val-mesph', mesPhVal > 0 ? mesPhVal.toFixed(2) : '--');
+    if (d.ph !== undefined) {
+      var mesPhVal = (d.ph > 0) ? d.ph : 0;
+      setGaugeArc('gauge-mesph-arc', mesPhVal, 6, 9);
+      setText('val-mesph', mesPhVal > 0 ? mesPhVal.toFixed(2) : '--');
+    }
 
     // HCl tank
-    var hclMax = 5000;
-    var hclPct = Math.max(0, Math.min(100, ((d.hclVol || 0) / hclMax) * 100));
-    var fill = document.getElementById('hcl-fill');
-    if (fill) fill.style.height = hclPct + '%';
-    setText('val-hcl', d.hclVol ? Math.round(d.hclVol) : '--');
+    if (d.hclVol !== undefined) {
+      var hclMax = 5000;
+      var hclPct = Math.max(0, Math.min(100, ((d.hclVol || 0) / hclMax) * 100));
+      var fill = document.getElementById('hcl-fill');
+      if (fill) fill.style.height = hclPct + '%';
+      setText('val-hcl', d.hclVol ? Math.round(d.hclVol) : '--');
+    }
 
-    // Status dots
-    setDot('wifi', d.wifiOk);
-    setDot('mqtt', d.mqttOk);
-    setDot('ntp', d.ntpOk);
+    // Status dots (only update when present)
+    if (d.wifiOk !== undefined) setDot('wifi', d.wifiOk);
+    if (d.mqttOk !== undefined) setDot('mqtt', d.mqttOk);
+    if (d.ntpOk !== undefined) setDot('ntp', d.ntpOk);
 
     // Measuring state sync — shows/hides Abort button for all clients
     if (d.measuring != null) setMeasuringMode(!!d.measuring);
 
     // Status bar
-    setText('water-temp', d.temp_sensor ? d.water_temp.toFixed(1) + ' \u00B0C' : '--');
-    setText('rssi', d.rssi || '--');
-    setText('uptime', fmtUptime(d.uptime || 0));
+    if (d.temp_sensor !== undefined) setText('water-temp', d.temp_sensor ? d.water_temp.toFixed(1) + ' \u00B0C' : '--');
+    if (d.rssi !== undefined) setText('rssi', d.rssi || '--');
+    if (d.uptime !== undefined) setText('uptime', fmtUptime(d.uptime || 0));
+
+    // Last crash info (persistent until clean boot)
+    if (d.lastCrash !== undefined) {
+      var crashEl = document.getElementById('last-crash');
+      if (crashEl) {
+        if (d.lastCrash) { crashEl.textContent = 'Last crash: ' + d.lastCrash; crashEl.style.display = 'block'; }
+        else { crashEl.style.display = 'none'; }
+      }
+    }
 
     // Next measurement (server sends formatted string)
     if (d.nextMeas) setText('next-meas', d.nextMeas);

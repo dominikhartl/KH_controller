@@ -25,6 +25,14 @@
 // Device name (loaded from NVS at boot, used by mDNS, MQTT, HA, OTA, web UI)
 char deviceName[21] = "KHpro";
 
+// RTC crash hint for main loop — survives INT_WDT/panic reset
+RTC_NOINIT_ATTR static char loopCrashHint[24];
+RTC_NOINIT_ATTR static uint32_t loopCrashMagic;
+static const uint32_t LOOP_CRASH_MAGIC = 0xDEAD100F;
+static void setLoopHint(const char* h) { strncpy(loopCrashHint, h, sizeof(loopCrashHint)-1); loopCrashHint[sizeof(loopCrashHint)-1]='\0'; loopCrashMagic = LOOP_CRASH_MAGIC; }
+static void clearLoopHint() { loopCrashMagic = 0; }
+static const char* getLoopCrashHint() { return (loopCrashMagic == LOOP_CRASH_MAGIC) ? loopCrashHint : nullptr; }
+
 // --- Global state ---
 // These are accessed from both loopTask and AsyncTCP task.
 // Atomic for cross-task safety on ESP32 dual-core.
@@ -33,6 +41,7 @@ std::atomic<int> units{0};
 // possible but harmless — value is only written once per measurement, read for display.
 volatile float startPH = 0;
 volatile bool discoveryPublished = false;
+char lastCrashInfo[64] = "";  // Populated at boot from RTC hints, shown in UI until clean boot
 volatile unsigned long lastDiagnosticsTime = 0;
 volatile unsigned long lastBroadcastTime = 0;
 volatile uint32_t heapMin = UINT32_MAX;
@@ -77,7 +86,7 @@ static void measurementYield() {
   static unsigned long lastBroadcast = 0;
   if (millis() - lastBroadcast >= 2000) {
     lastBroadcast = millis();
-    broadcastState();
+    broadcastStateLight();  // Zero NVS reads — avoids INT_WDT during measurement
   }
 }
 
@@ -1652,23 +1661,21 @@ void setup() {
   // Initialize ADS1115 external ADC if configured (must be after configStore.begin())
   initExternalADC();
 
-  // Keep WiFi/MQTT/OTA/WebSocket alive during long motor operations (pump runs 10-30s each)
+  // Keep WebSocket/OTA alive during long motor operations (pump runs 10-30s each).
+  // Minimal work only — no WiFi reconnection (autoReconnect handles it on Core 0),
+  // no MQTT reconnection (blocking TCP connect triggers INT_WDT).
   setMotorYieldCallback([]() {
-    // Rate-limit cleanupClients — runs every 50ms in motor loops, too aggressive
-    static unsigned long lastCleanup = 0;
-    if (millis() - lastCleanup >= 1000) {
-      lastCleanup = millis();
-      ws.cleanupClients();
+    // MQTT: service existing connection only (non-blocking packet processing)
+    if (mqttManager.isConnected()) {
+      mqttManager.getClient().loop();
     }
-    wifiManager.loop();
-    mqttManager.loop();
     ArduinoOTA.handle();
-    // Broadcast state every 2s to keep WebSocket clients alive (browser watchdog = 15s)
+    // Lightweight state broadcast every 2s to keep WebSocket alive (browser watchdog = 15s)
     static unsigned long lastBroadcast = 0;
     if (millis() - lastBroadcast >= 2000) {
       lastBroadcast = millis();
       handlePendingWSClient();
-      broadcastState();
+      broadcastStateLight();
     }
   });
 
@@ -1796,20 +1803,23 @@ void setup() {
     snprintf(bootBuf, sizeof(bootBuf), "BOOT (reason=%d, heap=%u)", reason, ESP.getFreeHeap());
     publishMessage(bootBuf);
     if (reason == ESP_RST_PANIC || reason == ESP_RST_INT_WDT || reason == ESP_RST_TASK_WDT) {
+      // Build persistent crash info from RTC hints — stays in UI until clean boot
       const char* hint = getMotorCrashHint();
-      if (hint) {
-        char hintBuf[64];
-        snprintf(hintBuf, sizeof(hintBuf), "CRASH during motor: %s", hint);
-        publishMessage(hintBuf);
-      }
       const char* fsHint = getFSCrashHint();
-      if (fsHint) {
-        char hintBuf[64];
-        snprintf(hintBuf, sizeof(hintBuf), "CRASH during FS: %s", fsHint);
-        publishMessage(hintBuf);
+      const char* loopHint = getLoopCrashHint();
+      if (hint) {
+        snprintf(lastCrashInfo, sizeof(lastCrashInfo), "motor: %s", hint);
+      } else if (fsHint) {
+        snprintf(lastCrashInfo, sizeof(lastCrashInfo), "FS: %s", fsHint);
+      } else if (loopHint) {
+        snprintf(lastCrashInfo, sizeof(lastCrashInfo), "loop: %s", loopHint);
+      } else {
+        snprintf(lastCrashInfo, sizeof(lastCrashInfo), "reason=%d (no hint)", reason);
       }
+      publishMessage(lastCrashInfo);
     }
     clearMotorCrashHint();
+    clearLoopHint();
     if (getEZOInitLog()[0] != '\0') {
       publishMessage(getEZOInitLog());
     }
@@ -1868,11 +1878,24 @@ void loop() {
 
   // --- STA mode: full operation ---
   processPendingCommand();
+  setLoopHint("wifi.loop");
   wifiManager.loop();
+  setLoopHint("mqtt.loop");
   mqttManager.loop();
-  ArduinoOTA.handle();
+  // ArduinoOTA: rate-limit to 1/s — mDNS processing inside handle() can block
+  // interrupts long enough to trigger INT_WDT when called every loop iteration
+  { static unsigned long lastOTA = 0;
+    if (millis() - lastOTA >= 1000) {
+      lastOTA = millis();
+      setLoopHint("ota.handle");
+      ArduinoOTA.handle();
+    }
+  }
+  setLoopHint("scheduler");
   scheduler.loop();
+  setLoopHint("ws.cleanup");
   ws.cleanupClients();
+  setLoopHint("pendingWS");
   handlePendingWSClient();  // Send state to newly connected WS clients (deferred from Core 0)
 
   // Publish HA Discovery on first MQTT connect or after HA restart
@@ -1895,16 +1918,28 @@ void loop() {
     discoveryPublished = true;
   }
 
-  // Broadcast state to WebSocket clients every 2s
+  // Broadcast state to WebSocket clients:
+  // - Every 2s: lightweight (dynamic values only, zero NVS reads)
+  // - Every 30s: full state with config/probe/schedule (ensures config arrives
+  //   even if the initial connect broadcast was dropped by AsyncWebSocket)
   if (millis() - lastBroadcastTime > 2000) {
     lastBroadcastTime = millis();
-    broadcastState();
+    static uint8_t lightCount = 0;
+    if (++lightCount >= 15) {  // 15 × 2s = 30s
+      lightCount = 0;
+      setLoopHint("broadcastFull");
+      broadcastState();
+    } else {
+      setLoopHint("broadcastLight");
+      broadcastStateLight();
+    }
   }
 
   // WebSocket ping for dead connection detection (every 15s)
   static unsigned long lastWsPing = 0;
   if (millis() - lastWsPing > 15000) {
     lastWsPing = millis();
+    setLoopHint("ws.ping");
     ws.pingAll();
   }
 
@@ -1943,7 +1978,9 @@ void loop() {
   // Publish diagnostics every 60s
   if (mqttManager.isConnected() && millis() - lastDiagnosticsTime > 60000) {
     lastDiagnosticsTime = millis();
+    setLoopHint("diagnostics");
     publishDiagnostics();
   }
 
+  clearLoopHint();
 }
