@@ -38,9 +38,15 @@ bool granRegression(TitrationPoint* points, int nPoints,
                     float* outR2, float* outSsRes, int* outCount,
                     float* outVarSlope,
                     float* outVarIntercept,
-                    float* outCovSI) {
+                    float* outCovSI,
+                    float interpSpacing) {
   float sumW = 0, sumWX = 0, sumWY = 0, sumWXX = 0, sumWXY = 0, sumWYY = 0;
-  int count = 0;
+  int countReal = 0;
+
+  // Collect in-window (x, F) pairs for interpolation
+  struct XF { float x, f; };
+  XF winPts[MAX_GRAN_INTERP_PTS];
+  int nWin = 0;
 
   for (int i = 0; i < nPoints; i++) {
     if (excluded[i]) continue;
@@ -48,29 +54,54 @@ bool granRegression(TitrationPoint* points, int nPoints,
       float x = points[i].units;
       float totalVol = sampleVol + x * k;
       float y = totalVol * powf(10.0f, -points[i].pH);
-      float w = 1.0f;  // OLS — standard practice for Gran analysis
-      sumW += w;
-      sumWX += w * x;
-      sumWY += w * y;
-      sumWXX += w * x * x;
-      sumWXY += w * x * y;
-      sumWYY += w * y * y;
-      count++;
+      sumW += 1.0f;
+      sumWX += x;
+      sumWY += y;
+      sumWXX += x * x;
+      sumWXY += x * y;
+      sumWYY += y * y;
+      countReal++;
+      if (nWin < MAX_GRAN_INTERP_PTS) {
+        winPts[nWin++] = {x, y};
+      }
     }
   }
 
-  if (count < MIN_GRAN_POINTS) return false;
+  if (countReal < MIN_GRAN_POINTS) return false;
+
+  // Insert linearly interpolated F(V) points between measured points
+  // that are spaced wider than interpSpacing. This fills gaps caused by
+  // coarse drops without changing the measurements themselves.
+  if (interpSpacing > 0 && nWin >= 2) {
+    for (int i = 1; i < nWin; i++) {
+      float dx = winPts[i].x - winPts[i-1].x;
+      if (dx <= interpSpacing) continue;
+      int nInterp = (int)(dx / interpSpacing) - 1;
+      if (nInterp <= 0) continue;
+      for (int j = 1; j <= nInterp; j++) {
+        float t = (float)j / (float)(nInterp + 1);
+        float xi = winPts[i-1].x + t * dx;
+        float fi = winPts[i-1].f + t * (winPts[i].f - winPts[i-1].f);
+        sumW  += 1.0f;
+        sumWX += xi;
+        sumWY += fi;
+        sumWXX += xi * xi;
+        sumWXY += xi * fi;
+        sumWYY += fi * fi;
+      }
+    }
+  }
 
   float denom = sumW * sumWXX - sumWX * sumWX;
   if (fabsf(denom) < 1e-12f) return false;
 
   *outSlope = (sumW * sumWXY - sumWX * sumWY) / denom;
   *outIntercept = (sumWY - *outSlope * sumWX) / sumW;
-  *outCount = count;
+  *outCount = countReal;  // Report real point count for outlier logic
 
-  // Compute weighted R²
-  float meanWY = sumWY / sumW;
-  float ssTot = sumWYY - sumW * meanWY * meanWY;
+  // R² and ssRes: computed from real measured points only.
+  // Synthetic points have near-zero residuals by construction and would inflate R².
+  float realSumWY = 0, realSumWYY = 0;
   float ssRes = 0;
   for (int i = 0; i < nPoints; i++) {
     if (excluded[i]) continue;
@@ -78,18 +109,22 @@ bool granRegression(TitrationPoint* points, int nPoints,
       float x = points[i].units;
       float totalVol = sampleVol + x * k;
       float y = totalVol * powf(10.0f, -points[i].pH);
-      float w = 1.0f;
       float pred = *outSlope * x + *outIntercept;
       float res = y - pred;
-      ssRes += w * res * res;
+      ssRes += res * res;
+      realSumWY += y;
+      realSumWYY += y * y;
     }
   }
+  float meanRealY = realSumWY / (float)countReal;
+  float ssTot = realSumWYY - (float)countReal * meanRealY * meanRealY;
   *outR2 = (ssTot > 1e-12f) ? 1.0f - ssRes / ssTot : 0.0f;
   *outSsRes = ssRes;
 
-  // Parameter variances for confidence interval computation
-  if (count > 2 && (outVarSlope || outVarIntercept || outCovSI)) {
-    float s2 = ssRes / (float)(count - 2);
+  // Parameter variances: s2 from real points (conservative DoF), but
+  // slope/intercept benefit from the full OLS sums including synthetic points.
+  if (countReal > 2 && (outVarSlope || outVarIntercept || outCovSI)) {
+    float s2 = ssRes / (float)(countReal - 2);
     if (outVarSlope) *outVarSlope = sumW / denom * s2;
     if (outVarIntercept) *outVarIntercept = sumWXX / denom * s2;
     if (outCovSI) *outCovSI = -sumWX / denom * s2;
@@ -105,7 +140,8 @@ float tryGranWindow(TitrationPoint* points, int nPoints,
                     float* outR2,
                     float* outSlope,
                     float* outIntercept,
-                    float* outEqSE) {
+                    float* outEqSE,
+                    float interpSpacing) {
   bool excluded[MAX_TITRATION_POINTS];
   for (int i = 0; i < nPoints; i++) excluded[i] = false;
 
@@ -116,7 +152,7 @@ float tryGranWindow(TitrationPoint* points, int nPoints,
   if (!granRegression(points, nPoints, sampleVol, k, excluded,
                       pHLow, pHHigh,
                       &slope, &intercept, &r2, &ssRes, &count,
-                      &varSlope, &varIntercept, &covSI))
+                      &varSlope, &varIntercept, &covSI, interpSpacing))
     return NAN;
 
   // Iterative outlier rejection: up to 2 rounds, remove worst 2σ weighted outlier
@@ -133,8 +169,7 @@ float tryGranWindow(TitrationPoint* points, int nPoints,
         float x = points[i].units;
         float totalVol = sampleVol + x * k;
         float y = totalVol * powf(10.0f, -points[i].pH);
-        float w = 1.0f;
-        float wRes = sqrtf(w) * fabsf(y - (slope * x + intercept));
+        float wRes = fabsf(y - (slope * x + intercept));
         if (wRes > 2.0f * sigma && wRes > worstRes) {
           worstRes = wRes;
           worstIdx = i;
@@ -147,7 +182,7 @@ float tryGranWindow(TitrationPoint* points, int nPoints,
     if (!granRegression(points, nPoints, sampleVol, k, excluded,
                         pHLow, pHHigh,
                         &slope, &intercept, &r2, &ssRes, &count,
-                        &varSlope, &varIntercept, &covSI))
+                        &varSlope, &varIntercept, &covSI, interpSpacing))
       return NAN;
   }
 
@@ -188,6 +223,7 @@ float granAnalysis(TitrationPoint* points, int nPoints,
   if (calUnits <= 0) return fail("Invalid calibration units");
 
   float k = titVol / calUnits;
+  float interpSpacing = configStore.getGranInterpSpacing();
 
   // Adaptive window selection: try multiple pH bounds, select by minimum eqSE (best precision)
   static const float upperBounds[] = {4.5f, 4.4f, 4.3f, 4.2f, 4.1f};
@@ -251,7 +287,7 @@ float granAnalysis(TitrationPoint* points, int nPoints,
       if (upperBounds[b] - lowerBounds[lb] < 0.15f) continue;
       float r2 = 0, s = 0, ic = 0, eqSE = 0;
       float eq = tryGranWindow(points, nPoints, sampleVol, k,
-                               lowerBounds[lb], upperBounds[b], &r2, &s, &ic, &eqSE);
+                               lowerBounds[lb], upperBounds[b], &r2, &s, &ic, &eqSE, interpSpacing);
       if (windowResults && winCount < MAX_GRAN_WINDOWS) {
         windowResults[winCount] = {lowerBounds[lb], upperBounds[b], r2, !isnan(eq), eq, eqSE};
         winCount++;

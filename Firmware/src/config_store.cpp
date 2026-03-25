@@ -358,6 +358,19 @@ void ConfigStore::setGranReadings(int n) {
   prefs.putInt("gran_read", n);
 }
 
+// Gran interpolation spacing (units, 0 = disabled)
+float ConfigStore::getGranInterpSpacing() {
+  float v = prefs.getFloat("gran_interp", GRAN_INTERP_SPACING);
+  if (v < 0) v = 0;
+  if (v > 100) v = 100;
+  return v;
+}
+void ConfigStore::setGranInterpSpacing(float v) {
+  if (v < 0) v = 0;
+  if (v > 100) v = 100;
+  prefs.putFloat("gran_interp", v);
+}
+
 // EMA-smoothed KH
 float ConfigStore::getKHEMA() {
   float v = prefs.getFloat("kh_ema", NAN);

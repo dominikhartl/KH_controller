@@ -521,6 +521,7 @@ static void handleWebSocketMessage(AsyncWebSocketClient* client, void* arg, uint
       else if (strcmp(key, "num_washes") == 0) { configStore.setNumWashes((int)value); }
       else if (strcmp(key, "drop_ul") == 0) { configStore.setDropVolumeUL(value); }
       else if (strcmp(key, "gran_readings") == 0) { configStore.setGranReadings((int)value); }
+      else if (strcmp(key, "gran_interp_spacing") == 0) { configStore.setGranInterpSpacing(value); }
       else if (strcmp(key, "kh_ema_alpha") == 0) { configStore.setKHEMAAlpha(value); }
       else if (strcmp(key, "titration_rpm") == 0)   { configStore.setTitrationRPM(value); }
       else if (strcmp(key, "gran_burst_rpm") == 0)   { configStore.setGranBurstRPM(value); }
@@ -935,6 +936,7 @@ void broadcastState() {
   cfg["slope_hours"] = configStore.getSlopeWindowHours();
   cfg["num_washes"] = configStore.getNumWashes();
   cfg["gran_readings"] = configStore.getGranReadings();
+  cfg["gran_interp_spacing"] = configStore.getGranInterpSpacing();
   cfg["kh_ema_alpha"] = configStore.getKHEMAAlpha();
   cfg["timezone"] = configStore.getTimezone();
   { char mqSrv[65], mqUser[33];

@@ -28,8 +28,13 @@ struct GranWindowResult {
 // Temperature-compensated buffer pH (IUPAC/NIST standard coefficients)
 float bufferPHAtTemp(int nominal, float tempC);
 
+// Maximum in-window points for interpolation array
+static const int MAX_GRAN_INTERP_PTS = 50;
+
 // OLS regression on Gran function values within a pH window.
 // excluded[] marks points to skip; returns false if regression fails.
+// interpSpacing > 0 inserts linearly interpolated F(V) points between measured
+// data points that are spaced wider than interpSpacing, reducing drop-size bias.
 bool granRegression(TitrationPoint* points, int nPoints,
                     float sampleVol, float k, bool* excluded,
                     float pHLow, float pHHigh,
@@ -37,7 +42,8 @@ bool granRegression(TitrationPoint* points, int nPoints,
                     float* outR2, float* outSsRes, int* outCount,
                     float* outVarSlope = nullptr,
                     float* outVarIntercept = nullptr,
-                    float* outCovSI = nullptr);
+                    float* outCovSI = nullptr,
+                    float interpSpacing = 0.0f);
 
 // Try Gran analysis with a specific pH window, including outlier removal.
 // Returns equivalence point in units, or NAN on failure.
@@ -47,7 +53,8 @@ float tryGranWindow(TitrationPoint* points, int nPoints,
                     float* outR2,
                     float* outSlope = nullptr,
                     float* outIntercept = nullptr,
-                    float* outEqSE = nullptr);
+                    float* outEqSE = nullptr,
+                    float interpSpacing = 0.0f);
 
 // Determine equivalence point via Gran function linearization
 // Returns equivalence units, or NAN on failure. outR2 receives R² of fit.
