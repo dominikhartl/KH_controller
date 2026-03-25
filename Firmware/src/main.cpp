@@ -93,6 +93,7 @@ char MQconfidence[50];
 char MQkhSlope[50];
 char MQgranR2[50];
 char MQkhCI[50];
+char MQkhSmooth[50];
 
 // --- Deferred command execution ---
 // Long-running commands (measureKH, calibrate) must run on loopTask, not AsyncTCP.
@@ -133,6 +134,15 @@ static void publishKHResult(const KHResult& r) {
   if (!isnan(r.khCI)) {
     char mqBuf[16]; snprintf(mqBuf, sizeof(mqBuf), "%.3f", r.khCI);
     mqttManager.publish(MQkhCI, mqBuf, true);
+  }
+
+  // Compute and publish EMA-smoothed KH
+  { float alpha = configStore.getKHEMAAlpha();
+    float prev = configStore.getKHEMA();
+    float ema = isnan(prev) ? r.khValue : (alpha * r.khValue + (1.0f - alpha) * prev);
+    configStore.setKHEMA(ema);
+    char mqBuf[16]; snprintf(mqBuf, sizeof(mqBuf), "%.2f", ema);
+    mqttManager.publish(MQkhSmooth, mqBuf, true);
   }
 
   // Compute and publish KH trend slope (dKH/day) from configured window
@@ -1230,7 +1240,7 @@ KHResult measureKH() {
           }
         }
         waitForPHStabilization();
-        measurePHStabilized(isExternalADCActive() ? 5 : 20);
+        measurePHStabilized(isExternalADCActive() ? configStore.getGranReadings() : 20);
       }
       units += stepVol;
 
@@ -1689,6 +1699,7 @@ void setup() {
   snprintf(MQkhSlope, sizeof(MQkhSlope), "%s/kh_slope", deviceName);
   snprintf(MQgranR2, sizeof(MQgranR2), "%s/gran_r2", deviceName);
   snprintf(MQkhCI, sizeof(MQkhCI), "%s/kh_ci", deviceName);
+  snprintf(MQkhSmooth, sizeof(MQkhSmooth), "%s/kh_smooth", deviceName);
 
   // --- WiFi: AP mode or STA mode ---
   // BOOT button (GPIO 0) held 5s = clear WiFi, enter AP mode
@@ -1876,6 +1887,10 @@ void loop() {
       mqttManager.publish(MQkhValue, mqBuf, true); }
     if (lastSPH > 0) { char mqBuf[16]; snprintf(mqBuf, sizeof(mqBuf), "%.2f", lastSPH);
       mqttManager.publish(MQstartpH, mqBuf, true); }
+    { float ema = configStore.getKHEMA();
+      if (!isnan(ema)) { char mqBuf[16]; snprintf(mqBuf, sizeof(mqBuf), "%.2f", ema);
+        mqttManager.publish(MQkhSmooth, mqBuf, true); }
+    }
 
     discoveryPublished = true;
   }

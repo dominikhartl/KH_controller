@@ -142,7 +142,7 @@ void ConfigStore::setGranMinR2(float v) {
 }
 
 float ConfigStore::getDropVolumeUL() {
-  float ul = prefs.getFloat("drop_ul", 26.0);
+  float ul = prefs.getFloat("drop_ul", 15.0);
   if (ul < 5.0) ul = 5.0;
   if (ul > 200.0) ul = 200.0;
   return ul;
@@ -343,6 +343,39 @@ void ConfigStore::setNumWashes(int n) {
   if (n < 1) n = 1;
   if (n > 5) n = 5;
   prefs.putInt("num_washes", n);
+}
+
+// Gran zone pH readings per step
+int ConfigStore::getGranReadings() {
+  int v = prefs.getInt("gran_read", 10);
+  if (v < 3) v = 3;
+  if (v > 50) v = 50;
+  return v;
+}
+void ConfigStore::setGranReadings(int n) {
+  if (n < 3) n = 3;
+  if (n > 50) n = 50;
+  prefs.putInt("gran_read", n);
+}
+
+// EMA-smoothed KH
+float ConfigStore::getKHEMA() {
+  float v = prefs.getFloat("kh_ema", NAN);
+  return v;
+}
+void ConfigStore::setKHEMA(float v) {
+  prefs.putFloat("kh_ema", v);
+}
+float ConfigStore::getKHEMAAlpha() {
+  float a = prefs.getFloat("kh_ema_a", 0.3f);
+  if (a < 0.1f) a = 0.1f;
+  if (a > 1.0f) a = 1.0f;
+  return a;
+}
+void ConfigStore::setKHEMAAlpha(float a) {
+  if (a < 0.1f) a = 0.1f;
+  if (a > 1.0f) a = 1.0f;
+  prefs.putFloat("kh_ema_a", a);
 }
 
 // pH sensor type: 0=auto, 1=internal, 2=ADS1115, 3=EZO

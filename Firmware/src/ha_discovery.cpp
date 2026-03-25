@@ -250,6 +250,10 @@ void publishAllDiscovery() {
 
   // Sensors
   publishSensorDiscovery("khv3_kh", "KH", khValueTopic, "dKH", nullptr, nullptr, nullptr);
+  { char smoothTopic[50];
+    snprintf(smoothTopic, sizeof(smoothTopic), "%s/kh_smooth", deviceName);
+    publishSensorDiscovery("khv3_kh_smooth", "KH Smoothed", smoothTopic, "dKH", nullptr, nullptr, nullptr);
+  }
   publishSensorDiscovery("khv3_ph", "pH", startPhTopic, "pH", nullptr, nullptr, nullptr);
   { char confTopic[50];
     snprintf(confTopic, sizeof(confTopic), "%s/confidence", deviceName);

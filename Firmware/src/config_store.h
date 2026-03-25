@@ -82,6 +82,14 @@ public:
   void setSampleCalRevolutions(int v);
   int getNumWashes();              // Number of washes before measurement (default 2, range 1-5)
   void setNumWashes(int n);
+  int getGranReadings();           // Number of pH readings per Gran step (default 10, range 3-50)
+  void setGranReadings(int n);
+
+  // EMA-smoothed KH (persistent across reboots)
+  float getKHEMA();                // Last EMA-smoothed KH value (default NAN)
+  void setKHEMA(float v);
+  float getKHEMAAlpha();           // EMA smoothing factor (default 0.3, range 0.1-1.0)
+  void setKHEMAAlpha(float a);
 
   // pH sensor type: 0=auto, 1=internal, 2=ADS1115, 3=EZO
   uint8_t getPhSensorType();

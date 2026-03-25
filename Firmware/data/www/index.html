@@ -212,6 +212,9 @@
         <label>Wash Cycles
           <input type="number" id="cfg-num_washes" step="1" min="1" max="5">
         </label>
+        <label>KH EMA Alpha
+          <input type="number" id="cfg-kh_ema_alpha" step="0.05" min="0.1" max="1.0">
+        </label>
         <label>pH Sensor
           <select id="cfg-ph_sensor">
             <option value="0">Auto</option>
@@ -260,6 +263,9 @@
         </label>
         <label>Gran Mix Delay (ms)
           <input type="number" id="cfg-gran_mix_delay" step="100" min="500" max="5000">
+        </label>
+        <label>Gran Readings / Step
+          <input type="number" id="cfg-gran_readings" step="1" min="3" max="50">
         </label>
         <label>Min R² Cutoff
           <input type="number" id="cfg-gran_min_r2" step="0.001" min="0.990" max="1.000">

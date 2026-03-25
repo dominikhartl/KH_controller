@@ -519,6 +519,8 @@ static void handleWebSocketMessage(AsyncWebSocketClient* client, void* arg, uint
       }
       else if (strcmp(key, "num_washes") == 0) { configStore.setNumWashes((int)value); }
       else if (strcmp(key, "drop_ul") == 0) { configStore.setDropVolumeUL(value); }
+      else if (strcmp(key, "gran_readings") == 0) { configStore.setGranReadings((int)value); }
+      else if (strcmp(key, "kh_ema_alpha") == 0) { configStore.setKHEMAAlpha(value); }
       else if (strcmp(key, "titration_rpm") == 0)   { configStore.setTitrationRPM(value); }
       else if (strcmp(key, "gran_burst_rpm") == 0)   { configStore.setGranBurstRPM(value); }
       else if (strcmp(key, "gran_burst_accel") == 0) { configStore.setGranBurstAccel((uint32_t)value); }
@@ -931,6 +933,8 @@ void broadcastState() {
   cfg["buf_ph10"] = configStore.getBufferPH10();
   cfg["slope_hours"] = configStore.getSlopeWindowHours();
   cfg["num_washes"] = configStore.getNumWashes();
+  cfg["gran_readings"] = configStore.getGranReadings();
+  cfg["kh_ema_alpha"] = configStore.getKHEMAAlpha();
   cfg["timezone"] = configStore.getTimezone();
   { char mqSrv[65], mqUser[33];
     configStore.getMqttServer(mqSrv, sizeof(mqSrv));
@@ -1658,7 +1662,8 @@ void setupWebServer() {
               "\"drop_ul\":%.1f,\"titration_rpm\":%.1f,\"gran_burst_rpm\":%.1f,\"gran_burst_accel\":%u,\"fast_phase_rpm\":%.1f,\"prefill_ul\":%.1f,"
               "\"max_acid_ml\":%.1f,\"fast_step_ul\":%d,"
               "\"cal_v4\":%.2f,\"cal_v7\":%.2f,\"cal_v10\":%.2f,"
-              "\"schedule_mode\":%d,\"interval_hours\":%d,\"anchor_time\":%d"
+              "\"schedule_mode\":%d,\"interval_hours\":%d,\"anchor_time\":%d,"
+              "\"gran_readings\":%d,\"kh_ema_alpha\":%.2f"
               "},",
               deviceName, FW_VERSION,
               (uint32_t)time(nullptr), millis() / 1000, ESP.getFreeHeap(), heapMin,
@@ -1673,7 +1678,8 @@ void setupWebServer() {
               voltage_4PH, voltage_7PH, voltage_10PH,
               (int)configStore.getScheduleMode(),
               (int)configStore.getIntervalHours(),
-              (int)configStore.getAnchorTime());
+              (int)configStore.getAnchorTime(),
+              configStore.getGranReadings(), configStore.getKHEMAAlpha());
             ds = 1;
             break;
           }
