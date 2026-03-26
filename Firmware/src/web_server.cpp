@@ -1026,7 +1026,7 @@ void broadcastStateLight() {
     "{\"type\":\"state\",\"ph\":%.3f,\"startPh\":%.2f,\"units\":%d,"
     "\"uptime\":%lu,\"freeHeap\":%lu,\"heapMin\":%lu,"
     "\"measuring\":%s,\"rssi\":%d,"
-    "\"wifiOk\":%s,\"mqttOk\":%s,"
+    "\"wifiOk\":%s,\"mqttOk\":%s,\"ntpOk\":%s,"
     "\"stirrer\":%s,\"water_temp\":%.1f,\"temp_sensor\":%s,"
     "\"kh\":%.2f,\"lastStartPh\":%.2f,\"hclVol\":%.1f",
     pH, startPH, units.load(),
@@ -1036,6 +1036,7 @@ void broadcastStateLight() {
     wifiManager.getRSSI(),
     wifiManager.isConnected() ? "true" : "false",
     mqttManager.isConnected() ? "true" : "false",
+    scheduler.isTimeSynced() ? "true" : "false",
     isStirrerRunning() ? "true" : "false",
     getWaterTemperatureC(),
     hasTemperatureSensor() ? "true" : "false",
