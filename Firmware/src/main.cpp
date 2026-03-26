@@ -1946,7 +1946,7 @@ void loop() {
     lastWsPing = millis();
     setLoopHint("ws.ping");
     for (auto& c : ws.getClients()) {
-      if (c->status() == WS_CONNECTED && c->canSend()) c->ping();
+      if (c.status() == WS_CONNECTED && c.canSend()) c.ping();
     }
   }
 

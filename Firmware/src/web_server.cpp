@@ -71,8 +71,8 @@ AsyncWebSocket ws("/ws");
 // shrink the TOCTOU window vs. bare textAll() which has no per-client guards.
 void safeTextAll(const char* msg, size_t len) {
   for (auto& c : ws.getClients()) {
-    if (c->status() == WS_CONNECTED && c->canSend()) {
-      c->text(msg, len);
+    if (c.status() == WS_CONNECTED && c.canSend()) {
+      c.text(msg, len);
     }
   }
 }
@@ -2081,7 +2081,7 @@ void registerOTAUploadHandler() {
 void setupAPWebServer() {
   // Serve the captive portal setup page
   server.on("/setup", HTTP_GET, [](AsyncWebServerRequest* request) {
-    request->send_P(200, "text/html", SETUP_PAGE);
+    request->send(200, "text/html", SETUP_PAGE);
   });
 
   // Return current config (for pre-filling the form)
