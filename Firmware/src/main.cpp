@@ -1898,6 +1898,21 @@ void loop() {
   }
   setLoopHint("scheduler");
   scheduler.loop();
+
+  // Recompute slope once after NTP sync (boot-time call runs before NTP is ready)
+  static bool slopeRecomputed = false;
+  if (!slopeRecomputed && scheduler.isTimeSynced()) {
+    slopeRecomputed = true;
+    float slope = computeKHSlope();
+    if (!isnan(slope)) {
+      char mqBuf[16]; snprintf(mqBuf, sizeof(mqBuf), "%.3f", slope);
+      mqttManager.publish(MQkhSlope, mqBuf, true);
+    } else {
+      broadcastMessage("Trend slope: insufficient data (need 2+ calendar days in window)");
+    }
+    broadcastState();
+  }
+
   setLoopHint("ws.cleanup");
   ws.cleanupClients();
   setLoopHint("pendingWS");

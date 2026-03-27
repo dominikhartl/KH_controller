@@ -1464,7 +1464,10 @@ float computeKHSlope() {
   }
   f.close();
 
-  if (n < 3) return NAN;
+  if (n < 3) {
+    Serial.printf("computeKHSlope: only %d points in %dh window (need 3)\n", n, slopeHours);
+    return NAN;
+  }
 
   // Group measurements by calendar day and compute median per day.
   // This eliminates diurnal cycle bias that plagued raw regression.
@@ -1489,7 +1492,10 @@ float computeKHSlope() {
     }
   }
 
-  if (nDays < 3) return NAN;
+  if (nDays < 2) {
+    Serial.printf("computeKHSlope: %d points but only %d calendar day (need 2)\n", n, nDays);
+    return NAN;
+  }
 
   // Compute median of each day bucket and regress on (dayIdx, median)
   double sx = 0, sy = 0, sxx = 0, sxy = 0;
@@ -1534,6 +1540,8 @@ float computeKHSlope() {
   cachedKHSlopeDay0 = (uint32_t)days[0].dayIdx;
   cachedSlopeNDays = nDays;
   cachedSlopeCI = (Sxx > 0 && se > 0) ? (float)(1.96 * se / sqrt(Sxx)) : NAN;
+  Serial.printf("computeKHSlope: %.4f dKH/day (%d days, %d pts, day0=%u, intercept=%.3f)\n",
+                cachedKHSlope, nDays, n, cachedKHSlopeDay0, cachedKHIntercept);
   return cachedKHSlope;
 }
 

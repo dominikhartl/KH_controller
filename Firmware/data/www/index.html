@@ -172,10 +172,11 @@
         <label>Calibration Revolutions
           <input type="number" id="cfg-cal_drops" step="1" min="10" max="500">
         </label>
-        <label>Measured Titration Volume (mL)
-          <input type="number" id="cfg-titration_vol" step="0.1" min="0.1" max="50">
+        <label>Measured Titration Volume (mL) <span id="titration-cal-current" style="font-weight:normal;color:var(--dim)"></span>
+          <input type="number" id="cfg-titration_vol" step="0.1" min="0.1" max="50" placeholder="enter weighed volume">
         </label>
       </div>
+      <div id="titration-cal-info" class="cal-info"></div>
 
       <h3 class="cal-heading">Measurement Chemistry</h3>
       <div class="config-grid">

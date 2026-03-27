@@ -244,7 +244,6 @@
     // Config values
     if (d.config) {
       setInput('cfg-device_name', d.config.device_name);
-      setInput('cfg-titration_vol', d.config.titration_vol);
       setInput('cfg-correction_factor', d.config.correction_factor);
       setInput('cfg-hcl_molarity', d.config.hcl_molarity);
       setInput('cfg-hcl_volume', d.config.hcl_volume);
@@ -267,6 +266,7 @@
       setInput('cfg-fast_phase_rpm', d.config.fast_phase_rpm);
       setInput('cfg-sample_pump_rpm', d.config.sample_pump_rpm);
       setText('sample-cal-current', d.config.sample_cal_vol > 0 ? '(current: ' + d.config.sample_cal_vol.toFixed(1) + ' mL)' : '');
+      setText('titration-cal-current', d.config.titration_vol > 0 ? '(current: ' + d.config.titration_vol.toFixed(2) + ' mL)' : '');
       setInput('cfg-prefill_ul', d.config.prefill_ul);
       setInput('cfg-max_acid_ml', d.config.max_acid_ml);
       setInput('cfg-fast_step_ul', d.config.fast_step_ul);
@@ -290,6 +290,12 @@
       var calInfo = document.getElementById('sample-cal-info');
       if (calInfo && d.config.sample_cal_revs_per_ml) {
         calInfo.textContent = 'Cal factor: ' + d.config.sample_cal_revs_per_ml.toFixed(2) + ' revs/mL';
+      }
+
+      // Titration pump calibration info
+      var titCalInfo = document.getElementById('titration-cal-info');
+      if (titCalInfo && d.config.cal_drops && d.config.titration_vol > 0) {
+        titCalInfo.textContent = 'Cal factor: ' + (d.config.cal_drops / d.config.titration_vol).toFixed(2) + ' units/mL';
       }
 
       // Pump calibration age badges
@@ -612,7 +618,6 @@
       khChart.data.datasets[1].data = [];
       khChart.data.datasets[2].data = [];
       khChart.update();
-      setText('val-kh-slope', '--');
       return;
     }
     // Dataset 0: scatter points
