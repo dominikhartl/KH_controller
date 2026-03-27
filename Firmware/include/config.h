@@ -11,7 +11,7 @@ static const int mqtt_port = 1883;
 // Default device name (used as MQTT topic prefix / hostname)
 // Runtime name is stored in NVS and loaded into global `deviceName` at boot
 static const char DEFAULT_DEVICE_NAME[] = "KHpro";
-static const char FW_VERSION[] = "0.4";
+static const char FW_VERSION[] = "0.5";
 
 // ADC configuration (full-precision mode)
 #define ADC_OVERSAMPLING 64

@@ -61,6 +61,14 @@ static const unsigned long BOOT_BTN_HOLD_MS = 5000;  // 5 seconds
 // Atomic: read by AsyncTCP task (broadcastState), written by loopTask
 std::atomic<bool> isMeasuringKH{false};
 
+// Publish measuring state to MQTT and set the atomic flag
+void setMeasuring(bool state) {
+  isMeasuringKH.store(state, std::memory_order_release);
+  if (mqttManager.isConnected()) {
+    mqttManager.publish(topicMeasuring, state ? "ON" : "OFF", true);
+  }
+}
+
 // Abort flag: set by AsyncTCP task (WebSocket handler), checked by loopTask in measurement loops
 static std::atomic<bool> abortRequested{false};
 void requestAbort() { abortRequested.store(true, std::memory_order_relaxed); }
@@ -101,7 +109,6 @@ char MQkhValue[50];
 char MQconfidence[50];
 char MQkhSlope[50];
 char MQgranR2[50];
-char MQkhCI[50];
 char MQkhSmooth[50];
 
 // --- Deferred command execution ---
@@ -142,10 +149,7 @@ static void publishKHResult(const KHResult& r) {
   // Quality metrics
   { char mqBuf[16]; snprintf(mqBuf, sizeof(mqBuf), "%.5f", r.granR2);
     mqttManager.publish(MQgranR2, mqBuf, true); }
-  if (!isnan(r.khCI)) {
-    char mqBuf[16]; snprintf(mqBuf, sizeof(mqBuf), "%.3f", r.khCI);
-    mqttManager.publish(MQkhCI, mqBuf, true);
-  }
+  // KH CI no longer published to HA (removed by user preference)
 
   // Compute and publish EMA-smoothed KH
   { float alpha = configStore.getKHEMAAlpha();
@@ -936,7 +940,7 @@ KHResult measureKH() {
     publishError("Measurement already in progress");
     return result;
   }
-  isMeasuringKH = true;
+  setMeasuring(true);
   abortRequested = false;  // Clear any stale abort
 
   // Read water temperature from sensor (or use default if no sensor)
@@ -968,7 +972,7 @@ KHResult measureKH() {
   float titV = configStore.getTitrationVolume();
   if (titV <= 0 || calU <= 0) {
     publishError("Error: invalid calibration or titration volume config");
-    isMeasuringKH = false;
+    setMeasuring(false);
     return result;
   }
   int prefillUnits = max(2, (int)round(prefillUL * calU / (titV * 1000.0f)));
@@ -976,14 +980,14 @@ KHResult measureKH() {
   // Validate calibration before starting
   if (!isCalibrationValid()) {
     publishError("Error: pH calibration invalid. Re-calibrate with pH 4/7/10 buffers.");
-    isMeasuringKH = false;
+    setMeasuring(false);
     return result;
   }
 
   if (!titrate(prefillUnits, configStore.getTitrationRPM())) {
     publishError("Error: titration pump timeout during prefill");
     digitalWrite(EN_PIN2, HIGH);
-    isMeasuringKH = false;
+    setMeasuring(false);
     return result;
   }
   // 5 Gran burst drops to eject any hanging drop from the tip before measurement
@@ -1019,16 +1023,16 @@ KHResult measureKH() {
       static char washErr[64];
       snprintf(washErr, sizeof(washErr), "Error: sample pump timeout during wash (%d/%d)", w + 1, numWashes);
       publishError(washErr);
-      isMeasuringKH = false;
+      setMeasuring(false);
       return result;
     }
     measurementYield();
-    if (abortRequested) { abortRequested = false; stopStirrer(); digitalWrite(EN_PIN2, HIGH); clearMultiWashContext(); publishError("Measurement aborted"); isMeasuringKH = false; return result; }
+    if (abortRequested) { abortRequested = false; stopStirrer(); digitalWrite(EN_PIN2, HIGH); clearMultiWashContext(); publishError("Measurement aborted"); setMeasuring(false); return result; }
     if (w < numWashes - 1) delay(1000);
   }
   clearMultiWashContext();
   measurementYield();
-  if (abortRequested) { abortRequested = false; stopStirrer(); digitalWrite(EN_PIN2, HIGH); publishError("Measurement aborted"); isMeasuringKH = false; return result; }
+  if (abortRequested) { abortRequested = false; stopStirrer(); digitalWrite(EN_PIN2, HIGH); publishError("Measurement aborted"); setMeasuring(false); return result; }
   delay(100);
   startStirrer();
   delay(STIRRER_WARMUP_MS);  // Wait for solution to homogenize
@@ -1598,7 +1602,7 @@ KHResult measureKH() {
   }
   publishMessage(doneBuf);
   abortRequested = false;
-  isMeasuringKH = false;
+  setMeasuring(false);
   return result;
 }
 
@@ -1708,7 +1712,6 @@ void setup() {
   snprintf(MQconfidence, sizeof(MQconfidence), "%s/confidence", deviceName);
   snprintf(MQkhSlope, sizeof(MQkhSlope), "%s/kh_slope", deviceName);
   snprintf(MQgranR2, sizeof(MQgranR2), "%s/gran_r2", deviceName);
-  snprintf(MQkhCI, sizeof(MQkhCI), "%s/kh_ci", deviceName);
   snprintf(MQkhSmooth, sizeof(MQkhSmooth), "%s/kh_smooth", deviceName);
 
   // --- WiFi: AP mode or STA mode ---
@@ -1935,6 +1938,11 @@ void loop() {
         mqttManager.publish(MQkhSmooth, mqBuf, true); }
     }
 
+    // Publish initial state for new entities
+    mqttManager.publish(topicMeasuring, isMeasuringKH.load() ? "ON" : "OFF", true);
+    { String nextM = scheduler.getNextMeasurementTime();
+      mqttManager.publish(topicNextMeas, nextM.c_str(), true); }
+
     discoveryPublished = true;
   }
 
@@ -1997,11 +2005,13 @@ void loop() {
     }
   }
 
-  // Publish diagnostics every 60s
+  // Publish diagnostics + next measurement time every 60s
   if (mqttManager.isConnected() && millis() - lastDiagnosticsTime > 60000) {
     lastDiagnosticsTime = millis();
     setLoopHint("diagnostics");
     publishDiagnostics();
+    { String nextM = scheduler.getNextMeasurementTime();
+      mqttManager.publish(topicNextMeas, nextM.c_str(), true); }
   }
 
   clearLoopHint();

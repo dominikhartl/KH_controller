@@ -30,6 +30,8 @@ char topicCfgIntervalHours[60];
 char topicCfgAnchorTime[60];
 char topicCfgMeasTemp[60];
 char topicDiagnostics[60];
+char topicMeasuring[60];
+char topicNextMeas[60];
 
 // Set command topics
 static char topicCfgTitVolSet[60];
@@ -81,6 +83,8 @@ static void initTopics() {
   snprintf(topicCfgMeasTemp, sizeof(topicCfgMeasTemp), "%s/config/meas_temp", deviceName);
   snprintf(topicCfgMeasTempSet, sizeof(topicCfgMeasTempSet), "%s/config/meas_temp/set", deviceName);
   snprintf(topicDiagnostics, sizeof(topicDiagnostics), "%s/diagnostics", deviceName);
+  snprintf(topicMeasuring, sizeof(topicMeasuring), "%s/measuring", deviceName);
+  snprintf(topicNextMeas, sizeof(topicNextMeas), "%s/next_measurement", deviceName);
 
   for (int i = 0; i < 8; i++) {
     snprintf(topicCfgSched[i], sizeof(topicCfgSched[i]), "%s/config/sched_%d", deviceName, i);
@@ -139,7 +143,8 @@ static void publishDiscoveryPayload(const char* discoveryTopic, JsonDocument& do
 
 static void publishSensorDiscovery(const char* id, const char* name, const char* statTopic,
                                     const char* unit, const char* devClass,
-                                    const char* valTpl, const char* entityCat) {
+                                    const char* valTpl, const char* entityCat,
+                                    const char* statClass = "measurement") {
   char uid[64];
   snprintf(uid, sizeof(uid), "%s_%s", deviceIdLower, id);
 
@@ -152,7 +157,7 @@ static void publishSensorDiscovery(const char* id, const char* name, const char*
   if (devClass) doc["dev_cla"] = devClass;
   if (valTpl) doc["val_tpl"] = valTpl;
   if (entityCat) doc["ent_cat"] = entityCat;
-  doc["stat_cla"] = "measurement";
+  if (statClass) doc["stat_cla"] = statClass;
   JsonObject root = doc.as<JsonObject>();
   addDeviceBlock(root);
 
@@ -266,8 +271,7 @@ void publishAllDiscovery() {
   // Quality metrics
   { char t[50]; snprintf(t, sizeof(t), "%s/gran_r2", deviceName);
     publishSensorDiscovery("khv3_gran_r2", "Gran R\u00b2", t, nullptr, nullptr, nullptr, "diagnostic"); }
-  { char t[50]; snprintf(t, sizeof(t), "%s/kh_ci", deviceName);
-    publishSensorDiscovery("khv3_kh_ci", "KH \u00b195% CI", t, "dKH", nullptr, nullptr, "diagnostic"); }
+  // KH CI sensor removed — user preference
 
   publishSensorDiscovery("khv3_mes_ph", "Measured pH", mesPhTopic, "pH", nullptr, nullptr, nullptr);
   publishSensorDiscovery("khv3_rssi", "WiFi Signal", topicDiagnostics, "dBm", "signal_strength",
@@ -280,10 +284,7 @@ void publishAllDiscovery() {
                           "{{ value_json.probe_asymmetry }}", "diagnostic");
   publishSensorDiscovery("khv3_cal_age", "Calibration Age", topicDiagnostics, "d", nullptr,
                           "{{ value_json.cal_age }}", "diagnostic");
-  publishSensorDiscovery("khv3_sample_cal_age", "Sample Pump Cal Age", topicDiagnostics, "d", nullptr,
-                          "{{ value_json.sample_cal_age }}", "diagnostic");
-  publishSensorDiscovery("khv3_titrate_cal_age", "Titration Pump Cal Age", topicDiagnostics, "d", nullptr,
-                          "{{ value_json.titrate_cal_age }}", "diagnostic");
+  // Sample/Titration Pump Cal Age sensors removed — user preference
   publishSensorDiscovery("khv3_water_temp", "Water Temperature", topicDiagnostics, "°C", "temperature",
                           "{{ value_json.water_temp }}", nullptr);
 
@@ -356,27 +357,23 @@ void publishAllDiscovery() {
     publishDiscoveryPayload(dt, doc);
   }
 
-  // Remove stale number entity for sample volume (was changed to sensor)
-  { char oldNumTopic[128];
-    snprintf(oldNumTopic, sizeof(oldNumTopic), "homeassistant/number/%s/khv3_sam_vol/config", deviceIdLower);
-    mqttManager.publish(oldNumTopic, "", true);  // empty retained payload = delete
-  }
+  // Stale entity cleanup removed — all old entities already purged from HA
 
   // Number inputs
   publishNumberDiscovery("khv3_tit_vol", "Titration Volume",
                           topicCfgTitVol, topicCfgTitVolSet, 0.1, 50.0, 0.1, "mL");
   // Sample volume is read-only — computed from pump calibration (revs / revsPerML)
   publishSensorDiscovery("khv3_sam_vol", "Sample Volume",
-                          topicCfgSamVol, "mL", nullptr, nullptr, "config");
+                          topicCfgSamVol, "mL", nullptr, nullptr, "config", nullptr);
   publishNumberDiscovery("khv3_corr_f", "Correction Factor",
                           topicCfgCorrF, topicCfgCorrFSet, 0.5, 2.0, 0.01, nullptr);
   publishNumberDiscovery("khv3_hcl_mol", "HCl Molarity",
                           topicCfgHclMol, topicCfgHclMolSet, 0.001, 1.0, 0.001, "mol/L");
   publishNumberDiscovery("khv3_hcl_vol", "HCl Volume",
                           topicCfgHclVol, topicCfgHclVolSet, 0, 5000, 1, "mL");
-  publishNumberDiscovery("khv3_cal_drops", "Calibration Units",
-                          topicCfgCalDrops, topicCfgCalDropsSet, 1000, 20000, 100, nullptr);
-  publishNumberDiscovery("khv3_fast_ph", "Fast Titration pH",
+  publishNumberDiscovery("khv3_cal_drops", "Titration Cal Revolutions",
+                          topicCfgCalDrops, topicCfgCalDropsSet, 10, 200, 1, "rev");
+  publishNumberDiscovery("khv3_fast_ph", "Fast Phase pH",
                           topicCfgFastPH, topicCfgFastPHSet, 4.5, 7.0, 0.1, "pH");
   publishNumberDiscovery("khv3_min_start_ph", "Min Start pH",
                           topicCfgMinStartPH, topicCfgMinStartPHSet, 6.0, 9.0, 0.1, "pH");
@@ -453,14 +450,52 @@ void publishAllDiscovery() {
   // Buttons
   publishButtonDiscovery("khv3_btn_kh", "Measure KH", cmdTopic, "k", nullptr);
   publishButtonDiscovery("khv3_btn_ph", "Measure pH", cmdTopic, "p", nullptr);
-  publishButtonDiscovery("khv3_btn_sample", "Measure Sample", cmdTopic, "s", "config");
-  publishButtonDiscovery("khv3_btn_titration", "Measure Titration", cmdTopic, "t", "config");
-  publishButtonDiscovery("khv3_btn_fill", "Fill Titration", cmdTopic, "f", "config");
-  publishButtonDiscovery("khv3_btn_voltage", "Measure Voltage", cmdTopic, "v", "diagnostic");
+  publishButtonDiscovery("khv3_btn_sample", "Wash Sample", cmdTopic, "s", "diagnostic");
+  publishButtonDiscovery("khv3_btn_titration", "Calibrate Titration Pump", cmdTopic, "t", "config");
+  publishButtonDiscovery("khv3_btn_fill", "Fill HCl", cmdTopic, "f", nullptr);
+  // "Measure Voltage" removed — debug-only function not in web UI
   publishButtonDiscovery("khv3_btn_cal4", "Calibrate pH 4", cmdTopic, "4", "config");
   publishButtonDiscovery("khv3_btn_cal7", "Calibrate pH 7", cmdTopic, "7", "config");
   publishButtonDiscovery("khv3_btn_cal10", "Calibrate pH 10", cmdTopic, "10", "config");
-  publishButtonDiscovery("khv3_btn_restart", "Restart", cmdTopic, "o", "config");
+  publishButtonDiscovery("khv3_btn_restart", "Restart", cmdTopic, "o", nullptr);
+  publishButtonDiscovery("khv3_btn_abort", "Abort Measurement", cmdTopic, "abort", nullptr);
+  publishButtonDiscovery("khv3_btn_clean", "Clean Tube", cmdTopic, "cw", "diagnostic");
+
+  // Measuring binary sensor — shows if a KH measurement is in progress
+  {
+    char uid[64];
+    snprintf(uid, sizeof(uid), "%s_measuring", deviceIdLower);
+    JsonDocument doc;
+    doc["name"] = "Measuring";
+    doc["stat_t"] = topicMeasuring;
+    doc["uniq_id"] = uid;
+    doc["avty_t"] = availability_topic;
+    doc["dev_cla"] = "running";
+    doc["pl_on"] = "ON";
+    doc["pl_off"] = "OFF";
+    JsonObject root = doc.as<JsonObject>();
+    addDeviceBlock(root);
+    char dt[128];
+    snprintf(dt, sizeof(dt), "homeassistant/binary_sensor/%s/measuring/config", deviceIdLower);
+    publishDiscoveryPayload(dt, doc);
+  }
+
+  // Next measurement time sensor
+  {
+    char uid[64];
+    snprintf(uid, sizeof(uid), "%s_next_meas", deviceIdLower);
+    JsonDocument doc;
+    doc["name"] = "Next Measurement";
+    doc["stat_t"] = topicNextMeas;
+    doc["uniq_id"] = uid;
+    doc["avty_t"] = availability_topic;
+    doc["icon"] = "mdi:clock-outline";
+    JsonObject root = doc.as<JsonObject>();
+    addDeviceBlock(root);
+    char dt[128];
+    snprintf(dt, sizeof(dt), "homeassistant/sensor/%s/next_meas/config", deviceIdLower);
+    publishDiscoveryPayload(dt, doc);
+  }
 
   Serial.printf("HA Discovery published (%s, MQTT %s)\n",
                  deviceName, mqttManager.isConnected() ? "connected" : "DISCONNECTED");
@@ -493,7 +528,7 @@ void publishAllConfigStates() {
   mqttManager.publish(topicCfgCorrF, String(configStore.getCorrectionFactor(), 2).c_str(), true);
   mqttManager.publish(topicCfgHclMol, String(configStore.getHClMolarity(), 3).c_str(), true);
   mqttManager.publish(topicCfgHclVol, String(configStore.getHClVolume(), 0).c_str(), true);
-  mqttManager.publish(topicCfgCalDrops, String(configStore.getCalUnits()).c_str(), true);
+  mqttManager.publish(topicCfgCalDrops, String(configStore.getCalUnits() / 100).c_str(), true);
   mqttManager.publish(topicCfgFastPH, String(configStore.getFastTitrationPH(), 1).c_str(), true);
   mqttManager.publish(topicCfgEpMethod,
                       (configStore.getEndpointMethod() == 1) ? "Fixed" : "Gran", true);
@@ -546,14 +581,7 @@ void publishDiagnostics() {
     doc["cal_age"] = -1;  // No calibration timestamp recorded
   }
 
-  // Pump calibration ages
-  {
-    uint32_t sampCalTs = configStore.getSampleCalTimestamp();
-    uint32_t titCalTs = configStore.getTitrationCalTimestamp();
-    time_t now2 = time(nullptr);
-    doc["sample_cal_age"] = (sampCalTs > 0 && now2 > 1000000000) ? (int)((now2 - sampCalTs) / 86400) : -1;
-    doc["titrate_cal_age"] = (titCalTs > 0 && now2 > 1000000000) ? (int)((now2 - titCalTs) / 86400) : -1;
-  }
+  // Pump calibration ages removed from HA (still visible in web UI)
 
   char buf[640];
   serializeJson(doc, buf, sizeof(buf));
@@ -576,7 +604,7 @@ void handleConfigSet(const char* topic, const char* payload) {
     configStore.setHClVolume(val);
     mqttManager.publish(topicCfgHclVol, String(val, 0).c_str(), true);
   } else if (strcmp(topic, topicCfgCalDropsSet) == 0) {
-    configStore.setCalUnits((int)val);
+    configStore.setCalUnits((int)(val * 100));
     mqttManager.publish(topicCfgCalDrops, String((int)val).c_str(), true);
   } else if (strcmp(topic, topicCfgFastPHSet) == 0) {
     configStore.setFastTitrationPH(val);
@@ -637,3 +665,4 @@ void handleConfigSet(const char* topic, const char* payload) {
   // Push updated config to WebSocket clients immediately
   broadcastState();
 }
+
