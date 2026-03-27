@@ -61,13 +61,6 @@ static const unsigned long BOOT_BTN_HOLD_MS = 5000;  // 5 seconds
 // Atomic: read by AsyncTCP task (broadcastState), written by loopTask
 std::atomic<bool> isMeasuringKH{false};
 
-// Publish measuring state to MQTT and set the atomic flag
-void setMeasuring(bool state) {
-  isMeasuringKH.store(state, std::memory_order_release);
-  if (mqttManager.isConnected()) {
-    mqttManager.publish(topicMeasuring, state ? "ON" : "OFF", true);
-  }
-}
 
 // Abort flag: set by AsyncTCP task (WebSocket handler), checked by loopTask in measurement loops
 static std::atomic<bool> abortRequested{false};
@@ -940,7 +933,7 @@ KHResult measureKH() {
     publishError("Measurement already in progress");
     return result;
   }
-  setMeasuring(true);
+  isMeasuringKH = true;
   abortRequested = false;  // Clear any stale abort
 
   // Read water temperature from sensor (or use default if no sensor)
@@ -972,7 +965,7 @@ KHResult measureKH() {
   float titV = configStore.getTitrationVolume();
   if (titV <= 0 || calU <= 0) {
     publishError("Error: invalid calibration or titration volume config");
-    setMeasuring(false);
+    isMeasuringKH = false;
     return result;
   }
   int prefillUnits = max(2, (int)round(prefillUL * calU / (titV * 1000.0f)));
@@ -980,14 +973,14 @@ KHResult measureKH() {
   // Validate calibration before starting
   if (!isCalibrationValid()) {
     publishError("Error: pH calibration invalid. Re-calibrate with pH 4/7/10 buffers.");
-    setMeasuring(false);
+    isMeasuringKH = false;
     return result;
   }
 
   if (!titrate(prefillUnits, configStore.getTitrationRPM())) {
     publishError("Error: titration pump timeout during prefill");
     digitalWrite(EN_PIN2, HIGH);
-    setMeasuring(false);
+    isMeasuringKH = false;
     return result;
   }
   // 5 Gran burst drops to eject any hanging drop from the tip before measurement
@@ -1023,16 +1016,16 @@ KHResult measureKH() {
       static char washErr[64];
       snprintf(washErr, sizeof(washErr), "Error: sample pump timeout during wash (%d/%d)", w + 1, numWashes);
       publishError(washErr);
-      setMeasuring(false);
+      isMeasuringKH = false;
       return result;
     }
     measurementYield();
-    if (abortRequested) { abortRequested = false; stopStirrer(); digitalWrite(EN_PIN2, HIGH); clearMultiWashContext(); publishError("Measurement aborted"); setMeasuring(false); return result; }
+    if (abortRequested) { abortRequested = false; stopStirrer(); digitalWrite(EN_PIN2, HIGH); clearMultiWashContext(); publishError("Measurement aborted"); isMeasuringKH = false; return result; }
     if (w < numWashes - 1) delay(1000);
   }
   clearMultiWashContext();
   measurementYield();
-  if (abortRequested) { abortRequested = false; stopStirrer(); digitalWrite(EN_PIN2, HIGH); publishError("Measurement aborted"); setMeasuring(false); return result; }
+  if (abortRequested) { abortRequested = false; stopStirrer(); digitalWrite(EN_PIN2, HIGH); publishError("Measurement aborted"); isMeasuringKH = false; return result; }
   delay(100);
   startStirrer();
   delay(STIRRER_WARMUP_MS);  // Wait for solution to homogenize
@@ -1602,7 +1595,7 @@ KHResult measureKH() {
   }
   publishMessage(doneBuf);
   abortRequested = false;
-  setMeasuring(false);
+  isMeasuringKH = false;
   return result;
 }
 
@@ -1938,10 +1931,7 @@ void loop() {
         mqttManager.publish(MQkhSmooth, mqBuf, true); }
     }
 
-    // Publish initial state for new entities
-    mqttManager.publish(topicMeasuring, isMeasuringKH.load() ? "ON" : "OFF", true);
-    { String nextM = scheduler.getNextMeasurementTime();
-      mqttManager.publish(topicNextMeas, nextM.c_str(), true); }
+    // New entity states (measuring, next_measurement) published in first diagnostics cycle
 
     discoveryPublished = true;
   }
@@ -2005,11 +1995,12 @@ void loop() {
     }
   }
 
-  // Publish diagnostics + next measurement time every 60s
+  // Publish diagnostics + new entity states every 60s
   if (mqttManager.isConnected() && millis() - lastDiagnosticsTime > 60000) {
     lastDiagnosticsTime = millis();
     setLoopHint("diagnostics");
     publishDiagnostics();
+    mqttManager.publish(topicMeasuring, isMeasuringKH ? "ON" : "OFF", true);
     { String nextM = scheduler.getNextMeasurementTime();
       mqttManager.publish(topicNextMeas, nextM.c_str(), true); }
   }
