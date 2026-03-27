@@ -133,9 +133,9 @@ static uint8_t granBufNWindows = 0;
 // Cached KH slope — updated after each measurement, avoids filesystem reads in broadcastState()
 static float cachedKHSlope = NAN;
 static float cachedKHIntercept = NAN;
-static uint32_t cachedKHSlopeDay0 = 0;
+static uint32_t cachedSlopeT0 = 0;
 static float cachedSlopeCI = NAN;
-static int cachedSlopeNDays = 0;
+static int cachedSlopeNPts = 0;
 
 // Cached NVS values for broadcastStateLight() — zero NVS reads during light broadcasts.
 // Written on Core 1 (loopTask) only; reads on Core 1 (broadcastStateLight). No cross-core sync needed.
@@ -882,8 +882,8 @@ void broadcastState() {
   if (!isnan(cachedKHSlope)) {
     doc["khSlope"] = serialized(String(cachedKHSlope, 4));
     doc["khIntercept"] = serialized(String(cachedKHIntercept, 3));
-    doc["khSlopeDay0"] = cachedKHSlopeDay0;
-    doc["slopeNDays"] = cachedSlopeNDays;
+    doc["khSlopeT0"] = cachedSlopeT0;
+    doc["slopeNPts"] = cachedSlopeNPts;
     if (!isnan(cachedSlopeCI)) doc["slopeCI"] = serialized(String(cachedSlopeCI, 3));
   }
   if (!isnan(lastConfidence)) doc["confidence"] = lastConfidence;
@@ -1429,7 +1429,7 @@ int getRecentKHValuesWithTime(uint32_t* outTimestamps, float* outValues, int max
   return count;
 }
 
-// Compute KH trend slope (dKH/day) from configurable lookback window using linear regression.
+// Compute KH trend slope (dKH/day) from configurable lookback window using OLS on all raw points.
 // Returns NAN if insufficient data (< 3 points).
 float computeKHSlope() {
   const char* filename = "/history/kh.csv";
@@ -1469,79 +1469,37 @@ float computeKHSlope() {
     return NAN;
   }
 
-  // Group measurements by calendar day and compute median per day.
-  // This eliminates diurnal cycle bias that plagued raw regression.
-  struct DayBucket { float vals[30]; int cnt; uint32_t dayIdx; };
-  DayBucket days[8];
-  int nDays = 0;
-
-  for (int i = 0; i < n; i++) {
-    uint32_t dayIdx = ts[i] / 86400;
-    int d = -1;
-    for (int j = 0; j < nDays; j++) {
-      if (days[j].dayIdx == dayIdx) { d = j; break; }
-    }
-    if (d < 0) {
-      if (nDays >= 8) continue;
-      d = nDays++;
-      days[d].dayIdx = dayIdx;
-      days[d].cnt = 0;
-    }
-    if (days[d].cnt < 30) {
-      days[d].vals[days[d].cnt++] = kh[i];
-    }
-  }
-
-  if (nDays < 2) {
-    Serial.printf("computeKHSlope: %d points but only %d calendar day (need 2)\n", n, nDays);
-    return NAN;
-  }
-
-  // Compute median of each day bucket and regress on (dayIdx, median)
+  // OLS regression on all raw points: x = time in days relative to first point
+  double t0 = (double)ts[0];
   double sx = 0, sy = 0, sxx = 0, sxy = 0;
-  double d0 = (double)days[0].dayIdx;
-  double medians[8];
-  double xvals[8];
-  for (int d = 0; d < nDays; d++) {
-    // Sort values to find median
-    for (int i = 1; i < days[d].cnt; i++) {
-      float key = days[d].vals[i];
-      int j = i - 1;
-      while (j >= 0 && days[d].vals[j] > key) {
-        days[d].vals[j + 1] = days[d].vals[j];
-        j--;
-      }
-      days[d].vals[j + 1] = key;
-    }
-    medians[d] = (double)days[d].vals[days[d].cnt / 2];
-    xvals[d] = (double)days[d].dayIdx - d0;
-
-    sx += xvals[d]; sy += medians[d]; sxx += xvals[d] * xvals[d]; sxy += xvals[d] * medians[d];
+  for (int i = 0; i < n; i++) {
+    double x = ((double)ts[i] - t0) / 86400.0;
+    double y = (double)kh[i];
+    sx += x; sy += y; sxx += x * x; sxy += x * y;
   }
-  double denom = (double)nDays * sxx - sx * sx;
+  double denom = (double)n * sxx - sx * sx;
   if (fabs(denom) < 1e-12) return NAN;
 
-  // Slope and intercept (dKH/day, x-axis is days)
-  double slope = ((double)nDays * sxy - sx * sy) / denom;
-  double intercept = (sy - slope * sx) / nDays;
+  double slope = ((double)n * sxy - sx * sy) / denom;
+  double intercept = (sy - slope * sx) / (double)n;
 
-  // Residual SE and slope CI
-  double Sxx = sxx - sx * sx / nDays;
+  // Residual SE and 95% CI on slope
+  double Sxx = sxx - sx * sx / (double)n;
   double ssRes = 0;
-  for (int d = 0; d < nDays; d++) {
-    double pred = slope * xvals[d] + intercept;
-    double r = medians[d] - pred;
+  for (int i = 0; i < n; i++) {
+    double x = ((double)ts[i] - t0) / 86400.0;
+    double r = (double)kh[i] - (slope * x + intercept);
     ssRes += r * r;
   }
-  double se = (nDays > 2) ? sqrt(ssRes / (nDays - 2)) : 0;
+  double se = (n > 2) ? sqrt(ssRes / (double)(n - 2)) : 0;
 
   cachedKHSlope = (float)slope;
   cachedKHIntercept = (float)intercept;
-  cachedKHSlopeDay0 = (uint32_t)days[0].dayIdx;
-  cachedSlopeNDays = nDays;
+  cachedSlopeT0 = ts[0];
+  cachedSlopeNPts = n;
   cachedSlopeCI = (Sxx > 0 && se > 0) ? (float)(1.96 * se / sqrt(Sxx)) : NAN;
-  Serial.printf("computeKHSlope: %.4f dKH/day (%d days, %d pts, day0=%u, intercept=%.3f)\n",
-                cachedKHSlope, nDays, n, cachedKHSlopeDay0, cachedKHIntercept);
+  Serial.printf("computeKHSlope: %.4f dKH/day (%d pts, t0=%u, intercept=%.3f)\n",
+                cachedKHSlope, n, cachedSlopeT0, cachedKHIntercept);
   return cachedKHSlope;
 }
 

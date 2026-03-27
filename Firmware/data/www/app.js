@@ -183,8 +183,8 @@
     if (d.khSlope != null) {
       serverSlope = parseFloat(d.khSlope);
       if (d.khIntercept != null) serverIntercept = parseFloat(d.khIntercept);
-      if (d.khSlopeDay0 != null) serverSlopeDay0 = d.khSlopeDay0;
-      if (d.slopeNDays != null) serverSlopeNDays = d.slopeNDays;
+      if (d.khSlopeT0 != null) serverSlopeT0 = d.khSlopeT0;
+      if (d.slopeNPts != null) serverSlopeNPts = d.slopeNPts;
       var st = isNaN(serverSlope) ? '--' : (serverSlope >= 0 ? '+' : '') + serverSlope.toFixed(2);
       setText('val-kh-slope', st);
       renderKHChart();  // re-render trend line with updated server params
@@ -678,7 +678,7 @@
     var now = data[data.length - 1][0];
     var cutoff = now - slopeHours * 3600;
     var trendOk = false;
-    if (!isNaN(serverSlope) && !isNaN(serverIntercept) && serverSlopeDay0 > 0) {
+    if (!isNaN(serverSlope) && !isNaN(serverIntercept) && serverSlopeT0 > 0) {
       // Find first and last data points within the slope window
       var firstIdx = -1, lastIdx = -1;
       for (var i = 0; i < data.length; i++) {
@@ -689,8 +689,8 @@
       }
       if (firstIdx >= 0 && lastIdx > firstIdx) {
         // 2-point straight line using {x,y} points
-        var xFirst = data[firstIdx][0] / 86400 - serverSlopeDay0;
-        var xLast = data[lastIdx][0] / 86400 - serverSlopeDay0;
+        var xFirst = (data[firstIdx][0] - serverSlopeT0) / 86400;
+        var xLast = (data[lastIdx][0] - serverSlopeT0) / 86400;
         khChart.data.datasets[2].data = [
           {x: data[firstIdx][0], y: serverSlope * xFirst + serverIntercept},
           {x: data[lastIdx][0], y: serverSlope * xLast + serverIntercept}
@@ -746,7 +746,7 @@
 
   // --- Charts ---
   var khChart, phChart, liveChart, granChart, granHistChart, effChart, noiseChart, precisionChart;
-  var serverSlope = NaN, serverIntercept = NaN, serverSlopeDay0 = 0, serverSlopeNDays = 0;
+  var serverSlope = NaN, serverIntercept = NaN, serverSlopeT0 = 0, serverSlopeNPts = 0;
   var granView = 'last'; // 'last' or 'history'
   var khHistoryData = null;  // raw kh history [[ts, val], ...]
   var granHistoryData = null; // raw gran history [[ts, r2, eqML, eph, mth, khG, khE, noiseMv, reversals, conf, khCI], ...]
