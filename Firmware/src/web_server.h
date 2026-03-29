@@ -67,6 +67,7 @@ void appendPrecisionHistory(uint32_t ts, int n, float mean, float sd, float vmin
 int getRecentKHValues(float* outValues, int maxCount);
 int getRecentKHValuesWithTime(uint32_t* outTimestamps, float* outValues, int maxCount);
 float computeKHSlope();
+void computePredictionCurve();
 extern float lastConfidence;
 extern std::atomic<bool> isMeasuringKH;
 

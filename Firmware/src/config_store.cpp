@@ -117,13 +117,13 @@ void ConfigStore::setStabilizationTimeout(int ms) {
   if (ms > 5000) ms = 5000;
   prefs.putInt("stab_ms", ms);
 }
-int ConfigStore::getGranMixDelay() {
+int ConfigStore::getMixDelay() {
   int ms = prefs.getInt("gran_mix", TITRATION_MIX_DELAY_GRAN_MS);
   if (ms < 500) ms = 500;
   if (ms > 5000) ms = 5000;
   return ms;
 }
-void ConfigStore::setGranMixDelay(int ms) {
+void ConfigStore::setMixDelay(int ms) {
   if (ms < 500) ms = 500;
   if (ms > 5000) ms = 5000;
   prefs.putInt("gran_mix", ms);

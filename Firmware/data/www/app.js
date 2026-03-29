@@ -189,6 +189,12 @@
       setText('val-kh-slope', st);
       renderKHChart();  // re-render trend line with updated server params
     }
+    if (d.predCurve != null) {
+      predCurveData = d.predCurve.map(function(p) { return [p[0], parseFloat(p[1])]; });
+    }
+    if (d.predPoints != null) {
+      predPointsData = d.predPoints.map(function(p) { return [p[0], parseFloat(p[1])]; });
+    }
     if (d.confidence != null) {
       setText('val-confidence', (d.confidence != null && !isNaN(d.confidence)) ? (d.confidence * 100).toFixed(0) + '%' : '--');
     }
@@ -255,7 +261,7 @@
       setInput('cfg-endpoint_method', d.config.endpoint_method);
       setInput('cfg-min_start_ph', d.config.min_start_ph);
       setInput('cfg-stab_timeout', d.config.stab_timeout);
-      setInput('cfg-gran_mix_delay', d.config.gran_mix_delay);
+      setInput('cfg-mix_delay', d.config.mix_delay);
       setInput('cfg-gran_min_r2', d.config.gran_min_r2);
       setInput('cfg-gran_readings', d.config.gran_readings);
       setInput('cfg-kh_ema_alpha', d.config.kh_ema_alpha);
@@ -617,6 +623,8 @@
       khChart.data.datasets[0].data = [];
       khChart.data.datasets[1].data = [];
       khChart.data.datasets[2].data = [];
+      khChart.data.datasets[3].data = [];
+      khChart.data.datasets[4].data = [];
       khChart.update();
       return;
     }
@@ -701,8 +709,23 @@
     if (!trendOk) {
       khChart.data.datasets[2].data = [];
     }
-    // Enforce minimum 1.5 dKH span on y-axis
+
+    // Dataset 3+4: prediction forecast curve + scheduled measurement points
+    if (predCurveData.length > 0) {
+      khChart.data.datasets[3].data = predCurveData.map(function(p) { return {x: p[0], y: p[1]}; });
+    } else {
+      khChart.data.datasets[3].data = [];
+    }
+    if (predPointsData.length > 0) {
+      khChart.data.datasets[4].data = predPointsData.map(function(p) { return {x: p[0], y: p[1]}; });
+    } else {
+      khChart.data.datasets[4].data = [];
+    }
+
+    // Enforce minimum 1.5 dKH span on y-axis (include forecast points)
     var vals = khChart.data.datasets[0].data.map(function(p) { return p.y; }).filter(function(v) { return v != null; });
+    var forecastVals = khChart.data.datasets[4].data.map(function(p) { return p.y; }).filter(function(v) { return v != null; });
+    vals = vals.concat(forecastVals);
     if (vals.length > 0) {
       var mn = Math.min.apply(null, vals);
       var mx = Math.max.apply(null, vals);
@@ -716,7 +739,9 @@
       }
     }
     khChart.options.scales.x.min = data[0][0];
-    khChart.options.scales.x.max = data[data.length - 1][0];
+    var xMax = data[data.length - 1][0];
+    if (predCurveData.length > 0) xMax = Math.max(xMax, predCurveData[predCurveData.length - 1][0]);
+    khChart.options.scales.x.max = xMax;
     khChart.update();
   }
 
@@ -747,6 +772,8 @@
   // --- Charts ---
   var khChart, phChart, liveChart, granChart, granHistChart, effChart, noiseChart, precisionChart;
   var serverSlope = NaN, serverIntercept = NaN, serverSlopeT0 = 0, serverSlopeNPts = 0;
+  var predCurveData = [];    // prediction curve [[ts, kh], ...]
+  var predPointsData = [];   // predicted measurement points [[ts, kh], ...]
   var granView = 'last'; // 'last' or 'history'
   var khHistoryData = null;  // raw kh history [[ts, val], ...]
   var granHistoryData = null; // raw gran history [[ts, r2, eqML, eph, mth, khG, khE, noiseMv, reversals, conf, khCI], ...]
@@ -779,7 +806,9 @@
       data: { datasets: [
         { label: 'KH', data: [], backgroundColor: '#0a84ff', borderColor: '#0a84ff', borderWidth: 0, pointRadius: 3, pointBackgroundColor: '#0a84ff', pointBorderColor: '#0a84ff', showLine: false, yAxisID: 'y', order: 1 },
         { label: 'Smooth', data: [], borderColor: '#0a84ff', borderWidth: 3, pointRadius: 0, showLine: true, cubicInterpolationMode: 'monotone', tension: 0.4, yAxisID: 'y', order: 2 },
-        { label: 'Trend', data: [], borderColor: 'rgba(255,159,10,0.6)', borderWidth: 2, borderDash: [6,3], pointRadius: 0, showLine: true, tension: 0, spanGaps: true, yAxisID: 'y', order: 0 }
+        { label: 'Trend', data: [], borderColor: 'rgba(255,159,10,0.6)', borderWidth: 2, borderDash: [6,3], pointRadius: 0, showLine: true, tension: 0, spanGaps: true, yAxisID: 'y', order: 0 },
+        { label: 'Forecast', data: [], borderColor: 'rgba(10,132,255,0.35)', borderWidth: 2, borderDash: [4,4], pointRadius: 0, showLine: true, cubicInterpolationMode: 'monotone', tension: 0.4, yAxisID: 'y', order: 2 },
+        { label: 'ForecastPts', data: [], backgroundColor: 'rgba(10,132,255,0.3)', borderColor: 'rgba(10,132,255,0.3)', borderWidth: 0, pointRadius: 4, showLine: false, yAxisID: 'y', order: 1 }
       ] },
       options: {
         responsive: true, maintainAspectRatio: false, animation: false,
@@ -906,11 +935,12 @@
 
   // --- KH Chart Layer Toggles ---
   function initKHLayers() {
-    // Datasets: 0=Points, 1=Smooth, 2=Trend
+    // Datasets: 0=Points, 1=Smooth, 2=Trend, 3=Forecast line, 4=Forecast points
     var map = [
       ['kh-show-points', [0]],
       ['kh-show-smooth', [1]],
-      ['kh-show-trend', [2]]
+      ['kh-show-trend', [2]],
+      ['kh-show-forecast', [3, 4]]
     ];
     // Restore saved state from localStorage
     var saved = {};

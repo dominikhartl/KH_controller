@@ -150,6 +150,46 @@ String Scheduler::getNextMeasurementTime() {
   return String(buf);
 }
 
+uint8_t Scheduler::getNextScheduledTimestamps(uint32_t* outTimestamps, uint8_t maxCount) {
+  if (!timeSynced || maxCount == 0) return 0;
+  if (configStore.getScheduleMode() == 2) return 0;  // scheduling disabled
+
+  struct tm timeinfo;
+  if (!getLocalTime(&timeinfo)) return 0;
+
+  uint16_t currentMinutes = timeinfo.tm_hour * 60 + timeinfo.tm_min;
+
+  uint16_t slots[24];
+  uint8_t slotCount = buildEffectiveSlots(slots, 24);
+  if (slotCount == 0) return 0;
+
+  // Sort slots ascending
+  for (uint8_t i = 0; i < slotCount - 1; i++)
+    for (uint8_t j = i + 1; j < slotCount; j++)
+      if (slots[j] < slots[i]) { uint16_t tmp = slots[i]; slots[i] = slots[j]; slots[j] = tmp; }
+
+  // Get current midnight as Unix timestamp
+  struct tm midnight = timeinfo;
+  midnight.tm_hour = 0; midnight.tm_min = 0; midnight.tm_sec = 0;
+  time_t midnightTs = mktime(&midnight);
+
+  uint8_t out = 0;
+  // First pass: remaining slots today
+  for (uint8_t i = 0; i < slotCount && out < maxCount; i++) {
+    if (slots[i] > currentMinutes) {
+      outTimestamps[out++] = (uint32_t)midnightTs + (uint32_t)slots[i] * 60;
+    }
+  }
+  // Subsequent days until we have enough
+  for (uint8_t day = 1; out < maxCount && day <= 7; day++) {
+    uint32_t dayBase = (uint32_t)midnightTs + (uint32_t)day * 86400;
+    for (uint8_t i = 0; i < slotCount && out < maxCount; i++) {
+      outTimestamps[out++] = dayBase + (uint32_t)slots[i] * 60;
+    }
+  }
+  return out;
+}
+
 String Scheduler::getCurrentTime() {
   if (!timeSynced) return "";
 

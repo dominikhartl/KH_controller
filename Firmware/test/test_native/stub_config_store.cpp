@@ -83,7 +83,7 @@ float ConfigStore::getFastTitrationPH() { return 5.0f; }
 uint8_t ConfigStore::getEndpointMethod() { return 0; }
 float ConfigStore::getMinStartPH() { return 7.5f; }
 int ConfigStore::getStabilizationTimeout() { return 2000; }
-int ConfigStore::getGranMixDelay() { return 2500; }
+int ConfigStore::getMixDelay() { return 2500; }
 void ConfigStore::setTitrationVolume(float) {}
 void ConfigStore::setSampleVolume(float) {}
 void ConfigStore::setCorrectionFactor(float) {}
@@ -94,7 +94,7 @@ void ConfigStore::setFastTitrationPH(float) {}
 void ConfigStore::setEndpointMethod(uint8_t) {}
 void ConfigStore::setMinStartPH(float) {}
 void ConfigStore::setStabilizationTimeout(int) {}
-void ConfigStore::setGranMixDelay(int) {}
+void ConfigStore::setMixDelay(int) {}
 void ConfigStore::setGranMinR2(float v) { _granMinR2 = v; }
 float ConfigStore::getDropVolumeUL() { return 26.0f; }
 void ConfigStore::setDropVolumeUL(float) {}

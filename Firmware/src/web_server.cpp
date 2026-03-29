@@ -137,6 +137,16 @@ static uint32_t cachedSlopeT0 = 0;
 static float cachedSlopeCI = NAN;
 static int cachedSlopeNPts = 0;
 
+// Cached prediction curve for chart forecast visualization
+static const int PRED_CURVE_MAX = 25;
+static const int PRED_POINTS_MAX = 4;
+static uint32_t predCurveTs[PRED_CURVE_MAX];
+static float predCurveKH[PRED_CURVE_MAX];
+static int predCurveCount = 0;
+static uint32_t predPointTs[PRED_POINTS_MAX];
+static float predPointKH[PRED_POINTS_MAX];
+static int predPointCount = 0;
+
 // Cached NVS values for broadcastStateLight() — zero NVS reads during light broadcasts.
 // Written on Core 1 (loopTask) only; reads on Core 1 (broadcastStateLight). No cross-core sync needed.
 static float cachedKH = 0;
@@ -540,8 +550,8 @@ static void handleWebSocketMessage(AsyncWebSocketClient* client, void* arg, uint
         configStore.setStabilizationTimeout((int)value);
         setStabilizationTimeoutMs(configStore.getStabilizationTimeout());
       }
-      else if (strcmp(key, "gran_mix_delay") == 0) {
-        configStore.setGranMixDelay((int)value);
+      else if (strcmp(key, "mix_delay") == 0) {
+        configStore.setMixDelay((int)value);
       }
       else if (strcmp(key, "gran_min_r2") == 0 && value >= 0.990f && value <= 1.000f) {
         configStore.setGranMinR2(value);
@@ -587,6 +597,7 @@ static void handleWebSocketMessage(AsyncWebSocketClient* client, void* arg, uint
       else if (strcmp(key, "slope_hours") == 0) {
         configStore.setSlopeWindowHours((int)value);
         computeKHSlope();  // refresh cached slope with new window
+        computePredictionCurve();
       }
       else if (strcmp(key, "ph_sensor") == 0) {
         configStore.setPhSensorType((uint8_t)(int)value);
@@ -886,6 +897,25 @@ void broadcastState() {
     doc["slopeNPts"] = cachedSlopeNPts;
     if (!isnan(cachedSlopeCI)) doc["slopeCI"] = serialized(String(cachedSlopeCI, 3));
   }
+
+  // Prediction curve for chart forecast visualization
+  if (predCurveCount > 0) {
+    JsonArray pc = doc["predCurve"].to<JsonArray>();
+    for (int i = 0; i < predCurveCount; i++) {
+      JsonArray pt = pc.add<JsonArray>();
+      pt.add(predCurveTs[i]);
+      pt.add(serialized(String(predCurveKH[i], 2)));
+    }
+  }
+  if (predPointCount > 0) {
+    JsonArray pp = doc["predPoints"].to<JsonArray>();
+    for (int i = 0; i < predPointCount; i++) {
+      JsonArray pt = pp.add<JsonArray>();
+      pt.add(predPointTs[i]);
+      pt.add(serialized(String(predPointKH[i], 2)));
+    }
+  }
+
   if (!isnan(lastConfidence)) doc["confidence"] = lastConfidence;
   if (!isnan(lastKHResult.khCI)) doc["khCI"] = serialized(String(lastKHResult.khCI, 3));
 
@@ -939,7 +969,7 @@ void broadcastState() {
   cfg["endpoint_method"] = configStore.getEndpointMethod();
   cfg["min_start_ph"] = configStore.getMinStartPH();
   cfg["stab_timeout"] = configStore.getStabilizationTimeout();
-  cfg["gran_mix_delay"] = configStore.getGranMixDelay();
+  cfg["mix_delay"] = configStore.getMixDelay();
   cfg["gran_min_r2"] = configStore.getGranMinR2();
   cfg["drop_ul"] = configStore.getDropVolumeUL();
   cfg["titration_rpm"]   = configStore.getTitrationRPM();
@@ -1398,9 +1428,9 @@ int getRecentKHValuesWithTime(uint32_t* outTimestamps, float* outValues, int max
   File f = LittleFS.open(filename, "r");
   if (!f) return 0;
 
-  int cap = (maxCount > 10) ? 10 : maxCount;
-  uint32_t tsRing[10];
-  float valRing[10];
+  int cap = (maxCount > 30) ? 30 : maxCount;
+  uint32_t tsRing[30];
+  float valRing[30];
   int count = 0;
   int head = 0;
 
@@ -1501,6 +1531,163 @@ float computeKHSlope() {
   Serial.printf("computeKHSlope: %.4f dKH/day (%d pts, t0=%u, intercept=%.3f)\n",
                 cachedKHSlope, n, cachedSlopeT0, cachedKHIntercept);
   return cachedKHSlope;
+}
+
+// Get fractional local hour (0.0–23.99) from a Unix timestamp
+static float predLocalHourFrac(uint32_t ts) {
+  time_t t = (time_t)ts;
+  struct tm tm;
+  localtime_r(&t, &tm);
+  return tm.tm_hour + tm.tm_min / 60.0f;
+}
+
+// Solve 4×4 system via Gaussian elimination with partial pivoting (same as main.cpp copy)
+static bool predSolve4x4(float aug[4][5]) {
+  for (int col = 0; col < 4; col++) {
+    int best = col;
+    float bestVal = fabsf(aug[col][col]);
+    for (int row = col + 1; row < 4; row++) {
+      if (fabsf(aug[row][col]) > bestVal) { bestVal = fabsf(aug[row][col]); best = row; }
+    }
+    if (best != col) {
+      for (int k = 0; k < 5; k++) { float tmp = aug[col][k]; aug[col][k] = aug[best][k]; aug[best][k] = tmp; }
+    }
+    if (fabsf(aug[col][col]) < 1e-9f) return false;
+    for (int row = col + 1; row < 4; row++) {
+      float f = aug[row][col] / aug[col][col];
+      for (int k = col; k < 5; k++) aug[row][k] -= f * aug[col][k];
+    }
+  }
+  for (int row = 3; row >= 0; row--) {
+    for (int k = row + 1; k < 4; k++) aug[row][4] -= aug[row][k] * aug[k][4];
+    aug[row][4] /= aug[row][row];
+  }
+  return true;
+}
+
+// Evaluate 4-param model at a given timestamp
+static float evalPredModel(float a, float b, float c, float d, uint32_t t0, uint32_t ts) {
+  float x = (float)(ts - t0) / 3600.0f;
+  float angle = 2.0f * M_PI * predLocalHourFrac(ts) / 24.0f;
+  return a + b * x + c * sinf(angle) + d * cosf(angle);
+}
+
+// Evaluate 2-param model at a given timestamp
+static float evalLinearModel(float slope, float intercept, uint32_t t0, uint32_t ts) {
+  float x = (float)(ts - t0) / 3600.0f;
+  return intercept + slope * x;
+}
+
+void computePredictionCurve() {
+  predCurveCount = 0;
+  predPointCount = 0;
+
+  const char* filename = "/history/kh.csv";
+  if (!LittleFS.exists(filename)) return;
+
+  uint32_t now = (uint32_t)time(nullptr);
+  if (now < MIN_VALID_EPOCH) return;
+  int slopeHours = configStore.getSlopeWindowHours();
+  uint32_t cutoff = now - ((uint32_t)slopeHours * 3600);
+
+  // Read history within slope window
+  static const int MAX_PTS = 200;
+  uint32_t ts[MAX_PTS];
+  float kh[MAX_PTS];
+  int n = 0;
+
+  File f = LittleFS.open(filename, "r");
+  if (!f) return;
+  while (f.available() && n < MAX_PTS) {
+    String line = f.readStringUntil('\n');
+    yield();
+    if (line.length() == 0) continue;
+    int comma = line.indexOf(',');
+    if (comma < 0) continue;
+    uint32_t t = line.substring(0, comma).toInt();
+    float v = line.substring(comma + 1).toFloat();
+    if (t >= cutoff && v > 0) {
+      ts[n] = t; kh[n] = v; n++;
+    }
+  }
+  f.close();
+
+  if (n < 3) return;
+
+  uint32_t t0 = ts[0];
+  uint32_t lastTs = ts[n - 1];
+  bool useDiurnal = false;
+  float a = 0, b = 0, c = 0, d = 0;
+
+  // Try 4-parameter fit if enough data
+  if (n >= KH_DIURNAL_MIN_POINTS) {
+    float XtX[4][4] = {};
+    float Xty[4] = {};
+    for (int i = 0; i < n; i++) {
+      float x1 = (float)(ts[i] - t0) / 3600.0f;
+      float angle = 2.0f * M_PI * predLocalHourFrac(ts[i]) / 24.0f;
+      float row[4] = { 1.0f, x1, sinf(angle), cosf(angle) };
+      for (int j = 0; j < 4; j++) {
+        for (int k = j; k < 4; k++) XtX[j][k] += row[j] * row[k];
+        Xty[j] += row[j] * kh[i];
+      }
+    }
+    for (int j = 0; j < 4; j++)
+      for (int k = 0; k < j; k++) XtX[j][k] = XtX[k][j];
+
+    float aug[4][5];
+    for (int j = 0; j < 4; j++) {
+      for (int k = 0; k < 4; k++) aug[j][k] = XtX[j][k];
+      aug[j][4] = Xty[j];
+    }
+
+    if (predSolve4x4(aug)) {
+      a = aug[0][4]; b = aug[1][4]; c = aug[2][4]; d = aug[3][4];
+      if (fabsf(b) <= 1.0f) {
+        useDiurnal = true;
+      }
+    }
+  }
+
+  // Fall back to 2-param linear if diurnal fit failed
+  float linSlope = 0, linIntercept = 0;
+  if (!useDiurnal) {
+    double sx = 0, sy = 0, sxx = 0, sxy = 0;
+    for (int i = 0; i < n; i++) {
+      double x = ((double)ts[i] - (double)t0) / 3600.0;
+      double y = (double)kh[i];
+      sx += x; sy += y; sxx += x * x; sxy += x * y;
+    }
+    double dn = (double)n * sxx - sx * sx;
+    if (fabs(dn) < 1e-12) return;
+    linSlope = (float)(((double)n * sxy - sx * sy) / dn);
+    linIntercept = (float)((sy - (double)linSlope * sx) / (double)n);
+    if (fabsf(linSlope) > 1.0f) return;
+  }
+
+  // Generate curve points: hourly from last measurement to +24h
+  for (int h = 0; h <= 24 && predCurveCount < PRED_CURVE_MAX; h++) {
+    uint32_t pt = lastTs + (uint32_t)h * 3600;
+    predCurveTs[predCurveCount] = pt;
+    predCurveKH[predCurveCount] = useDiurnal
+        ? evalPredModel(a, b, c, d, t0, pt)
+        : evalLinearModel(linSlope, linIntercept, t0, pt);
+    predCurveCount++;
+  }
+
+  // Generate predicted measurement points at next 4 scheduled times
+  uint32_t schedTs[4];
+  uint8_t schedCount = scheduler.getNextScheduledTimestamps(schedTs, 4);
+  for (uint8_t i = 0; i < schedCount && predPointCount < PRED_POINTS_MAX; i++) {
+    predPointTs[predPointCount] = schedTs[i];
+    predPointKH[predPointCount] = useDiurnal
+        ? evalPredModel(a, b, c, d, t0, schedTs[i])
+        : evalLinearModel(linSlope, linIntercept, t0, schedTs[i]);
+    predPointCount++;
+  }
+
+  Serial.printf("predictionCurve: %d curve pts, %d sched pts, diurnal=%d\n",
+                predCurveCount, predPointCount, useDiurnal);
 }
 
 // NAN-safe float formatter for JSON diagnostics output
@@ -1689,7 +1876,7 @@ void setupWebServer() {
               "\"correction_factor\":%.3f,\"hcl_molarity\":%.4f,"
               "\"hcl_volume\":%.1f,\"cal_units\":%d,"
               "\"fast_ph\":%.1f,\"endpoint_method\":%d,"
-              "\"min_start_ph\":%.1f,\"stab_timeout\":%d,\"gran_mix_delay\":%d,"
+              "\"min_start_ph\":%.1f,\"stab_timeout\":%d,\"mix_delay\":%d,"
               "\"drop_ul\":%.1f,\"titration_rpm\":%.1f,\"gran_burst_rpm\":%.1f,\"gran_burst_accel\":%u,\"fast_phase_rpm\":%.1f,\"prefill_ul\":%.1f,"
               "\"max_acid_ml\":%.1f,\"fast_step_ul\":%d,"
               "\"cal_v4\":%.2f,\"cal_v7\":%.2f,\"cal_v10\":%.2f,"
@@ -1703,7 +1890,7 @@ void setupWebServer() {
               configStore.getCorrectionFactor(), configStore.getHClMolarity(),
               configStore.getHClVolume(), configStore.getCalUnits(),
               configStore.getFastTitrationPH(), (int)configStore.getEndpointMethod(),
-              configStore.getMinStartPH(), configStore.getStabilizationTimeout(), configStore.getGranMixDelay(),
+              configStore.getMinStartPH(), configStore.getStabilizationTimeout(), configStore.getMixDelay(),
               configStore.getDropVolumeUL(), configStore.getTitrationRPM(), configStore.getGranBurstRPM(), configStore.getGranBurstAccel(), configStore.getFastPhaseRPM(), configStore.getPrefillVolumeUL(),
               configStore.getMaxAcidML(), configStore.getFastStepUL(),
               voltage_4PH, voltage_7PH, voltage_10PH,

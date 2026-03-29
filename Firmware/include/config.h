@@ -33,7 +33,8 @@ static const float PH_FAST_OUTLIER_THRESHOLD = 0.3f;  // Fast mode: ±0.3 pH fro
 static const float VOLTAGE_OUTLIER_THRESHOLD = 30.0f; // ±30 mV from median (~0.2 pH equivalent)
 
 // KH measurement outlier validation (trend-based)
-static const int KH_OUTLIER_HISTORY_COUNT = 6;           // Recent measurements for trend prediction
+static const int KH_OUTLIER_HISTORY_COUNT = 28;          // 7 days of history for trend + diurnal prediction
+static const int KH_DIURNAL_MIN_POINTS = 8;              // Need 2+ days before fitting diurnal model
 static const float KH_OUTLIER_MIN_THRESHOLD = 0.3f;     // Floor: never tighter than this (dKH)
 static const float KH_OUTLIER_SIGMA_MULT = 3.0f;        // Adaptive: 3× residual scatter
 static const float KH_OUTLIER_FALLBACK_THRESHOLD = 0.5f; // Flat threshold when <3 history points

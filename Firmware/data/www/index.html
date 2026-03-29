@@ -99,6 +99,7 @@
       <label><input type="checkbox" id="kh-show-smooth" checked> Smooth</label>
       <label><input type="checkbox" id="kh-show-trend" checked> Trend</label>
       <label><input type="checkbox" id="kh-show-score"> Score</label>
+      <label><input type="checkbox" id="kh-show-forecast" checked> Forecast</label>
     </div>
     <div id="kh-trend" class="chart-sub">Trend: <strong id="val-kh-slope">--</strong> dKH/day</div>
     <div id="gran-info" class="gran-info" style="display:none"></div>
@@ -262,8 +263,8 @@
         <label>Stabilization Timeout (ms)
           <input type="number" id="cfg-stab_timeout" step="100" min="500" max="5000">
         </label>
-        <label>Gran Mix Delay (ms)
-          <input type="number" id="cfg-gran_mix_delay" step="100" min="500" max="5000">
+        <label>Mix Delay (ms)
+          <input type="number" id="cfg-mix_delay" step="100" min="500" max="5000">
         </label>
         <label>Gran Readings / Step
           <input type="number" id="cfg-gran_readings" step="1" min="3" max="50" value="10">

@@ -155,6 +155,7 @@ static void publishKHResult(const KHResult& r) {
 
   // Compute and publish KH trend slope (dKH/day) from configured window
   float slope = computeKHSlope();
+  computePredictionCurve();
   if (!isnan(slope)) {
     char mqBuf[16]; snprintf(mqBuf, sizeof(mqBuf), "%.3f", slope);
     mqttManager.publish(MQkhSlope, mqBuf, true);
@@ -172,15 +173,51 @@ struct KHPrediction {
   bool  hasTrend;   // True if ≥3 points and trend is plausible
 };
 
-// Predict expected KH at time 'now' using local linear regression on recent history.
-// Falls back gracefully: ≥3 pts → OLS trend, 1-2 pts → last value, 0 pts → NAN.
+// Get fractional local hour (0.0–23.99) from a Unix timestamp using the device timezone.
+static float localHourFrac(uint32_t ts) {
+  time_t t = (time_t)ts;
+  struct tm tm;
+  localtime_r(&t, &tm);
+  return tm.tm_hour + tm.tm_min / 60.0f;
+}
+
+// Solve a 4×4 linear system Ax = b in-place via Gaussian elimination with partial pivoting.
+// aug is a 4×5 augmented matrix [A|b]. Solution returned in aug[i][4]. Returns false if singular.
+static bool solve4x4(float aug[4][5]) {
+  for (int col = 0; col < 4; col++) {
+    // Partial pivot
+    int best = col;
+    float bestVal = fabsf(aug[col][col]);
+    for (int row = col + 1; row < 4; row++) {
+      if (fabsf(aug[row][col]) > bestVal) { bestVal = fabsf(aug[row][col]); best = row; }
+    }
+    if (best != col) {
+      for (int k = 0; k < 5; k++) { float tmp = aug[col][k]; aug[col][k] = aug[best][k]; aug[best][k] = tmp; }
+    }
+    if (fabsf(aug[col][col]) < 1e-9f) return false;
+    // Eliminate below
+    for (int row = col + 1; row < 4; row++) {
+      float f = aug[row][col] / aug[col][col];
+      for (int k = col; k < 5; k++) aug[row][k] -= f * aug[col][k];
+    }
+  }
+  // Back-substitution
+  for (int row = 3; row >= 0; row--) {
+    for (int k = row + 1; k < 4; k++) aug[row][4] -= aug[row][k] * aug[k][4];
+    aug[row][4] /= aug[row][row];
+  }
+  return true;
+}
+
+// Predict expected KH at time 'now' using recent history.
+// Fallback chain: ≥8 pts → linear+diurnal (4-param), 3-7 → linear (2-param), 1-2 → last value, 0 → NAN.
 static KHPrediction predictKH(const uint32_t* timestamps, const float* values,
                                int count, uint32_t now) {
   KHPrediction p = { NAN, 0, false };
   if (count == 0) return p;
 
   if (count < 3) {
-    p.predicted = values[count - 1];  // use most recent value
+    p.predicted = values[count - 1];
     return p;
   }
 
@@ -190,22 +227,69 @@ static KHPrediction predictKH(const uint32_t* timestamps, const float* values,
     return p;
   }
 
-  // OLS regression: KH = intercept + slope * t_hours
-  // Time in hours relative to oldest point for numerical stability
   uint32_t t0 = timestamps[0];
+
+  // --- 4-parameter fit: KH = a + b*hours + c*sin(2π*localHour/24) + d*cos(2π*localHour/24) ---
+  if (count >= KH_DIURNAL_MIN_POINTS) {
+    // Build X'X (4×4) and X'y (4×1)
+    float XtX[4][4] = {};
+    float Xty[4] = {};
+    for (int i = 0; i < count; i++) {
+      float x1 = (float)(timestamps[i] - t0) / 3600.0f;
+      float angle = 2.0f * M_PI * localHourFrac(timestamps[i]) / 24.0f;
+      float row[4] = { 1.0f, x1, sinf(angle), cosf(angle) };
+      for (int j = 0; j < 4; j++) {
+        for (int k = j; k < 4; k++) XtX[j][k] += row[j] * row[k];
+        Xty[j] += row[j] * values[i];
+      }
+    }
+    // Fill symmetric lower triangle
+    for (int j = 0; j < 4; j++)
+      for (int k = 0; k < j; k++) XtX[j][k] = XtX[k][j];
+
+    // Augmented matrix [XtX | Xty]
+    float aug[4][5];
+    for (int j = 0; j < 4; j++) {
+      for (int k = 0; k < 4; k++) aug[j][k] = XtX[j][k];
+      aug[j][4] = Xty[j];
+    }
+
+    if (solve4x4(aug)) {
+      float a = aug[0][4], b = aug[1][4], c = aug[2][4], d = aug[3][4];
+
+      // Guard: reject implausible linear slope (>1 dKH/hour)
+      if (fabsf(b) <= 1.0f) {
+        float xNow = (float)(now - t0) / 3600.0f;
+        float angleNow = 2.0f * M_PI * localHourFrac(now) / 24.0f;
+        p.predicted = a + b * xNow + c * sinf(angleNow) + d * cosf(angleNow);
+
+        // Residual scatter σ = sqrt(SSR / (n-4))
+        float ssr = 0;
+        for (int i = 0; i < count; i++) {
+          float x1 = (float)(timestamps[i] - t0) / 3600.0f;
+          float angle = 2.0f * M_PI * localHourFrac(timestamps[i]) / 24.0f;
+          float pred = a + b * x1 + c * sinf(angle) + d * cosf(angle);
+          float r = values[i] - pred;
+          ssr += r * r;
+        }
+        p.sigma = sqrtf(ssr / ((float)count - 4.0f));
+        p.hasTrend = true;
+        return p;
+      }
+    }
+    // Fall through to 2-parameter if singular or implausible slope
+  }
+
+  // --- 2-parameter fit: KH = intercept + slope * hours ---
   float sumX = 0, sumY = 0, sumXX = 0, sumXY = 0;
   for (int i = 0; i < count; i++) {
     float x = (float)(timestamps[i] - t0) / 3600.0f;
     float y = values[i];
-    sumX += x;
-    sumY += y;
-    sumXX += x * x;
-    sumXY += x * y;
+    sumX += x; sumY += y; sumXX += x * x; sumXY += x * y;
   }
   float n = (float)count;
   float denom = n * sumXX - sumX * sumX;
   if (fabsf(denom) < 1e-9f) {
-    // Degenerate: all timestamps identical — use mean
     p.predicted = sumY / n;
     return p;
   }
@@ -213,16 +297,14 @@ static KHPrediction predictKH(const uint32_t* timestamps, const float* values,
   float slope = (n * sumXY - sumX * sumY) / denom;
   float intercept = (sumY - slope * sumX) / n;
 
-  // Guard: reject implausible slopes (>1 dKH/hour is physically impossible)
   if (fabsf(slope) > 1.0f) {
-    p.predicted = sumY / n;  // fall back to mean
+    p.predicted = sumY / n;
     return p;
   }
 
   float tNow = (float)(now - t0) / 3600.0f;
   p.predicted = intercept + slope * tNow;
 
-  // Compute residual scatter σ = sqrt(SSR / (n-2))
   float ssr = 0;
   for (int i = 0; i < count; i++) {
     float x = (float)(timestamps[i] - t0) / 3600.0f;
@@ -261,8 +343,8 @@ static bool isSuspect(const KHResult& r, const KHPrediction& pred, char* reasonB
 // Measure KH with trend-based outlier detection and cross-validation checks
 void measureKHWithValidation() {
   // Read recent timestamped history BEFORE measuring (so current measurement is not included)
-  uint32_t recentTs[10];
-  float recent[10];
+  uint32_t recentTs[30];
+  float recent[30];
   int histCount = getRecentKHValuesWithTime(recentTs, recent, KH_OUTLIER_HISTORY_COUNT);
   uint32_t now = (uint32_t)time(nullptr);
   KHPrediction pred = predictKH(recentTs, recent, histCount, now);
@@ -1212,7 +1294,7 @@ KHResult measureKH() {
     int cachedMediumStepVol = max(4, (int)round(40.0f * cachedUnitsPerUL));
     float cachedGranRPM      = configStore.getGranBurstRPM();
     uint32_t cachedGranAccel = configStore.getGranBurstAccel();
-    int cachedGranMixDelay   = configStore.getGranMixDelay();
+    int cachedMixDelay       = configStore.getMixDelay();
 
     while (!isnan(pH) && pH > stopPH && units < maxUnits
            && errorflag == 0) {
@@ -1230,7 +1312,12 @@ KHResult measureKH() {
           errorflag = 1;
           break;
         }
-        delay(TITRATION_MIX_DELAY_MEDIUM_MS);
+        { unsigned long mixEnd = millis() + cachedMixDelay;
+          while (millis() < mixEnd) {
+            delay(500);
+            measurementYield();
+          }
+        }
         measurePHStabilized(isExternalADCActive() ? 3 : 8);
       } else {
         // Gran zone (pH below GRAN_REGION_PH): smaller steps, stabilization, accurate readings
@@ -1242,7 +1329,7 @@ KHResult measureKH() {
           break;
         }
         // Yielding mix delay: feed UI/MQTT every 500ms instead of blocking
-        { unsigned long mixEnd = millis() + cachedGranMixDelay;
+        { unsigned long mixEnd = millis() + cachedMixDelay;
           while (millis() < mixEnd) {
             delay(500);
             measurementYield();
@@ -1796,6 +1883,7 @@ void setup() {
   setupWebServer();
   initBroadcastCache();  // populate RAM caches (KH, startPH, HCl) from NVS — before first broadcast
   computeKHSlope();  // populate cached slope for broadcastState()
+  computePredictionCurve();
   {
     int reason = esp_reset_reason();
     Serial.printf("Reset reason: %d\n", reason);
@@ -1900,6 +1988,7 @@ void loop() {
   if (!slopeRecomputed && scheduler.isTimeSynced()) {
     slopeRecomputed = true;
     float slope = computeKHSlope();
+    computePredictionCurve();
     if (!isnan(slope)) {
       char mqBuf[16]; snprintf(mqBuf, sizeof(mqBuf), "%.3f", slope);
       mqttManager.publish(MQkhSlope, mqBuf, true);

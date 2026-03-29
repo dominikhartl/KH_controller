@@ -21,6 +21,9 @@ public:
   String getNextMeasurementTime();
   String getCurrentTime();
 
+  // Get next N scheduled measurement timestamps as Unix seconds (for prediction chart)
+  uint8_t getNextScheduledTimestamps(uint32_t* outTimestamps, uint8_t maxCount);
+
 private:
   MeasurementCallback callback = nullptr;
   bool timeSynced = false;
