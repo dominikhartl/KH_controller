@@ -16,8 +16,22 @@ void initTemperature() {
   if (!oneWire) { Serial.println("FATAL: OneWire alloc failed"); return; }
   sensors = new DallasTemperature(oneWire);
   if (!sensors) { Serial.println("FATAL: DallasTemp alloc failed"); return; }
-  sensors->begin();
-  sensorFound = sensors->getDeviceCount() > 0;
+  constexpr int kBootProbeAttempts = 5;
+  constexpr unsigned long kBootProbeDelayMs = 200;
+  for (int attempt = 1; attempt <= kBootProbeAttempts; ++attempt) {
+    sensors->begin();
+    if (sensors->getDeviceCount() > 0) {
+      sensorFound = true;
+      if (attempt > 1) {
+        Serial.printf("DS18B20 detected on attempt %d/%d\n", attempt, kBootProbeAttempts);
+      }
+      break;
+    }
+    if (attempt < kBootProbeAttempts) {
+      Serial.printf("DS18B20 not found on attempt %d/%d, retrying...\n", attempt, kBootProbeAttempts);
+      delay(kBootProbeDelayMs);
+    }
+  }
   if (sensorFound) {
     sensors->setResolution(12);  // 0.0625°C precision
     sensors->setWaitForConversion(true);
@@ -39,7 +53,23 @@ void initTemperature() {
 }
 
 float getWaterTemperatureC() {
-  if (!sensorFound || !sensors) return SENSOR_ERROR_FALLBACK_C;
+  if (!sensors) return SENSOR_ERROR_FALLBACK_C;
+  if (!sensorFound) {
+    static unsigned long lastReprobeMs = 0;
+    unsigned long now = millis();
+    if (lastReprobeMs == 0 || now - lastReprobeMs >= 30000UL) {
+      lastReprobeMs = now;
+      sensors->begin();
+      if (sensors->getDeviceCount() > 0) {
+        sensorFound = true;
+        sensors->setResolution(12);
+        sensors->setWaitForConversion(true);
+        Serial.println("DS18B20 temperature sensor detected (recovered)");
+        publishMessage("Temperature sensor detected (recovered)");
+      }
+    }
+    if (!sensorFound) return SENSOR_ERROR_FALLBACK_C;
+  }
   sensors->requestTemperatures();
   float t = sensors->getTempCByIndex(0);
   if (t <= DEVICE_DISCONNECTED_C + 1.0f || t == 85.0f) return SENSOR_ERROR_FALLBACK_C;
