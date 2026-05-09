@@ -134,7 +134,7 @@ The device uses MQTT auto-discovery, so entities appear automatically in Home As
 
 ### Entities Created
 
-**Sensors**: KH value (dKH), pH (start), measured pH (live), KH trend (dKH/day), measurement confidence, Gran R², cross-validation diff, data points, measurement time, sample volume (computed from calibration), WiFi signal, uptime, probe health, acid slope efficiency, alkaline slope efficiency, probe asymmetry, probe response time, calibration age
+**Sensors**: KH value (dKH), pH (start), measured pH (live), KH trend (dKH/day), KH deviation (dKH, signed `measured − predicted`), measurement confidence, Gran R², cross-validation diff, data points, measurement time, sample volume (computed from calibration), WiFi signal, uptime, probe health, acid slope efficiency, alkaline slope efficiency, probe asymmetry, probe response time, calibration age
 
 **Number inputs** (configurable): Titration volume, correction factor, HCl molarity, HCl volume, calibration units, fast titration pH, min start pH, stabilization timeout
 
@@ -144,7 +144,28 @@ The device uses MQTT auto-discovery, so entities appear automatically in Home As
 
 **Buttons**: Measure KH, Measure pH, Measure Sample, Measure Titration, Fill Titration, Calibrate pH 4/7/10, Measure Voltage, Restart
 
-**Binary sensor**: Device connectivity
+**Binary sensors**: Device connectivity, KH deviation alert (`device_class: problem`)
+
+### KH Deviation Alert
+
+The firmware fits a trend (and a diurnal cycle when ≥8 history points are available) to recent KH measurements and predicts the expected value at the time of each new measurement. If a measurement disagrees with the prediction, a re-measurement is run automatically. The **KH Deviation Alert** binary sensor turns `on` only when even the re-measurement is still outside the expected band — a strong signal of a real change (water change, dosing event, leak, probe drift). It auto-clears on the next in-threshold measurement. The signed **KH Deviation** sensor reports `measured − predicted` in dKH so HA notifications can include direction and magnitude. Both states are retained, so HA preserves the alert across reboots.
+
+Example HA automation:
+
+```yaml
+alias: KH Deviation Alert
+trigger:
+  - platform: state
+    entity_id: binary_sensor.khpro_kh_deviation_alert
+    to: "on"
+action:
+  - service: notify.mobile_app_<your_phone>
+    data:
+      title: "KH deviated from prediction"
+      message: >-
+        KH is {{ states('sensor.khpro_kh') }} dKH
+        ({{ states('sensor.khpro_kh_deviation') }} dKH vs prediction).
+```
 
 ## MQTT Topics
 
@@ -160,6 +181,8 @@ All topics are prefixed with the device name (default `KHpro/`):
 | `mes_pH` | Publish | Live pH during measurement |
 | `confidence` | Publish | Measurement confidence score (retained) |
 | `kh_slope` | Publish | KH trend in dKH/day (retained) |
+| `kh_deviation` | Publish | Signed deviation `measured − predicted` in dKH (retained) |
+| `kh_deviation_alert` | Publish | `ALERT` / `OK` — fires when re-measurement still deviates (retained) |
 | `gran_r2` | Publish | Gran analysis R² value (retained) |
 | `cross_val` | Publish | Cross-validation difference in dKH (retained) |
 | `data_pts` | Publish | Number of data points used (retained) |

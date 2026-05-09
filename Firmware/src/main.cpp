@@ -103,6 +103,8 @@ char MQconfidence[50];
 char MQkhSlope[50];
 char MQgranR2[50];
 char MQkhSmooth[50];
+char MQkhDevAlert[50];
+char MQkhDeviation[50];
 
 // --- Deferred command execution ---
 // Long-running commands (measureKH, calibrate) must run on loopTask, not AsyncTCP.
@@ -340,6 +342,37 @@ static bool isSuspect(const KHResult& r, const KHPrediction& pred, char* reasonB
   return false;
 }
 
+// Returns true if r deviates from pred by more than the outlier threshold.
+// Returns false (and *deviationOut = NAN) if no prediction is available.
+// Threshold matches isSuspect() so the alert tracks internal validation logic.
+static bool isDeviation(const KHResult& r, const KHPrediction& pred,
+                        float* deviationOut) {
+  if (isnan(pred.predicted)) {
+    if (deviationOut) *deviationOut = NAN;
+    return false;
+  }
+  float dev = r.khValue - pred.predicted;
+  if (deviationOut) *deviationOut = dev;
+  float threshold = pred.hasTrend
+      ? fmaxf(KH_OUTLIER_MIN_THRESHOLD, KH_OUTLIER_SIGMA_MULT * pred.sigma)
+      : KH_OUTLIER_FALLBACK_THRESHOLD;
+  return fabsf(dev) > threshold;
+}
+
+// Publish retained ALERT/OK + signed deviation magnitude for HA.
+static void publishDeviationAlert(const KHResult& r, const KHPrediction& pred) {
+  float dev;
+  bool alert = isDeviation(r, pred, &dev);
+  mqttManager.publish(MQkhDevAlert, alert ? "ALERT" : "OK", true);
+  char buf[16];
+  if (isnan(dev)) {
+    snprintf(buf, sizeof(buf), "nan");
+  } else {
+    snprintf(buf, sizeof(buf), "%.2f", dev);
+  }
+  mqttManager.publish(MQkhDeviation, buf, true);
+}
+
 // Measure KH with trend-based outlier detection and cross-validation checks
 void measureKHWithValidation() {
   // Read recent timestamped history BEFORE measuring (so current measurement is not included)
@@ -356,6 +389,7 @@ void measureKHWithValidation() {
   char reason[128];
   if (!isSuspect(r1, pred, reason, sizeof(reason))) {
     publishKHResult(r1);
+    publishDeviationAlert(r1, pred);
     return;
   }
 
@@ -368,6 +402,7 @@ void measureKHWithValidation() {
   if (isnan(r2.khValue)) {
     publishMessage("Re-measurement failed, keeping first value");
     publishKHResult(r1);
+    publishDeviationAlert(r1, pred);
     return;
   }
 
@@ -375,6 +410,7 @@ void measureKHWithValidation() {
     snprintf(buf, sizeof(buf), "Re-measurement %.2f dKH accepted", r2.khValue);
     publishMessage(buf);
     publishKHResult(r2);
+    publishDeviationAlert(r2, pred);
     return;
   }
 
@@ -392,6 +428,7 @@ void measureKHWithValidation() {
   snprintf(buf, sizeof(buf), "Both suspect. Using %.2f dKH (better of two)", best.khValue);
   publishMessage(buf);
   publishKHResult(best);
+  publishDeviationAlert(best, pred);
 }
 
 // Precision Test: run N consecutive full measurement cycles, report SD
@@ -1793,6 +1830,8 @@ void setup() {
   snprintf(MQkhSlope, sizeof(MQkhSlope), "%s/kh_slope", deviceName);
   snprintf(MQgranR2, sizeof(MQgranR2), "%s/gran_r2", deviceName);
   snprintf(MQkhSmooth, sizeof(MQkhSmooth), "%s/kh_smooth", deviceName);
+  snprintf(MQkhDevAlert, sizeof(MQkhDevAlert), "%s/kh_deviation_alert", deviceName);
+  snprintf(MQkhDeviation, sizeof(MQkhDeviation), "%s/kh_deviation", deviceName);
 
   // --- WiFi: AP mode or STA mode ---
   // BOOT button (GPIO 0) held 5s = clear WiFi, enter AP mode
