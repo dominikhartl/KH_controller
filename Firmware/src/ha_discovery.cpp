@@ -268,6 +268,10 @@ void publishAllDiscovery() {
     snprintf(slopeTopic, sizeof(slopeTopic), "%s/kh_slope", deviceName);
     publishSensorDiscovery("khv3_kh_slope", "KH Trend", slopeTopic, "dKH/day", nullptr, nullptr, nullptr);
   }
+  { char devTopic[50];
+    snprintf(devTopic, sizeof(devTopic), "%s/kh_deviation", deviceName);
+    publishSensorDiscovery("khv3_kh_deviation", "KH Deviation", devTopic, "dKH", nullptr, nullptr, "diagnostic");
+  }
   // Quality metrics
   { char t[50]; snprintf(t, sizeof(t), "%s/gran_r2", deviceName);
     publishSensorDiscovery("khv3_gran_r2", "Gran R\u00b2", t, nullptr, nullptr, nullptr, "diagnostic"); }
@@ -354,6 +358,27 @@ void publishAllDiscovery() {
     addDeviceBlock(root);
     char dt[128];
     snprintf(dt, sizeof(dt), "homeassistant/binary_sensor/%s/connectivity/config", deviceIdLower);
+    publishDiscoveryPayload(dt, doc);
+  }
+
+  // Binary sensor - KH deviation alert (problem class)
+  {
+    char alertTopic[50];
+    snprintf(alertTopic, sizeof(alertTopic), "%s/kh_deviation_alert", deviceName);
+    char uid[64];
+    snprintf(uid, sizeof(uid), "%s_kh_deviation_alert", deviceIdLower);
+    JsonDocument doc;
+    doc["name"] = "KH Deviation Alert";
+    doc["stat_t"] = alertTopic;
+    doc["uniq_id"] = uid;
+    doc["avty_t"] = availability_topic;
+    doc["dev_cla"] = "problem";
+    doc["pl_on"] = "ALERT";
+    doc["pl_off"] = "OK";
+    JsonObject root = doc.as<JsonObject>();
+    addDeviceBlock(root);
+    char dt[128];
+    snprintf(dt, sizeof(dt), "homeassistant/binary_sensor/%s/kh_deviation_alert/config", deviceIdLower);
     publishDiscoveryPayload(dt, doc);
   }
 
