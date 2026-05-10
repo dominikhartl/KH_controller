@@ -11,9 +11,8 @@ void initStirrer() {
 }
 
 void startStirrer() {
-  int pct = STIRRER_SPEED_PCT;
-  int duty = (pct * 255) / 100;
-  if (duty > 255) duty = 255;
+  // STIRRER_SPEED_PCT is a compile-time constant in [0, 100], so duty fits in [0, 255]
+  int duty = (STIRRER_SPEED_PCT * 255) / 100;
   analogWrite(STIRRER_PIN, duty);
   stirrerRunning = true;
 }

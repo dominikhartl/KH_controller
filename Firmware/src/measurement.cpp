@@ -394,7 +394,9 @@ static float readADCTrimmed(int nSamples, int interSampleDelayMs) {
 
   if (valid == 0) return NAN;
   sortFloats(adcBuf, valid);
-  int trim = valid / 4;
+  // Trimmed mean: drop top + bottom 25% to reject outliers
+  static const int TRIM_FRACTION_DENOM = 4;
+  int trim = valid / TRIM_FRACTION_DENOM;
   float sum = 0;
   for (int i = trim; i < valid - trim; i++) {
     sum += adcBuf[i];

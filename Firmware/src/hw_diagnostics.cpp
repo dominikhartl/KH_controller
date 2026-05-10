@@ -832,9 +832,6 @@ bool serveHWDiagChunk(int section, char* buf, size_t bufSize, size_t* written) {
           P("%s%.3f", first ? "" : ",", rapidRawSamples[i] * ADS_MV_PER_BIT);
           first = false;
         }
-      } else {
-        Serial.printf("[DIAG] time_series skip: hwADS=%d rawPtr=%p nSamp=%d\n",
-          hwADS1115, rapidRawSamples, adcPhNoise.nSamples);
       }
       P("]},");  // close ph_channel
       break;

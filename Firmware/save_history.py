@@ -60,10 +60,6 @@ def gzip_web_assets():
                 shutil.copy2(src, bak)
                 os.remove(src)
                 _backed_up[fname] = bak
-    # Also remove any stale .bak files from data/www (legacy cleanup)
-    for fname in list(os.listdir(WWW_DIR)):
-        if fname.endswith(".bak"):
-            os.remove(os.path.join(WWW_DIR, fname))
     if _backed_up:
         print(f"  Removed originals for build: {', '.join(_backed_up.keys())}")
 
