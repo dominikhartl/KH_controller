@@ -210,8 +210,9 @@
   function updateState(d) {
     // Device name and version
     if (d.deviceName) {
-      var title = d.deviceName + (d.fwVersion ? ' v' + d.fwVersion : '');
-      setText('device-title', title);
+      // Header shows just the device name; footer carries the version.
+      setText('device-title', d.deviceName);
+      setText('footer-info', d.deviceName + (d.fwVersion ? ' v' + d.fwVersion : ''));
       document.title = title;
       // Update HW diagnostics download filename
       var dlLink = document.getElementById('hw-diag-dl');
@@ -1169,29 +1170,27 @@
     else if (sel === 'gran' && granHistChart) granHistChart.resize();
   }
 
+  // Only the KH button toggles to "Abort" during a measurement. pH measurements
+  // are short and don't need an abort affordance, so the pH button is left alone.
   function setMeasuringMode(active) {
     var btnKH = document.querySelector('[data-original-cmd="k"]') || document.querySelector('[data-cmd="k"]');
-    var btnPH = document.querySelector('[data-original-cmd="p"]') || document.querySelector('[data-cmd="p"]');
-    [btnKH, btnPH].forEach(function(btn) {
-      if (!btn) return;
-      if (active) {
-        btn.setAttribute('data-original-cmd', btn.getAttribute('data-cmd'));
-        btn.setAttribute('data-cmd', 'abort');
-        btn.textContent = 'Abort';
-        btn.style.background = 'var(--red)';
-        btn.style.color = '#fff';
-      } else {
-        var orig = btn.getAttribute('data-original-cmd');
-        if (orig) {
-          btn.setAttribute('data-cmd', orig);
-          btn.removeAttribute('data-original-cmd');
-        }
-        var cmd = btn.getAttribute('data-cmd');
-        btn.textContent = (cmd === 'k') ? 'Measure KH' : 'Measure pH';
-        btn.style.background = '';
-        btn.style.color = '';
+    if (!btnKH) return;
+    if (active) {
+      btnKH.setAttribute('data-original-cmd', btnKH.getAttribute('data-cmd'));
+      btnKH.setAttribute('data-cmd', 'abort');
+      btnKH.textContent = 'Abort';
+      btnKH.style.background = 'var(--red)';
+      btnKH.style.color = '#fff';
+    } else {
+      var orig = btnKH.getAttribute('data-original-cmd');
+      if (orig) {
+        btnKH.setAttribute('data-cmd', orig);
+        btnKH.removeAttribute('data-original-cmd');
       }
-    });
+      btnKH.textContent = 'Measure';
+      btnKH.style.background = '';
+      btnKH.style.color = '';
+    }
   }
 
   // --- Precision test result ---
