@@ -519,7 +519,12 @@ header h1{font-size:var(--t-lg);font-weight:600;letter-spacing:-.02em;white-spac
   .metric-row{grid-template-columns:1fr 1fr 1fr}
   .status-bar-inline{grid-template-columns:1fr 1fr}
   .chart-container{height:240px}
-  .chart-toolbar{gap:var(--s2)}
+  /* Stack chart toolbar vertically so the seg gets full width and tab
+     labels (KH/pH/Gran/Live) don't overflow their pill backgrounds. */
+  .chart-toolbar{flex-direction:column;align-items:stretch;gap:var(--s2)}
+  .chart-toolbar .seg{width:100%}
+  .chart-toolbar .chart-range{align-self:flex-end}
+  .seg .tab{padding:6px 8px;font-size:var(--t-xs);letter-spacing:0}
   .page-tab{font-size:var(--t-xs);padding:8px 6px}
   .export-row{grid-template-columns:1fr}
 }
