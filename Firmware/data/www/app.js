@@ -110,6 +110,12 @@
   var measPhase = 0;
   var measPct = 0;
   var isMeasuring = false;
+
+  // Non-measurement op tracking (calibration / cleaning / precision test).
+  // The label comes from the most recent `msg` broadcast.
+  var lastOpMessage = '';
+  var opActive = false;
+  var _bannerHideTimer = null;
   // Phase weights sum to 100; sub-phase pct contributes proportionally
   var PHASE_WEIGHTS = [0, 30, 65, 5];
   var PHASE_LABELS  = ['', 'Washing', 'Titrating', 'Cleaning up'];
@@ -131,34 +137,56 @@
     if (value) value.textContent = measPct + '% · ' + overall + '% total';
   }
 
-  // --- Progress bar (single dispatch) ---
-  function updateProgress(pct) {
-    var section = document.getElementById('progress-section');
-    var fill    = document.getElementById('progress-fill');
-    var label   = document.getElementById('progress-label');
+  // Render non-measurement op progress (calibration, cleaning, etc.) into
+  // the same live-banner so the UX is consistent across all operations.
+  function showOpProgress(pct) {
+    var banner = document.getElementById('live-banner');
+    if (!banner) return;
+    banner.classList.add('active');
+    var label = document.getElementById('live-banner-label');
+    var fill  = document.getElementById('live-banner-fill');
+    var clamped = Math.max(0, Math.min(100, pct));
+    if (label) label.textContent = (lastOpMessage || 'Working') + '…';
+    if (fill)  fill.style.width = clamped + '%';
+    setText('live-banner-value', clamped + '%');
+  }
 
-    // During a KH measurement the progress goes into the live-banner.
-    // The standalone progress-section stays hidden so we don't show two bars.
-    // Use `isMeasuring` (set on mesStart) rather than `measPhase > 0` so the
-    // very first progress event after mesStart is already routed correctly,
-    // before the state broadcast that carries the measPhase has arrived.
+  // Hide the live-banner after a brief grace period — but only if no other
+  // operation has taken over by the time the timer fires.
+  function scheduleBannerHide() {
+    if (_bannerHideTimer) clearTimeout(_bannerHideTimer);
+    _bannerHideTimer = setTimeout(function() {
+      _bannerHideTimer = null;
+      if (isMeasuring || opActive) return;
+      var banner = document.getElementById('live-banner');
+      if (!banner) return;
+      banner.classList.remove('active');
+      var fill = document.getElementById('live-banner-fill');
+      if (fill) fill.style.width = '0';
+      setText('live-banner-value', '--');
+    }, 1200);
+  }
+
+  // --- Progress bar (single dispatch — always the live-banner) ---
+  function updateProgress(pct) {
+    // Cancel any pending hide; we're getting fresh activity.
+    if (_bannerHideTimer) { clearTimeout(_bannerHideTimer); _bannerHideTimer = null; }
+
     if (isMeasuring) {
+      // Measurement-phase rendering owns the banner content.
       measPct = pct;
       refreshLiveBannerProgress();
-      if (section) section.style.display = 'none';
       return;
     }
 
-    // Non-measurement operations (calibration, OTA, cleaning, etc.):
-    // use the dedicated progress-section.
-    if (!section || !fill || !label) return;
-    if (pct >= 100) {
-      section.style.display = 'none';
-      return;
+    if (pct < 100) {
+      opActive = true;
+      showOpProgress(pct);
+    } else {
+      opActive = false;
+      showOpProgress(100);  // show the final 100% briefly
+      scheduleBannerHide();
     }
-    section.style.display = 'flex';
-    fill.style.width = pct + '%';
-    label.textContent = pct + '%';
   }
 
   // --- State handling ---
@@ -170,6 +198,9 @@
     else if (d.type === 'history') updateHistory(d);
     else if (d.type === 'msg') {
       addLogEntry('msg', d.text);
+      // Use the most recent operation message as the live-banner label
+      // for any non-measurement progress events that follow.
+      if (d.text) lastOpMessage = d.text.replace(/[…\.]+$/, '').trim();
       checkPrecisionResult(d.text);
       if (motorDiagRunning && d.text.indexOf('Ramp:') === 0) {
         var prog = document.getElementById('motor-diag-progress');
@@ -1953,13 +1984,10 @@
       }
       banner.classList.add('active');
     } else {
-      // Hide after a brief grace period so the final progress is readable
-      setTimeout(function() {
-        banner.classList.remove('active');
-        var fill = document.getElementById('live-banner-fill');
-        if (fill) fill.style.width = '0';
-        setText('live-banner-value', '--');
-      }, 1200);
+      // Share the same hide-with-grace path as non-measurement ops, so an
+      // operation that starts immediately after a measurement ends doesn't
+      // get its banner yanked out from under it by the trailing timer.
+      scheduleBannerHide();
     }
   }
   function initLiveBanner() {

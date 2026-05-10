@@ -452,13 +452,7 @@ header h1{font-size:var(--t-lg);font-weight:600;letter-spacing:-.02em;white-spac
 }
 .export-btn:active{opacity:.6}
 
-/* === Progress (measurement) === */
-.progress-section{
-  display:none;background:var(--card);border:1px solid var(--border-soft);
-  border-radius:var(--radius);padding:var(--s3) var(--s4);
-  margin:0 0 var(--s3);align-items:center;gap:var(--s3);
-}
-.progress-section.visible{display:flex}
+/* === Progress bar styles (used by the OTA upload section) === */
 .progress-bar{flex:1;height:6px;background:var(--card-elevated);border-radius:3px;overflow:hidden}
 .progress-fill{height:100%;background:linear-gradient(90deg,var(--accent),var(--green));border-radius:3px;transition:width .3s ease;width:0}
 .progress-label{font-size:var(--t-xs);color:var(--text-secondary);min-width:36px;text-align:right;font-variant-numeric:tabular-nums}
