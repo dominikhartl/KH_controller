@@ -213,7 +213,7 @@
       // Header shows just the device name; footer carries the version.
       setText('device-title', d.deviceName);
       setText('footer-info', d.deviceName + (d.fwVersion ? ' v' + d.fwVersion : ''));
-      document.title = title;
+      document.title = d.deviceName;
       // Update HW diagnostics download filename
       var dlLink = document.getElementById('hw-diag-dl');
       if (dlLink) dlLink.download = d.deviceName + '_hw_diagnostics.json';
