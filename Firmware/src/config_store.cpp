@@ -2,6 +2,14 @@
 #include <config.h>
 #include <EEPROM.h>
 
+namespace {
+inline int      clampi(int v, int lo, int hi)               { return v < lo ? lo : (v > hi ? hi : v); }
+inline float    clampf(float v, float lo, float hi)         { return v < lo ? lo : (v > hi ? hi : v); }
+inline uint32_t clampu32(uint32_t v, uint32_t lo, uint32_t hi) { return v < lo ? lo : (v > hi ? hi : v); }
+inline uint8_t  clampu8(uint8_t v, uint8_t lo, uint8_t hi)  { return v < lo ? lo : (v > hi ? hi : v); }
+inline uint16_t clampu16(uint16_t v, uint16_t lo, uint16_t hi) { return v < lo ? lo : (v > hi ? hi : v); }
+}
+
 ConfigStore configStore;
 
 void ConfigStore::begin() {
@@ -78,18 +86,8 @@ void ConfigStore::setVoltage7PH(float v) { prefs.putFloat("v7ph", v); }
 void ConfigStore::setVoltage10PH(float v) { prefs.putFloat("v10ph", v); }
 
 // KH calculation parameters
-float ConfigStore::getTitrationVolume() {
-  float v = prefs.getFloat("tit_vol", 9.8);
-  if (v < 1.0) v = 1.0;
-  if (v > 100.0) v = 100.0;
-  return v;
-}
-float ConfigStore::getSampleVolume() {
-  float v = prefs.getFloat("sam_vol", 77.0);
-  if (v < 10.0) v = 10.0;
-  if (v > 500.0) v = 500.0;
-  return v;
-}
+float ConfigStore::getTitrationVolume() { return clampf(prefs.getFloat("tit_vol", 9.8), 1.0f, 100.0f); }
+float ConfigStore::getSampleVolume()    { return clampf(prefs.getFloat("sam_vol", 77.0), 10.0f, 500.0f); }
 float ConfigStore::getCorrectionFactor() { return prefs.getFloat("corr_f", 1.0); }
 float ConfigStore::getHClMolarity() { return prefs.getFloat("hcl_mol", 0.024); }
 float ConfigStore::getHClVolume() { return prefs.getFloat("hcl_vol", 5000.0); }
@@ -106,160 +104,43 @@ uint8_t ConfigStore::getEndpointMethod() { return prefs.getUChar("ep_method", 0)
 void ConfigStore::setEndpointMethod(uint8_t m) { prefs.putUChar("ep_method", m); }
 float ConfigStore::getMinStartPH() { return prefs.getFloat("min_sph", MIN_START_PH_DEFAULT); }
 void ConfigStore::setMinStartPH(float v) { prefs.putFloat("min_sph", v); }
-int ConfigStore::getStabilizationTimeout() {
-  int ms = prefs.getInt("stab_ms", STABILIZATION_TIMEOUT_MS);
-  if (ms < 500) ms = 500;
-  if (ms > 5000) ms = 5000;
-  return ms;
-}
-void ConfigStore::setStabilizationTimeout(int ms) {
-  if (ms < 500) ms = 500;
-  if (ms > 5000) ms = 5000;
-  prefs.putInt("stab_ms", ms);
-}
-int ConfigStore::getMixDelay() {
-  int ms = prefs.getInt("gran_mix", TITRATION_MIX_DELAY_GRAN_MS);
-  if (ms < 500) ms = 500;
-  if (ms > 5000) ms = 5000;
-  return ms;
-}
-void ConfigStore::setMixDelay(int ms) {
-  if (ms < 500) ms = 500;
-  if (ms > 5000) ms = 5000;
-  prefs.putInt("gran_mix", ms);
-}
+int ConfigStore::getStabilizationTimeout()       { return clampi(prefs.getInt("stab_ms", STABILIZATION_TIMEOUT_MS), 500, 5000); }
+void ConfigStore::setStabilizationTimeout(int ms){ prefs.putInt("stab_ms", clampi(ms, 500, 5000)); }
+int ConfigStore::getMixDelay()                   { return clampi(prefs.getInt("gran_mix", TITRATION_MIX_DELAY_GRAN_MS), 500, 5000); }
+void ConfigStore::setMixDelay(int ms)            { prefs.putInt("gran_mix", clampi(ms, 500, 5000)); }
 
-float ConfigStore::getGranMinR2() {
-  float v = prefs.getFloat("gran_r2", GRAN_MIN_R2);
-  if (v < 0.990f) v = 0.990f;
-  if (v > 1.000f) v = 1.000f;
-  return v;
-}
-void ConfigStore::setGranMinR2(float v) {
-  if (v < 0.990f) v = 0.990f;
-  if (v > 1.000f) v = 1.000f;
-  prefs.putFloat("gran_r2", v);
-}
+float ConfigStore::getGranMinR2()                { return clampf(prefs.getFloat("gran_r2", GRAN_MIN_R2), 0.990f, 1.000f); }
+void ConfigStore::setGranMinR2(float v)          { prefs.putFloat("gran_r2", clampf(v, 0.990f, 1.000f)); }
 
-float ConfigStore::getDropVolumeUL() {
-  float ul = prefs.getFloat("drop_ul", 15.0);
-  if (ul < 5.0) ul = 5.0;
-  if (ul > 200.0) ul = 200.0;
-  return ul;
-}
-void ConfigStore::setDropVolumeUL(float ul) {
-  if (ul < 5.0) ul = 5.0;
-  if (ul > 200.0) ul = 200.0;
-  prefs.putFloat("drop_ul", ul);
-}
-float ConfigStore::getTitrationRPM() {
-  float rpm = prefs.getFloat("tit_rpm", TITRATION_RPM);
-  if (rpm < 10.0) rpm = 10.0;
-  if (rpm > 200.0) rpm = 200.0;
-  return rpm;
-}
-void ConfigStore::setTitrationRPM(float rpm) {
-  if (rpm < 10.0) rpm = 10.0;
-  if (rpm > 200.0) rpm = 200.0;
-  prefs.putFloat("tit_rpm", rpm);
-}
-float ConfigStore::getGranBurstRPM() {
-  float rpm = prefs.getFloat("gran_brpm", GRAN_BURST_RPM);
-  if (rpm < 80.0f)  rpm = 80.0f;
-  if (rpm > 250.0f) rpm = 250.0f;
-  return rpm;
-}
-void ConfigStore::setGranBurstRPM(float rpm) {
-  if (rpm < 80.0f)  rpm = 80.0f;
-  if (rpm > 250.0f) rpm = 250.0f;
-  prefs.putFloat("gran_brpm", rpm);
-}
-uint32_t ConfigStore::getGranBurstAccel() {
-  uint32_t a = prefs.getUInt("gran_baccel", GRAN_BURST_ACCEL);
-  if (a < 50000)  a = 50000;
-  if (a > 500000) a = 500000;
-  return a;
-}
-void ConfigStore::setGranBurstAccel(uint32_t accel) {
-  if (accel < 50000)  accel = 50000;
-  if (accel > 500000) accel = 500000;
-  prefs.putUInt("gran_baccel", accel);
-}
-float ConfigStore::getFastPhaseRPM() {
-  float rpm = prefs.getFloat("fast_rpm", 50.0);
-  if (rpm < 10.0) rpm = 10.0;
-  if (rpm > 150.0) rpm = 150.0;
-  return rpm;
-}
-void ConfigStore::setFastPhaseRPM(float rpm) {
-  if (rpm < 10.0) rpm = 10.0;
-  if (rpm > 150.0) rpm = 150.0;
-  prefs.putFloat("fast_rpm", rpm);
-}
+float ConfigStore::getDropVolumeUL()             { return clampf(prefs.getFloat("drop_ul", 15.0), 5.0f, 200.0f); }
+void ConfigStore::setDropVolumeUL(float ul)      { prefs.putFloat("drop_ul", clampf(ul, 5.0f, 200.0f)); }
+float ConfigStore::getTitrationRPM()             { return clampf(prefs.getFloat("tit_rpm", TITRATION_RPM), 10.0f, 200.0f); }
+void ConfigStore::setTitrationRPM(float rpm)     { prefs.putFloat("tit_rpm", clampf(rpm, 10.0f, 200.0f)); }
+float ConfigStore::getGranBurstRPM()             { return clampf(prefs.getFloat("gran_brpm", GRAN_BURST_RPM), 80.0f, 250.0f); }
+void ConfigStore::setGranBurstRPM(float rpm)     { prefs.putFloat("gran_brpm", clampf(rpm, 80.0f, 250.0f)); }
+uint32_t ConfigStore::getGranBurstAccel()        { return clampu32(prefs.getUInt("gran_baccel", GRAN_BURST_ACCEL), 50000, 500000); }
+void ConfigStore::setGranBurstAccel(uint32_t accel) { prefs.putUInt("gran_baccel", clampu32(accel, 50000, 500000)); }
+float ConfigStore::getFastPhaseRPM()             { return clampf(prefs.getFloat("fast_rpm", 50.0), 10.0f, 150.0f); }
+void ConfigStore::setFastPhaseRPM(float rpm)     { prefs.putFloat("fast_rpm", clampf(rpm, 10.0f, 150.0f)); }
 
-float ConfigStore::getPrefillVolumeUL() {
-  float ul = prefs.getFloat("prefill_ul", 100.0);
-  if (ul < 10.0) ul = 10.0;
-  if (ul > 500.0) ul = 500.0;
-  return ul;
-}
-void ConfigStore::setPrefillVolumeUL(float ul) {
-  if (ul < 10.0) ul = 10.0;
-  if (ul > 500.0) ul = 500.0;
-  prefs.putFloat("prefill_ul", ul);
-}
+float ConfigStore::getPrefillVolumeUL()          { return clampf(prefs.getFloat("prefill_ul", 100.0), 10.0f, 500.0f); }
+void ConfigStore::setPrefillVolumeUL(float ul)   { prefs.putFloat("prefill_ul", clampf(ul, 10.0f, 500.0f)); }
 
 // Max acid volume per measurement (mL)
-float ConfigStore::getMaxAcidML() {
-  float v = prefs.getFloat("max_acid_ml", 16.0f);
-  if (v < 5.0f) v = 5.0f;
-  if (v > 100.0f) v = 100.0f;
-  return v;
-}
-void ConfigStore::setMaxAcidML(float ml) {
-  if (ml < 5.0f) ml = 5.0f;
-  if (ml > 100.0f) ml = 100.0f;
-  prefs.putFloat("max_acid_ml", ml);
-}
+float ConfigStore::getMaxAcidML()                { return clampf(prefs.getFloat("max_acid_ml", 16.0f), 5.0f, 100.0f); }
+void ConfigStore::setMaxAcidML(float ml)         { prefs.putFloat("max_acid_ml", clampf(ml, 5.0f, 100.0f)); }
 
 // Fast phase max step volume (µL)
-int ConfigStore::getFastStepUL() {
-  int v = prefs.getInt("fast_step_ul", 330);
-  if (v < 50) v = 50;
-  if (v > 2000) v = 2000;
-  return v;
-}
-void ConfigStore::setFastStepUL(int ul) {
-  if (ul < 50) ul = 50;
-  if (ul > 2000) ul = 2000;
-  prefs.putInt("fast_step_ul", ul);
-}
+int ConfigStore::getFastStepUL()                 { return clampi(prefs.getInt("fast_step_ul", 330), 50, 2000); }
+void ConfigStore::setFastStepUL(int ul)          { prefs.putInt("fast_step_ul", clampi(ul, 50, 2000)); }
 
 // Measurement temperature
-float ConfigStore::getMeasTempC() {
-  float t = prefs.getFloat("meas_temp", DEFAULT_MEASUREMENT_TEMP_C);
-  if (t < 0.0f) t = 0.0f;
-  if (t > 40.0f) t = 40.0f;
-  return t;
-}
-void ConfigStore::setMeasTempC(float t) {
-  if (t < 0.0f) t = 0.0f;
-  if (t > 40.0f) t = 40.0f;
-  prefs.putFloat("meas_temp", t);
-}
+float ConfigStore::getMeasTempC()                { return clampf(prefs.getFloat("meas_temp", DEFAULT_MEASUREMENT_TEMP_C), 0.0f, 40.0f); }
+void ConfigStore::setMeasTempC(float t)          { prefs.putFloat("meas_temp", clampf(t, 0.0f, 40.0f)); }
 
 // Calibration temperature (temperature at which pH buffers were measured)
-float ConfigStore::getCalTempC() {
-  float t = prefs.getFloat("cal_temp", DEFAULT_MEASUREMENT_TEMP_C);
-  if (t < 0.0f) t = 0.0f;
-  if (t > 40.0f) t = 40.0f;
-  return t;
-}
-void ConfigStore::setCalTempC(float t) {
-  if (t < 0.0f) t = 0.0f;
-  if (t > 40.0f) t = 40.0f;
-  prefs.putFloat("cal_temp", t);
-}
+float ConfigStore::getCalTempC()                 { return clampf(prefs.getFloat("cal_temp", DEFAULT_MEASUREMENT_TEMP_C), 0.0f, 40.0f); }
+void ConfigStore::setCalTempC(float t)           { prefs.putFloat("cal_temp", clampf(t, 0.0f, 40.0f)); }
 
 // Buffer pH reference values at 25°C (user-settable, from bottle labels)
 float ConfigStore::getBufferPH4()  { return prefs.getFloat("buf_ph4", DEFAULT_BUFFER_PH_4); }
@@ -270,93 +151,31 @@ float ConfigStore::getBufferPH10() { return prefs.getFloat("buf_ph10", DEFAULT_B
 void  ConfigStore::setBufferPH10(float v) { prefs.putFloat("buf_ph10", v); }
 
 // KH slope lookback window
-int ConfigStore::getSlopeWindowHours() {
-  int h = prefs.getInt("slope_hrs", 72);
-  if (h < 24) h = 24;
-  if (h > 168) h = 168;
-  return h;
-}
-void ConfigStore::setSlopeWindowHours(int h) {
-  if (h < 24) h = 24;
-  if (h > 168) h = 168;
-  prefs.putInt("slope_hrs", h);
-}
+int ConfigStore::getSlopeWindowHours()           { return clampi(prefs.getInt("slope_hrs", 72), 24, 168); }
+void ConfigStore::setSlopeWindowHours(int h)     { prefs.putInt("slope_hrs", clampi(h, 24, 168)); }
 
 // Stirrer speed (percent)
-int ConfigStore::getStirrerSpeed() {
-  int pct = prefs.getInt("stir_spd", 90);
-  if (pct < 80) pct = 80;
-  if (pct > 100) pct = 100;
-  return pct;
-}
-void ConfigStore::setStirrerSpeed(int pct) {
-  if (pct < 80) pct = 80;
-  if (pct > 100) pct = 100;
-  prefs.putInt("stir_spd", pct);
-}
+int ConfigStore::getStirrerSpeed()               { return clampi(prefs.getInt("stir_spd", 90), 80, 100); }
+void ConfigStore::setStirrerSpeed(int pct)       { prefs.putInt("stir_spd", clampi(pct, 80, 100)); }
 
 // Sample pump speed
-float ConfigStore::getSamplePumpRPM() {
-  float rpm = prefs.getFloat("samp_rpm", MOTOR_TARGET_RPM);
-  if (rpm < 20.0) rpm = 20.0;
-  if (rpm > 250.0) rpm = 250.0;
-  return rpm;
-}
-void ConfigStore::setSamplePumpRPM(float rpm) {
-  if (rpm < 20.0) rpm = 20.0;
-  if (rpm > 250.0) rpm = 250.0;
-  prefs.putFloat("samp_rpm", rpm);
-}
+float ConfigStore::getSamplePumpRPM()            { return clampf(prefs.getFloat("samp_rpm", MOTOR_TARGET_RPM), 20.0f, 250.0f); }
+void ConfigStore::setSamplePumpRPM(float rpm)    { prefs.putFloat("samp_rpm", clampf(rpm, 20.0f, 250.0f)); }
 
 // Sample pump calibration factor (revolutions per mL)
-float ConfigStore::getSampleCalRevsPerML() {
-  float v = prefs.getFloat("samp_cal", 4.55f);  // default: 350 revs / 77.0 mL
-  if (v < 0.5f) v = 0.5f;
-  if (v > 100.0f) v = 100.0f;
-  return v;
-}
-void ConfigStore::setSampleCalRevsPerML(float v) {
-  if (v < 0.5f) v = 0.5f;
-  if (v > 100.0f) v = 100.0f;
-  prefs.putFloat("samp_cal", v);
-}
+float ConfigStore::getSampleCalRevsPerML()       { return clampf(prefs.getFloat("samp_cal", 4.55f /* 350 revs / 77.0 mL */), 0.5f, 100.0f); }
+void ConfigStore::setSampleCalRevsPerML(float v) { prefs.putFloat("samp_cal", clampf(v, 0.5f, 100.0f)); }
 
 // Sample pump calibration revolutions (how many revs during calibration run)
-int ConfigStore::getSampleCalRevolutions() {
-  int v = prefs.getInt("samp_cal_rev", SAMPLE_CAL_REVOLUTIONS);
-  if (v < 50) v = 50;
-  if (v > 2200) v = 2200;
-  return v;
-}
-void ConfigStore::setSampleCalRevolutions(int v) {
-  if (v < 50) v = 50;
-  if (v > 2200) v = 2200;
-  prefs.putInt("samp_cal_rev", v);
-}
-int ConfigStore::getNumWashes() {
-  int v = prefs.getInt("num_washes", 2);
-  if (v < 1) v = 1;
-  if (v > 5) v = 5;
-  return v;
-}
-void ConfigStore::setNumWashes(int n) {
-  if (n < 1) n = 1;
-  if (n > 5) n = 5;
-  prefs.putInt("num_washes", n);
-}
+int ConfigStore::getSampleCalRevolutions()       { return clampi(prefs.getInt("samp_cal_rev", SAMPLE_CAL_REVOLUTIONS), 50, 2200); }
+void ConfigStore::setSampleCalRevolutions(int v) { prefs.putInt("samp_cal_rev", clampi(v, 50, 2200)); }
+
+int ConfigStore::getNumWashes()                  { return clampi(prefs.getInt("num_washes", 2), 1, 5); }
+void ConfigStore::setNumWashes(int n)            { prefs.putInt("num_washes", clampi(n, 1, 5)); }
 
 // Gran zone pH readings per step
-int ConfigStore::getGranReadings() {
-  int v = prefs.getInt("gran_read", 10);
-  if (v < 3) v = 3;
-  if (v > 50) v = 50;
-  return v;
-}
-void ConfigStore::setGranReadings(int n) {
-  if (n < 3) n = 3;
-  if (n > 50) n = 50;
-  prefs.putInt("gran_read", n);
-}
+int ConfigStore::getGranReadings()               { return clampi(prefs.getInt("gran_read", 10), 3, 50); }
+void ConfigStore::setGranReadings(int n)         { prefs.putInt("gran_read", clampi(n, 3, 50)); }
 
 // EMA-smoothed KH
 float ConfigStore::getKHEMA() {
@@ -366,17 +185,8 @@ float ConfigStore::getKHEMA() {
 void ConfigStore::setKHEMA(float v) {
   prefs.putFloat("kh_ema", v);
 }
-float ConfigStore::getKHEMAAlpha() {
-  float a = prefs.getFloat("kh_ema_a", 0.3f);
-  if (a < 0.1f) a = 0.1f;
-  if (a > 1.0f) a = 1.0f;
-  return a;
-}
-void ConfigStore::setKHEMAAlpha(float a) {
-  if (a < 0.1f) a = 0.1f;
-  if (a > 1.0f) a = 1.0f;
-  prefs.putFloat("kh_ema_a", a);
-}
+float ConfigStore::getKHEMAAlpha()               { return clampf(prefs.getFloat("kh_ema_a", 0.3f), 0.1f, 1.0f); }
+void ConfigStore::setKHEMAAlpha(float a)         { prefs.putFloat("kh_ema_a", clampf(a, 0.1f, 1.0f)); }
 
 // pH sensor type: 0=auto, 1=internal, 2=ADS1115, 3=EZO
 uint8_t ConfigStore::getPhSensorType() {

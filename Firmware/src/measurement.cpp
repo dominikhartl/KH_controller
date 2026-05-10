@@ -511,28 +511,28 @@ void updateCalibrationBuffers() {
   calBuf10 = bufferPHAtTemp(10, calTemp);
 }
 
+// Fit a linear segment through (v1, ph1)-(v2, ph2). Returns false on degenerate dv.
+static bool linearSegment(float v1, float ph1, float v2, float ph2,
+                           float& slope, float& offset) {
+  float dv = v2 - v1;
+  if (fabsf(dv) <= 1e-6f) return false;
+  slope = (ph2 - ph1) / dv;
+  offset = ph1 - slope * v1;
+  return true;
+}
+
 void updateCalibrationFit() {
   updateCalibrationBuffers();
 
-  // Piecewise linear: two segments that pass exactly through calibration points
-  float dv;
-
-  // Acid segment: pH 4 → pH 7
-  dv = voltage_7PH - voltage_4PH;
-  if (fabsf(dv) > 1e-6f) {
-    acidSlope = (calBuf7 - calBuf4) / dv;
-    acidOffset = calBuf4 - acidSlope * voltage_4PH;
-  } else {
+  // Piecewise linear: two segments that pass exactly through calibration points.
+  // Acid segment: pH 4 → pH 7. Fallback to theoretical Nernst slope if degenerate.
+  if (!linearSegment(voltage_4PH, calBuf4, voltage_7PH, calBuf7, acidSlope, acidOffset)) {
     acidSlope = -1.0f / 173.0f;
     acidOffset = calBuf7 + voltage_7PH / 173.0f;
   }
 
-  // Base segment: pH 7 → pH 10
-  dv = voltage_10PH - voltage_7PH;
-  if (fabsf(dv) > 1e-6f) {
-    baseSlope = (calBuf10 - calBuf7) / dv;
-    baseOffset = calBuf7 - baseSlope * voltage_7PH;
-  } else {
+  // Base segment: pH 7 → pH 10. Fallback to acid segment if degenerate.
+  if (!linearSegment(voltage_7PH, calBuf7, voltage_10PH, calBuf10, baseSlope, baseOffset)) {
     baseSlope = acidSlope;
     baseOffset = acidOffset;
   }

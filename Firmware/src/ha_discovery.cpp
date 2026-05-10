@@ -150,100 +150,83 @@ static void publishDiscoveryPayload(const char* discoveryTopic, JsonDocument& do
   mqttPacedDelay(150);  // pace burst so HA broker / TCP buffer can drain
 }
 
+// Common header for all entity discovery payloads: sets name, uniq_id, avty_t.
+// The uid buffer must outlive `doc` (ArduinoJson stores the pointer, not a copy).
+static void beginDiscoveryPayload(JsonDocument& doc, const char* id, const char* name,
+                                   char* uidOut, size_t uidLen) {
+  snprintf(uidOut, uidLen, "%s_%s", deviceIdLower, id);
+  doc["name"] = name;
+  doc["uniq_id"] = uidOut;
+  doc["avty_t"] = availability_topic;
+}
+
+// Common footer: attach device block, publish to homeassistant/<entityType>/<deviceId>/<id>/config.
+static void finishDiscoveryPayload(JsonDocument& doc, const char* entityType, const char* id) {
+  JsonObject root = doc.as<JsonObject>();
+  addDeviceBlock(root);
+  char discTopic[128];
+  snprintf(discTopic, sizeof(discTopic), "homeassistant/%s/%s/%s/config", entityType, deviceIdLower, id);
+  publishDiscoveryPayload(discTopic, doc);
+}
+
 static void publishSensorDiscovery(const char* id, const char* name, const char* statTopic,
                                     const char* unit, const char* devClass,
                                     const char* valTpl, const char* entityCat,
                                     const char* statClass = "measurement") {
-  char uid[64];
-  snprintf(uid, sizeof(uid), "%s_%s", deviceIdLower, id);
-
   JsonDocument doc;
-  doc["name"] = name;
+  char uid[64];
+  beginDiscoveryPayload(doc, id, name, uid, sizeof(uid));
   doc["stat_t"] = statTopic;
-  doc["uniq_id"] = uid;
-  doc["avty_t"] = availability_topic;
   if (unit) doc["unit_of_meas"] = unit;
   if (devClass) doc["dev_cla"] = devClass;
   if (valTpl) doc["val_tpl"] = valTpl;
   if (entityCat) doc["ent_cat"] = entityCat;
   if (statClass) doc["stat_cla"] = statClass;
-  JsonObject root = doc.as<JsonObject>();
-  addDeviceBlock(root);
-
-  char discTopic[128];
-  snprintf(discTopic, sizeof(discTopic), "homeassistant/sensor/%s/%s/config", deviceIdLower, id);
-  publishDiscoveryPayload(discTopic, doc);
+  finishDiscoveryPayload(doc, "sensor", id);
 }
 
 static void publishNumberDiscovery(const char* id, const char* name,
                                     const char* statTopic, const char* cmdTopic,
                                     float minVal, float maxVal, float step,
                                     const char* unit) {
-  char uid[64];
-  snprintf(uid, sizeof(uid), "%s_%s", deviceIdLower, id);
-
   JsonDocument doc;
-  doc["name"] = name;
+  char uid[64];
+  beginDiscoveryPayload(doc, id, name, uid, sizeof(uid));
   doc["stat_t"] = statTopic;
   doc["cmd_t"] = cmdTopic;
-  doc["uniq_id"] = uid;
-  doc["avty_t"] = availability_topic;
   doc["min"] = minVal;
   doc["max"] = maxVal;
   doc["step"] = step;
   if (unit) doc["unit_of_meas"] = unit;
   doc["mode"] = "box";
   doc["ent_cat"] = "config";
-  JsonObject root = doc.as<JsonObject>();
-  addDeviceBlock(root);
-
-  char discTopic[128];
-  snprintf(discTopic, sizeof(discTopic), "homeassistant/number/%s/%s/config", deviceIdLower, id);
-  publishDiscoveryPayload(discTopic, doc);
+  finishDiscoveryPayload(doc, "number", id);
 }
 
 static void publishButtonDiscovery(const char* id, const char* name,
                                     const char* cmdTopic, const char* payload,
                                     const char* entityCat) {
-  char uid[64];
-  snprintf(uid, sizeof(uid), "%s_%s", deviceIdLower, id);
-
   JsonDocument doc;
-  doc["name"] = name;
+  char uid[64];
+  beginDiscoveryPayload(doc, id, name, uid, sizeof(uid));
   doc["cmd_t"] = cmdTopic;
   doc["pl_prs"] = payload;
-  doc["uniq_id"] = uid;
-  doc["avty_t"] = availability_topic;
   if (entityCat) doc["ent_cat"] = entityCat;
-  JsonObject root = doc.as<JsonObject>();
-  addDeviceBlock(root);
-
-  char discTopic[128];
-  snprintf(discTopic, sizeof(discTopic), "homeassistant/button/%s/%s/config", deviceIdLower, id);
-  publishDiscoveryPayload(discTopic, doc);
+  finishDiscoveryPayload(doc, "button", id);
 }
 
 static void publishSelectDiscovery(const char* id, const char* name,
                                     const char* statTopic, const char* cmdTopic,
                                     const char** options, uint8_t optCount) {
-  char uid[64];
-  snprintf(uid, sizeof(uid), "%s_%s", deviceIdLower, id);
-
   JsonDocument doc;
-  doc["name"] = name;
+  char uid[64];
+  beginDiscoveryPayload(doc, id, name, uid, sizeof(uid));
   doc["stat_t"] = statTopic;
   doc["cmd_t"] = cmdTopic;
-  doc["uniq_id"] = uid;
-  doc["avty_t"] = availability_topic;
   doc["ent_cat"] = "config";
   JsonArray opts = doc["options"].to<JsonArray>();
   for (uint8_t i = 0; i < optCount; i++) opts.add(options[i]);
-  JsonObject root = doc.as<JsonObject>();
-  addDeviceBlock(root);
-
-  char discTopic[128];
-  snprintf(discTopic, sizeof(discTopic), "homeassistant/select/%s/%s/config", deviceIdLower, id);
-  publishDiscoveryPayload(discTopic, doc);
+  finishDiscoveryPayload(doc, "select", id);
 }
 
 void publishAllDiscovery() {
