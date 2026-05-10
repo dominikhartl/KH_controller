@@ -204,14 +204,15 @@ header h1{font-size:var(--t-lg);font-weight:600;letter-spacing:-.02em;white-spac
   white-space:nowrap;
 }
 
-/* Next-measurement time acts as a link to the schedule editor */
+/* Next-measurement time acts as a link to the schedule editor — visually
+   identical to other mc-values; clickable affordance via cursor only. */
 .next-meas-link{
-  color:var(--accent);text-decoration:none;cursor:pointer;
+  color:inherit;text-decoration:none;cursor:pointer;
   -webkit-tap-highlight-color:transparent;
   display:inline-block;border-radius:6px;
-  transition:opacity .15s,background .15s;
+  transition:opacity .15s;
 }
-.next-meas-link:active{opacity:.6}
+.next-meas-link:active{opacity:.5}
 .next-meas-link:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
 
 /* === Recent log section === */
@@ -400,19 +401,6 @@ header h1{font-size:var(--t-lg);font-weight:600;letter-spacing:-.02em;white-spac
 .interval-preview{font-size:var(--t-xs);color:var(--text-secondary);margin-top:var(--s3);text-align:center;font-variant-numeric:tabular-nums}
 .next-meas{font-size:var(--t-xs);color:var(--text-secondary);margin-top:var(--s3);text-align:center}
 
-/* === System status overview === */
-.sys-status{display:grid;grid-template-columns:repeat(3,1fr);gap:var(--s2);margin-bottom:var(--s3)}
-.sys-status .ss-cell{
-  background:var(--card);border:1px solid var(--border-soft);border-radius:var(--radius-sm);
-  padding:var(--s3);display:flex;flex-direction:column;gap:4px;
-}
-.sys-status .ss-cell .ss-label{font-size:var(--t-xs);font-weight:600;color:var(--text-secondary);text-transform:uppercase;letter-spacing:.05em}
-.sys-status .ss-cell .ss-state{font-size:var(--t-md);font-weight:600;color:var(--text-primary);display:flex;align-items:center;gap:6px}
-.sys-status .ss-state .dot{width:8px;height:8px;border-radius:50%;background:var(--text-tertiary)}
-.sys-status .ss-state.ok .dot{background:var(--green);box-shadow:0 0 8px rgba(48,209,88,.5)}
-.sys-status .ss-state.warn .dot{background:var(--orange);box-shadow:0 0 8px rgba(255,159,10,.5)}
-.sys-status .ss-state.alert .dot{background:var(--red);box-shadow:0 0 8px rgba(255,69,58,.5)}
-
 /* === Probe Health === */
 .probe-grid{display:grid;grid-template-columns:1fr 1fr;gap:var(--s2)}
 .probe-item{
@@ -524,7 +512,6 @@ header h1{font-size:var(--t-lg);font-weight:600;letter-spacing:-.02em;white-spac
   .cal-ph-grid{grid-template-columns:1fr}
   .probe-grid{grid-template-columns:1fr}
   .probe-charts{grid-template-columns:1fr}
-  .sys-status{grid-template-columns:1fr 1fr}
   .tools-row{grid-template-columns:1fr}
   .metric-row{grid-template-columns:1fr 1fr 1fr}
   .status-bar-inline{grid-template-columns:1fr 1fr}
