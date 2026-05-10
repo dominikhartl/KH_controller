@@ -1844,8 +1844,10 @@
       if (document.querySelector('[data-page="' + p + '"]')) activate(p);
     });
 
-    // Tap "Next measurement" card → jump to Setup, open Schedule accordion.
-    var nextMeasCard = document.getElementById('next-meas-card');
+    // Tap the time in the "Next measurement" card → Setup → Schedule accordion.
+    // Card itself is no longer the link (it now hosts a Measure button at the bottom);
+    // only the time text is clickable.
+    var nextMeasLink = document.getElementById('next-meas-link');
     function openSchedule(e) {
       if (e) e.preventDefault();
       activate('setup');
@@ -1854,11 +1856,8 @@
       if (schedAcc) schedAcc.open = true;
       if (schedAcc && schedAcc.scrollIntoView) schedAcc.scrollIntoView({behavior: 'smooth', block: 'start'});
     }
-    if (nextMeasCard) {
-      nextMeasCard.addEventListener('click', openSchedule);
-      nextMeasCard.addEventListener('keydown', function(e) {
-        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openSchedule(); }
-      });
+    if (nextMeasLink) {
+      nextMeasLink.addEventListener('click', openSchedule);
     }
 
     initHclEdit();

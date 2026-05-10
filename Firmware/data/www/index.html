@@ -52,10 +52,7 @@
     <div class="hero">
       <div class="hero-card">
         <span class="hc-label">Carbonate Hardness</span>
-        <div class="hc-value-row">
-          <div><span class="hc-value" id="val-kh">--</span><span class="hc-unit">dKH</span></div>
-          <button class="cmd-btn primary in-card" data-cmd="k">Measure</button>
-        </div>
+        <div><span class="hc-value" id="val-kh">--</span><span class="hc-unit">dKH</span></div>
         <div class="hc-spark">
           <canvas id="spark-kh"></canvas>
           <div class="hc-spark-range">
@@ -88,24 +85,20 @@
     <div class="metric-row">
       <div class="metric-card">
         <span class="mc-label">Measured pH</span>
-        <div class="mc-value-row">
-          <span class="mc-value" id="val-mesph">--</span>
-          <button class="cmd-btn tint-green in-card" data-cmd="p">Measure</button>
-        </div>
+        <span class="mc-value" id="val-mesph">--</span>
         <span class="mc-sub">latest</span>
+        <button class="cmd-btn primary in-card" data-cmd="p">Measure</button>
       </div>
       <div class="metric-card metric-card-link" id="hcl-card" role="button" tabindex="0" title="Tap to edit volume">
         <span class="mc-label">HCl</span>
-        <div class="mc-value-row">
-          <span class="mc-value"><span id="val-hcl">--</span> <small style="font-size:.55em;color:var(--text-tertiary);font-weight:500">mL</small></span>
-          <button class="cmd-btn tint-orange in-card" data-cmd="f">Fill</button>
-        </div>
+        <span class="mc-value"><span id="val-hcl">--</span> <small style="font-size:.55em;color:var(--text-tertiary);font-weight:500">mL</small></span>
         <div class="hcl-bar"><span id="hcl-fill"></span></div>
+        <button class="cmd-btn primary in-card" data-cmd="f">Fill</button>
       </div>
-      <div class="metric-card metric-card-link" id="next-meas-card" role="button" tabindex="0" title="Edit schedule">
+      <div class="metric-card" id="next-meas-card">
         <span class="mc-label">Next measurement</span>
-        <span class="mc-value" id="next-meas">--</span>
-        <span class="mc-sub">tap to edit</span>
+        <a href="#setup" class="mc-value next-meas-link" id="next-meas-link"><span id="next-meas">--</span></a>
+        <button class="cmd-btn primary in-card" data-cmd="k">Measure</button>
       </div>
     </div>
 
