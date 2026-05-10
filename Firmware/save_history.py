@@ -88,6 +88,8 @@ if "uploadfs" in COMMAND_LINE_TARGETS:
     gzip_web_assets()
 
     import urllib.request
+    import urllib.error
+    import socket
 
     print("Backing up history from device before filesystem build...")
     os.makedirs(DATA_DIR, exist_ok=True)
@@ -106,8 +108,11 @@ if "uploadfs" in COMMAND_LINE_TARGETS:
                     print(f"  {name}.csv is empty, skipping")
             else:
                 print(f"  {name}.csv not found (HTTP {req.status})")
-        except Exception as e:
-            print(f"  Could not backup {name}.csv: {e}")
+        except (urllib.error.URLError, socket.timeout, ConnectionError, TimeoutError) as e:
+            # Bare `except` was hiding programming errors. Be explicit about
+            # network failures so they're easy to diagnose, but let unexpected
+            # exception types surface.
+            print(f"  Could not backup {name}.csv: {type(e).__name__}: {e}")
 
     # Delete cached LittleFS image to force rebuild with history files
     img = os.path.join(env.subst("$BUILD_DIR"), "littlefs.bin")
