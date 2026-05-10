@@ -102,8 +102,10 @@ header h1{font-size:var(--t-lg);font-weight:600;letter-spacing:-.02em;white-spac
   cursor:pointer;-webkit-tap-highlight-color:transparent;
 }
 .live-banner.active{display:flex}
-.live-banner .lb-label{color:var(--orange);font-weight:600;font-size:var(--t-sm);flex:1}
-.live-banner .lb-value{color:var(--text-primary);font-weight:600;font-size:var(--t-md);font-variant-numeric:tabular-nums}
+/* min-width:0 + overflow:hidden + text-overflow:ellipsis + nowrap → label
+   never wraps to a second line, even if a phase name is long. */
+.live-banner .lb-label{color:var(--orange);font-weight:600;font-size:var(--t-sm);flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.live-banner .lb-value{color:var(--text-primary);font-weight:600;font-size:var(--t-md);font-variant-numeric:tabular-nums;white-space:nowrap;flex-shrink:0}
 .live-banner .lb-bar{flex:0 0 92px;height:4px;background:rgba(255,159,10,.18);border-radius:2px;overflow:hidden}
 .live-banner .lb-fill{height:100%;background:var(--orange);width:0;transition:width .3s ease}
 

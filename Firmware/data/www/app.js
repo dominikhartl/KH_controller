@@ -1933,8 +1933,15 @@
     var banner = document.getElementById('live-banner');
     if (!banner) return;
     if (active) {
-      var label = document.getElementById('live-banner-label');
-      if (label) label.textContent = 'Measuring ' + (kind || 'KH') + '…';
+      // Once a phase is known, refreshLiveBannerProgress owns the label so it
+      // doesn't flip-flop with every state broadcast. Use the generic
+      // "Measuring KH…" only as a placeholder before the first phase arrives.
+      if (measPhase > 0) {
+        refreshLiveBannerProgress();
+      } else {
+        var label = document.getElementById('live-banner-label');
+        if (label) label.textContent = 'Measuring ' + (kind || 'KH') + '…';
+      }
       banner.classList.add('active');
     } else {
       // Hide after a brief grace period so the final progress is readable
