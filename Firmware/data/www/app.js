@@ -103,9 +103,13 @@
   }
 
   // --- Measurement phase + progress ---
-  // Mirrors the server-side currentMeasPhase: 0=idle, 1=wash, 2=titrate, 3=cleanup
+  // Mirrors the server-side currentMeasPhase: 0=idle, 1=wash, 2=titrate, 3=cleanup.
+  // `isMeasuring` is set as soon as `mesStart` arrives, so updateProgress can
+  // route to the live-banner from the very first progress event — without
+  // waiting for the next state broadcast that carries `measPhase`.
   var measPhase = 0;
   var measPct = 0;
+  var isMeasuring = false;
   // Phase weights sum to 100; sub-phase pct contributes proportionally
   var PHASE_WEIGHTS = [0, 30, 65, 5];
   var PHASE_LABELS  = ['', 'Washing', 'Titrating', 'Cleaning up'];
@@ -135,7 +139,10 @@
 
     // During a KH measurement the progress goes into the live-banner.
     // The standalone progress-section stays hidden so we don't show two bars.
-    if (measPhase > 0) {
+    // Use `isMeasuring` (set on mesStart) rather than `measPhase > 0` so the
+    // very first progress event after mesStart is already routed correctly,
+    // before the state broadcast that carries the measPhase has arrived.
+    if (isMeasuring) {
       measPct = pct;
       refreshLiveBannerProgress();
       if (section) section.style.display = 'none';
@@ -1173,6 +1180,8 @@
   // Only the KH button toggles to "Abort" during a measurement. pH measurements
   // are short and don't need an abort affordance, so the pH button is left alone.
   function setMeasuringMode(active) {
+    isMeasuring = !!active;
+    if (!active) measPhase = 0;  // reset so updateProgress falls back to non-measurement path
     var btnKH = document.querySelector('[data-original-cmd="k"]') || document.querySelector('[data-cmd="k"]');
     if (!btnKH) return;
     if (active) {
