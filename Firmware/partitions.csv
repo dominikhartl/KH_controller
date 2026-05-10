@@ -1,4 +1,8 @@
 # Name,    Type,  SubType, Offset,   Size,     Flags
+# NOTE: the data partition below is mounted as LittleFS (see platformio.ini
+# `board_build.filesystem = littlefs`). The `spiffs` subtype name is kept for
+# backward compatibility — Arduino-ESP32 LittleFS picks up the partition by
+# name and changing the subtype would brick existing devices on next OTA.
 nvs,       data,  nvs,     0x9000,   0x5000,
 otadata,   data,  ota,     0xe000,   0x2000,
 app0,      app,   ota_0,   0x10000,  0x180000,

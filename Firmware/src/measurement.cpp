@@ -342,6 +342,8 @@ static float readADS1115Once() {
   if (Wire.available() < 2) return NAN;
   int16_t raw = ((int16_t)Wire.read() << 8) | Wire.read();
 
+  // Single-ended config (AIN0 vs GND): raw is always non-negative in normal operation.
+  // raw < 0 indicates an I2C bit-glitch; raw == INT16_MAX indicates PGA saturation.
   if (raw < 0 || raw >= 32767) return NAN;
   return (float)raw * ADS_MV_PER_BIT;
 }

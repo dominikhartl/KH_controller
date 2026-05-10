@@ -124,21 +124,30 @@ static void addDeviceBlock(JsonObject& doc) {
   dev["cu"] = cuBuf;
 }
 
+// Cooperative wait that services MQTT during the gap so the TCP buffer drains.
+// Plain delay() blocks PubSubClient::loop() and lets the TCP buffer back up,
+// which is the actual failure mode during the discovery burst.
+static void mqttPacedDelay(unsigned long ms) {
+  unsigned long end = millis() + ms;
+  while (millis() < end) {
+    mqttManager.getClient().loop();
+    delay(10);
+  }
+}
+
 static void publishDiscoveryPayload(const char* discoveryTopic, JsonDocument& doc) {
   char buf[768];
   size_t len = serializeJson(doc, buf, sizeof(buf));
   bool ok = mqttManager.publish(discoveryTopic, buf, true);
   if (!ok) {
     // Retry once — TCP buffer may be full from rapid discovery burst
-    delay(200);
-    mqttManager.getClient().loop();
+    mqttPacedDelay(200);
     ok = mqttManager.publish(discoveryTopic, buf, true);
     if (!ok) {
       Serial.printf("HA Discovery FAILED: %s (len=%u)\n", discoveryTopic, (unsigned)len);
     }
   }
-  delay(150);  // Increased from 100ms for TCP headroom during burst
-  mqttManager.getClient().loop();
+  mqttPacedDelay(150);  // pace burst so HA broker / TCP buffer can drain
 }
 
 static void publishSensorDiscovery(const char* id, const char* name, const char* statTopic,

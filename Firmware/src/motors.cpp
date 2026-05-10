@@ -301,7 +301,7 @@ bool motorRampTest(bool isSample, float startRPM, float maxRPM, float stepRPM,
     stepper->setAcceleration(accel > 0 ? accel : MOTOR_ACCEL_STEPS_S2);
     int32_t startPos = stepper->getCurrentPosition();
     int totalSteps = revsPerStep * STEPS_PER_REVOLUTION;
-    stepper->move(isSample ? -totalSteps : -totalSteps);  // removal direction
+    stepper->move(-totalSteps);  // removal direction (both pumps wired so negative = removal)
 
     // Wait for this step to complete
     unsigned long timeout = (unsigned long)((float)revsPerStep / rpm * 60000.0f * 3.0f) + 5000UL;
