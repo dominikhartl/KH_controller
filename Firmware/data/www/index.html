@@ -66,6 +66,7 @@
           <span class="pill" id="kh-status-pill"><span class="dot"></span>--</span>
           <span class="hc-trend" id="kh-trend-meta">— <strong id="val-kh-slope">--</strong> dKH/d</span>
         </div>
+        <button class="cmd-btn primary in-card" data-cmd="k">Measure KH</button>
       </div>
       <div class="hero-card">
         <span class="hc-label">pH</span>
@@ -89,23 +90,19 @@
         <span class="mc-label">Measured pH</span>
         <span class="mc-value" id="val-mesph">--</span>
         <span class="mc-sub">latest</span>
+        <button class="cmd-btn tint-green in-card" data-cmd="p">Measure pH</button>
       </div>
-      <div class="metric-card">
+      <div class="metric-card metric-card-link" id="hcl-card" role="button" tabindex="0" title="Tap to edit volume">
         <span class="mc-label">HCl</span>
         <span class="mc-value"><span id="val-hcl">--</span> <small style="font-size:.55em;color:var(--text-tertiary);font-weight:500">mL</small></span>
         <div class="hcl-bar"><span id="hcl-fill"></span></div>
+        <button class="cmd-btn tint-orange in-card" data-cmd="f">Fill</button>
       </div>
       <div class="metric-card metric-card-link" id="next-meas-card" role="button" tabindex="0" title="Edit schedule">
         <span class="mc-label">Next measurement</span>
         <span class="mc-value" id="next-meas">--</span>
         <span class="mc-sub">tap to edit</span>
       </div>
-    </div>
-
-    <div class="actions">
-      <button class="cmd-btn primary" data-cmd="k">Measure KH</button>
-      <button class="cmd-btn tint-green" data-cmd="p">Measure pH</button>
-      <button class="cmd-btn tint-orange" data-cmd="f">Fill</button>
     </div>
   </section>
 

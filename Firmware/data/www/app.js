@@ -1861,6 +1861,71 @@
         if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openSchedule(); }
       });
     }
+
+    initHclEdit();
+  }
+
+  // Tap HCl card → inline edit the volume (replaces #val-hcl span with a number input).
+  // Skips if the tap landed on a button (Fill) so the action button keeps its own behavior.
+  function initHclEdit() {
+    var card = document.getElementById('hcl-card');
+    if (!card) return;
+    var editing = false;
+
+    function startEdit() {
+      if (editing) return;
+      var span = document.getElementById('val-hcl');
+      if (!span) return;
+      editing = true;
+      var current = parseFloat(span.textContent.replace(/[^\d.\-]/g, '')) || 0;
+      var input = document.createElement('input');
+      input.type = 'number';
+      input.inputMode = 'decimal';
+      input.min = '0';
+      input.max = '20000';
+      input.step = '1';
+      input.value = current;
+      input.id = 'val-hcl';  // preserve id so subsequent state updates still find it (after restore)
+      input.style.cssText = 'width:5.5em;font:inherit;color:inherit;background:var(--card-elevated);' +
+        'border:1px solid var(--accent);border-radius:6px;padding:2px 6px;text-align:right;';
+      span.parentNode.replaceChild(input, span);
+      input.focus();
+      input.select();
+
+      function finish(save) {
+        if (!editing) return;
+        editing = false;
+        var newSpan = document.createElement('span');
+        newSpan.id = 'val-hcl';
+        var val = parseFloat(input.value);
+        if (save && !isNaN(val) && val >= 0 && val <= 20000) {
+          newSpan.textContent = Math.round(val);
+          send({ type: 'config', key: 'hcl_volume', value: val });
+        } else {
+          newSpan.textContent = Math.round(current);  // revert
+        }
+        input.parentNode.replaceChild(newSpan, input);
+      }
+
+      input.addEventListener('blur', function() { finish(true); });
+      input.addEventListener('keydown', function(e) {
+        if (e.key === 'Enter')   { e.preventDefault(); finish(true); }
+        else if (e.key === 'Escape') { e.preventDefault(); finish(false); }
+      });
+    }
+
+    card.addEventListener('click', function(e) {
+      // Don't start edit when the user tapped the Fill button or its descendants.
+      if (e.target.closest('.cmd-btn')) return;
+      // Don't restart edit if we're already inside the input.
+      if (e.target.tagName === 'INPUT') return;
+      startEdit();
+    });
+    card.addEventListener('keydown', function(e) {
+      if (editing) return;
+      if (e.target !== card) return;  // only when card itself is focused, not the inner button
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); startEdit(); }
+    });
   }
 
   // ============================================================

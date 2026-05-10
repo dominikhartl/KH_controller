@@ -197,9 +197,12 @@ header h1{font-size:var(--t-lg);font-weight:600;letter-spacing:-.02em;white-spac
 .schedule-strip a{color:var(--accent);text-decoration:none;font-size:var(--t-sm);font-weight:500;-webkit-tap-highlight-color:transparent}
 .schedule-strip a:active{opacity:.5}
 
-/* === Primary action row === */
-.actions{display:grid;grid-template-columns:1fr 1fr 1fr;gap:var(--s2);margin-bottom:var(--s4)}
-.actions .cmd-btn{padding:14px 8px;font-size:var(--t-md);font-weight:600}
+/* === In-card action buttons (Measure KH / Measure pH / Fill) === */
+.cmd-btn.in-card{
+  width:100%;margin-top:var(--s2);padding:11px var(--s3);
+  font-size:var(--t-sm);font-weight:600;
+}
+.hero-card .cmd-btn.in-card{padding:13px var(--s3);font-size:var(--t-md)}
 
 /* === Recent log section === */
 .recent-log h3{font-size:var(--t-xs);font-weight:600;color:var(--text-secondary);text-transform:uppercase;letter-spacing:.05em;margin-bottom:var(--s2)}
@@ -505,8 +508,7 @@ header h1{font-size:var(--t-lg);font-weight:600;letter-spacing:-.02em;white-spac
   .hero{grid-template-columns:1fr;gap:var(--s2)}
   .hero-card{min-height:auto}
   .hero-card .hc-value{font-size:var(--t-display)}
-  .actions{grid-template-columns:1fr 1fr;gap:var(--s2)}
-  .actions .cmd-btn:nth-child(3){grid-column:1/-1}
+  .metric-card .cmd-btn.in-card{padding:9px var(--s2);font-size:var(--t-xs)}
   .config-grid{grid-template-columns:1fr}
   .interval-config{grid-template-columns:1fr}
   .cal-ph-grid{grid-template-columns:1fr}
