@@ -102,13 +102,48 @@
     return d.innerHTML;
   }
 
-  // --- Progress bar ---
+  // --- Measurement phase + progress ---
+  // Mirrors the server-side currentMeasPhase: 0=idle, 1=wash, 2=titrate, 3=cleanup
+  var measPhase = 0;
+  var measPct = 0;
+  // Phase weights sum to 100; sub-phase pct contributes proportionally
+  var PHASE_WEIGHTS = [0, 30, 65, 5];
+  var PHASE_LABELS  = ['', 'Washing', 'Titrating', 'Cleaning up'];
+
+  function overallMeasPct() {
+    if (measPhase < 1 || measPhase > 3) return 0;
+    var cumulative = 0;
+    for (var i = 1; i < measPhase; i++) cumulative += PHASE_WEIGHTS[i];
+    return Math.round(cumulative + PHASE_WEIGHTS[measPhase] * measPct / 100);
+  }
+
+  function refreshLiveBannerProgress() {
+    var label = document.getElementById('live-banner-label');
+    var fill  = document.getElementById('live-banner-fill');
+    var value = document.getElementById('live-banner-value');
+    if (label) label.textContent = (PHASE_LABELS[measPhase] || 'Measuring') + '…';
+    var overall = overallMeasPct();
+    if (fill)  fill.style.width = overall + '%';
+    if (value) value.textContent = measPct + '% · ' + overall + '% total';
+  }
+
+  // --- Progress bar (single dispatch) ---
   function updateProgress(pct) {
     var section = document.getElementById('progress-section');
-    var fill = document.getElementById('progress-fill');
-    var label = document.getElementById('progress-label');
-    var bannerFill = document.getElementById('live-banner-fill');
-    if (bannerFill) bannerFill.style.width = Math.max(0, Math.min(100, pct)) + '%';
+    var fill    = document.getElementById('progress-fill');
+    var label   = document.getElementById('progress-label');
+
+    // During a KH measurement the progress goes into the live-banner.
+    // The standalone progress-section stays hidden so we don't show two bars.
+    if (measPhase > 0) {
+      measPct = pct;
+      refreshLiveBannerProgress();
+      if (section) section.style.display = 'none';
+      return;
+    }
+
+    // Non-measurement operations (calibration, OTA, cleaning, etc.):
+    // use the dedicated progress-section.
     if (!section || !fill || !label) return;
     if (pct >= 100) {
       section.style.display = 'none';
@@ -246,6 +281,19 @@
       setMeasuringMode(!!d.measuring);
       if (!!d.measuring) showLiveBanner(true, 'KH');
       else showLiveBanner(false);
+    }
+
+    // Phase tracker drives the live-banner progress display
+    if (d.measPhase != null && d.measPhase !== measPhase) {
+      measPhase = d.measPhase;
+      if (measPhase === 0) {
+        // Measurement ended — reset sub-progress
+        measPct = 0;
+      } else {
+        // Phase boundary — reset sub-pct (each phase starts at 0%)
+        measPct = 0;
+        refreshLiveBannerProgress();
+      }
     }
 
     // Status bar
@@ -565,7 +613,11 @@
   function updateLivePH(d) {
     var mesPhVal = (d.ph > 0) ? d.ph : 0;
     setText('val-mesph', mesPhVal > 0 ? mesPhVal.toFixed(2) : '--');
-    setText('live-banner-value', mesPhVal > 0 ? 'pH ' + mesPhVal.toFixed(2) : '--');
+    // The live-banner shows phase progress during a measurement (refreshLiveBannerProgress
+    // owns lb-value); only fall back to pH text outside of an active measurement.
+    if (measPhase === 0) {
+      setText('live-banner-value', mesPhVal > 0 ? 'pH ' + mesPhVal.toFixed(2) : '--');
+    }
 
     if (liveChart) {
       liveChart.data.datasets[0].data.push({x: d.ml, y: d.ph});

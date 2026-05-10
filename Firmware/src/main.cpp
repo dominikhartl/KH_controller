@@ -61,6 +61,11 @@ static const unsigned long BOOT_BTN_HOLD_MS = 5000;  // 5 seconds
 // Atomic: read by AsyncTCP task (broadcastState), written by loopTask
 std::atomic<bool> isMeasuringKH{false};
 
+// Measurement phase: 0=idle, 1=wash, 2=titrate, 3=cleanup. Drives the progress UI.
+// The client maps these to weighted slices of the overall progress bar.
+std::atomic<int> currentMeasPhase{0};
+void setMeasPhase(int p) { currentMeasPhase.store(p, std::memory_order_release); }
+
 
 // Abort flag: set by AsyncTCP task (WebSocket handler), checked by loopTask in measurement loops
 static std::atomic<bool> abortRequested{false};
@@ -1084,7 +1089,7 @@ KHResult measureKH() {
   float titV = configStore.getTitrationVolume();
   if (titV <= 0 || calU <= 0) {
     publishError("Error: invalid calibration or titration volume config");
-    isMeasuringKH = false;
+    isMeasuringKH = false; setMeasPhase(0);
     return result;
   }
   int prefillUnits = max(2, (int)round(prefillUL * calU / (titV * 1000.0f)));
@@ -1092,14 +1097,14 @@ KHResult measureKH() {
   // Validate calibration before starting
   if (!isCalibrationValid()) {
     publishError("Error: pH calibration invalid. Re-calibrate with pH 4/7/10 buffers.");
-    isMeasuringKH = false;
+    isMeasuringKH = false; setMeasPhase(0);
     return result;
   }
 
   if (!titrate(prefillUnits, configStore.getTitrationRPM())) {
     publishError("Error: titration pump timeout during prefill");
     digitalWrite(EN_PIN2, HIGH);
-    isMeasuringKH = false;
+    isMeasuringKH = false; setMeasPhase(0);
     return result;
   }
   // 5 Gran burst drops to eject any hanging drop from the tip before measurement
@@ -1127,6 +1132,7 @@ KHResult measureKH() {
   }
   // Configurable wash count: rinses clean the chamber, last wash takes the actual sample
   int numWashes = configStore.getNumWashes();
+  setMeasPhase(1);  // wash phase
   setMultiWashContext(numWashes);
   float sampRpm = configStore.getSamplePumpRPM();
   for (int w = 0; w < numWashes; w++) {
@@ -1135,16 +1141,16 @@ KHResult measureKH() {
       static char washErr[64];
       snprintf(washErr, sizeof(washErr), "Error: sample pump timeout during wash (%d/%d)", w + 1, numWashes);
       publishError(washErr);
-      isMeasuringKH = false;
+      isMeasuringKH = false; setMeasPhase(0);
       return result;
     }
     measurementYield();
-    if (abortRequested) { abortRequested = false; stopStirrer(); digitalWrite(EN_PIN2, HIGH); clearMultiWashContext(); publishError("Measurement aborted"); isMeasuringKH = false; return result; }
+    if (abortRequested) { abortRequested = false; stopStirrer(); digitalWrite(EN_PIN2, HIGH); clearMultiWashContext(); publishError("Measurement aborted"); isMeasuringKH = false; setMeasPhase(0); return result; }
     if (w < numWashes - 1) delay(1000);
   }
   clearMultiWashContext();
   measurementYield();
-  if (abortRequested) { abortRequested = false; stopStirrer(); digitalWrite(EN_PIN2, HIGH); publishError("Measurement aborted"); isMeasuringKH = false; return result; }
+  if (abortRequested) { abortRequested = false; stopStirrer(); digitalWrite(EN_PIN2, HIGH); publishError("Measurement aborted"); isMeasuringKH = false; setMeasPhase(0); return result; }
   delay(100);
   startStirrer();
   delay(STIRRER_WARMUP_MS);  // Wait for solution to homogenize
@@ -1240,6 +1246,18 @@ KHResult measureKH() {
     float lastFastPH = startPH;
     int stallCount = 0;
     float fastRPM = configStore.getFastPhaseRPM();
+    // Endpoint pH (used here for titration-progress estimation; epMethod is read again
+    // below for the precise-phase loop, but stopPH is fixed for the whole titration)
+    uint8_t titrEpMethod = configStore.getEndpointMethod();
+    float titrStopPH = (titrEpMethod == 1) ? FIXED_ENDPOINT_STOP_PH : GRAN_STOP_PH;
+    auto titrateProgressPct = [&](float curPH) -> int {
+      if (startPH <= titrStopPH || isnan(curPH)) return 0;
+      int p = (int)((startPH - curPH) / (startPH - titrStopPH) * 100.0f);
+      if (p < 0) p = 0;
+      if (p > 99) p = 99;
+      return p;
+    };
+    setMeasPhase(2);  // titrate phase
     publishMessage("Fast titration");
 
     // Data point storage — declared early so fast-phase can store points near endpoint
@@ -1264,6 +1282,7 @@ KHResult measureKH() {
           : 5 + max(0, fastBatchMax - batch) * 15 / fastBatchMax;
       measurePHFast(nReadings);
       broadcastTitrationPH(pH, units);
+      broadcastProgress(titrateProgressPct(pH));
       measurementYield();
       { int8_t rssi = wifiManager.getRSSI();
         if (rssi < rssiMin) rssiMin = rssi;
@@ -1399,6 +1418,7 @@ KHResult measureKH() {
       { char phBuf[16]; snprintf(phBuf, sizeof(phBuf), "%.2f", pH);
         mqttManager.publish(MQmespH, phBuf); }
       broadcastTitrationPH(pH, units);
+      broadcastProgress(titrateProgressPct(pH));
       measurementYield();
       { int8_t rssi = wifiManager.getRSSI();
         if (rssi < rssiMin) rssiMin = rssi;
@@ -1692,6 +1712,7 @@ KHResult measureKH() {
   }
 
   // Single post-wash rinse (pre-measurement double wash handles carryover)
+  setMeasPhase(3);  // cleanup phase
   int postFillRevs = configStore.getSampleCalRevolutions();
   int postRemoveRevs = (int)(postFillRevs * (1.5f + hclPart));
   if (!washSampleVol(postRemoveRevs, postFillRevs, configStore.getSamplePumpRPM())) {
@@ -1719,7 +1740,7 @@ KHResult measureKH() {
   }
   publishMessage(doneBuf);
   abortRequested = false;
-  isMeasuringKH = false;
+  isMeasuringKH = false; setMeasPhase(0);
   return result;
 }
 

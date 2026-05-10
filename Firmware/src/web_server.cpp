@@ -184,6 +184,7 @@ void storeAnalysisPoints(const TitrationPoint* points, int count) {
 
 // Forward declarations for command/config handlers from main
 extern std::atomic<int> units;
+extern std::atomic<int> currentMeasPhase;
 extern float startPH;
 extern void calibrateTitrationPump();
 extern void subtractHCl(int unitsUsed);
@@ -888,6 +889,7 @@ void broadcastState() {
   doc["tmc"] = isTMCDetected();
   doc["stirrer"] = isStirrerRunning();
   doc["measuring"] = isMeasuringKH.load();
+  doc["measPhase"] = currentMeasPhase.load();
 
   // KH trend slope (dKH/day) and regression parameters for client trend line
   if (!isnan(cachedKHSlope)) {
@@ -1051,11 +1053,11 @@ void broadcastState() {
 void broadcastStateLight() {
   if (ws.count() == 0) return;
 
-  static char buf[400];
+  static char buf[420];
   int n = snprintf(buf, sizeof(buf),
     "{\"type\":\"state\",\"ph\":%.3f,\"startPh\":%.2f,\"units\":%d,"
     "\"uptime\":%lu,\"freeHeap\":%lu,\"heapMin\":%lu,"
-    "\"measuring\":%s,\"rssi\":%d,"
+    "\"measuring\":%s,\"measPhase\":%d,\"rssi\":%d,"
     "\"wifiOk\":%s,\"mqttOk\":%s,\"ntpOk\":%s,"
     "\"stirrer\":%s,\"water_temp\":%.1f,\"temp_sensor\":%s,"
     "\"kh\":%.2f,\"lastStartPh\":%.2f,\"hclVol\":%.1f",
@@ -1063,6 +1065,7 @@ void broadcastStateLight() {
     millis() / 1000,
     (unsigned long)ESP.getFreeHeap(), (unsigned long)heapMin,
     isMeasuringKH.load() ? "true" : "false",
+    currentMeasPhase.load(),
     wifiManager.getRSSI(),
     wifiManager.isConnected() ? "true" : "false",
     mqttManager.isConnected() ? "true" : "false",
