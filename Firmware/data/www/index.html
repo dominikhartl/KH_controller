@@ -2,9 +2,10 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#000000">
   <title>KH Controller</title>
-  <link rel="stylesheet" href="style.css?v=16">
+  <link rel="stylesheet" href="style.css?v=6">
 </head>
 <body>
   <header>
@@ -28,318 +29,346 @@
     </div>
   </header>
 
-  <section class="gauges">
-    <div class="gauge-card">
-      <div class="gauge-visual">
-        <svg viewBox="0 0 120 80" class="gauge-svg">
-          <path d="M15 70 A50 50 0 0 1 105 70" fill="none" stroke="#333" stroke-width="8" stroke-linecap="round"/>
-          <path id="gauge-kh-arc" d="M15 70 A50 50 0 0 1 105 70" fill="none" stroke="#0a84ff" stroke-width="8" stroke-linecap="round" stroke-dasharray="0 999"/>
-        </svg>
-      </div>
-      <div class="gauge-value" id="val-kh">--</div>
-      <div class="gauge-label">KH (dKH)</div>
-    </div>
-    <div class="gauge-card">
-      <div class="gauge-visual">
-        <svg viewBox="0 0 120 80" class="gauge-svg">
-          <path d="M15 70 A50 50 0 0 1 105 70" fill="none" stroke="#333" stroke-width="8" stroke-linecap="round"/>
-          <path id="gauge-ph-arc" d="M15 70 A50 50 0 0 1 105 70" fill="none" stroke="#30d158" stroke-width="8" stroke-linecap="round" stroke-dasharray="0 999"/>
-        </svg>
-      </div>
-      <div class="gauge-value" id="val-ph">--</div>
-      <div class="gauge-label">pH</div>
-    </div>
-    <div class="gauge-card">
-      <div class="gauge-visual">
-        <svg viewBox="0 0 120 80" class="gauge-svg">
-          <path d="M15 70 A50 50 0 0 1 105 70" fill="none" stroke="#333" stroke-width="8" stroke-linecap="round"/>
-          <path id="gauge-mesph-arc" d="M15 70 A50 50 0 0 1 105 70" fill="none" stroke="#ff9f0a" stroke-width="8" stroke-linecap="round" stroke-dasharray="0 999"/>
-        </svg>
-      </div>
-      <div class="gauge-value" id="val-mesph">--</div>
-      <div class="gauge-label">Measured pH</div>
-    </div>
-    <div class="gauge-card">
-      <div class="gauge-visual">
-        <div class="hcl-tank">
-          <div class="hcl-fill" id="hcl-fill"></div>
-        </div>
-      </div>
-      <div class="gauge-value" id="val-hcl">--</div>
-      <div class="gauge-label">HCl (mL)</div>
-    </div>
-  </section>
+  <nav class="page-nav" role="tablist">
+    <button class="page-tab active" data-page="overview" role="tab">Overview</button>
+    <button class="page-tab" data-page="history" role="tab">History</button>
+    <button class="page-tab" data-page="setup" role="tab">Setup</button>
+    <button class="page-tab" data-page="system" role="tab">System</button>
+  </nav>
 
-  <section class="charts">
-    <div class="tab-bar">
-      <button class="tab active" data-tab="kh">KH</button>
-      <button class="tab" data-tab="ph">pH</button>
-      <button class="tab" data-tab="live">Live pH</button>
-      <button class="tab" data-tab="gran">Gran</button>
-    </div>
-    <div id="gran-subtabs" class="gran-subtabs" style="display:none">
-      <button id="gran-tab-last" class="gran-subtab active">Last</button>
-      <button id="gran-tab-hist" class="gran-subtab">History</button>
-    </div>
-    <div class="chart-container">
-      <canvas id="chart-kh"></canvas>
-      <canvas id="chart-ph" style="display:none"></canvas>
-      <canvas id="chart-live" style="display:none"></canvas>
-      <canvas id="chart-gran" style="display:none"></canvas>
-      <canvas id="chart-gran-hist" style="display:none"></canvas>
-    </div>
-    <div id="chart-range" class="chart-range">
-      <button class="range-btn" data-days="1">1d</button>
-      <button class="range-btn" data-days="3">3d</button>
-      <button class="range-btn active" data-days="7">7d</button>
-      <button class="range-btn" data-days="10">10d</button>
-    </div>
-    <div id="kh-layers" class="kh-layers">
-      <label><input type="checkbox" id="kh-show-points" checked> Points</label>
-      <label><input type="checkbox" id="kh-show-smooth" checked> Smooth</label>
-      <label><input type="checkbox" id="kh-show-trend" checked> Trend</label>
-      <label><input type="checkbox" id="kh-show-score"> Score</label>
-      <label><input type="checkbox" id="kh-show-forecast" checked> Forecast</label>
-    </div>
-    <div id="kh-trend" class="chart-sub">Trend: <strong id="val-kh-slope">--</strong> dKH/day</div>
-    <div id="gran-info" class="gran-info" style="display:none"></div>
-    <div id="gran-quality" class="gran-quality" style="display:none">
-      <span>Confidence: <strong id="val-confidence">--</strong> %</span>
-    </div>
-  </section>
+  <div id="live-banner" class="live-banner" title="Tap to view live curve">
+    <span class="lb-label" id="live-banner-label">Measuring KH…</span>
+    <div class="lb-bar"><div class="lb-fill" id="live-banner-fill"></div></div>
+    <span class="lb-value" id="live-banner-value">--</span>
+  </div>
 
-  <section class="progress-section" id="progress-section" style="display:none">
+  <section id="progress-section" class="progress-section">
     <div class="progress-bar"><div class="progress-fill" id="progress-fill"></div></div>
     <div class="progress-label" id="progress-label">0%</div>
   </section>
 
-  <section class="buttons collapsible">
-    <h2 class="section-header">Commands <span class="chevron"></span></h2>
-    <div class="section-body">
-      <div class="btn-row-primary">
-        <button class="cmd-btn primary" data-cmd="k">Measure KH</button>
-        <button class="cmd-btn primary" data-cmd="p">Measure pH</button>
+  <!-- ============================== OVERVIEW ============================== -->
+  <section class="page-section active" data-page="overview">
+    <div id="alerts" class="alerts"></div>
+
+    <div class="hero">
+      <div class="hero-card">
+        <span class="hc-label">Carbonate Hardness</span>
+        <div><span class="hc-value" id="val-kh">--</span><span class="hc-unit">dKH</span></div>
+        <div class="hc-spark">
+          <canvas id="spark-kh"></canvas>
+          <div class="hc-spark-range">
+            <span id="spark-kh-max">--</span>
+            <span id="spark-kh-min">--</span>
+          </div>
+        </div>
+        <div class="hc-meta">
+          <span class="pill" id="kh-status-pill"><span class="dot"></span>--</span>
+          <span class="hc-trend" id="kh-trend-meta">— <strong id="val-kh-slope">--</strong> dKH/d</span>
+        </div>
       </div>
-      <div class="btn-row-primary">
-        <button class="cmd-btn" data-cmd="f">Fill</button>
-        <button class="cmd-btn warn" data-cmd="o">Restart</button>
+      <div class="hero-card">
+        <span class="hc-label">pH</span>
+        <div><span class="hc-value" id="val-ph">--</span></div>
+        <div class="hc-spark">
+          <canvas id="spark-ph"></canvas>
+          <div class="hc-spark-range">
+            <span id="spark-ph-max">--</span>
+            <span id="spark-ph-min">--</span>
+          </div>
+        </div>
+        <div class="hc-meta">
+          <span class="pill" id="ph-status-pill"><span class="dot"></span>--</span>
+          <span class="hc-time" id="ph-meta">last reading —</span>
+        </div>
       </div>
+    </div>
+
+    <div class="metric-row">
+      <div class="metric-card">
+        <span class="mc-label">Measured pH</span>
+        <span class="mc-value" id="val-mesph">--</span>
+        <span class="mc-sub">latest</span>
+      </div>
+      <div class="metric-card">
+        <span class="mc-label">HCl</span>
+        <span class="mc-value"><span id="val-hcl">--</span> <small style="font-size:.55em;color:var(--text-tertiary);font-weight:500">mL</small></span>
+        <div class="hcl-bar"><span id="hcl-fill"></span></div>
+      </div>
+      <div class="metric-card metric-card-link" id="next-meas-card" role="button" tabindex="0" title="Edit schedule">
+        <span class="mc-label">Next measurement</span>
+        <span class="mc-value" id="next-meas">--</span>
+        <span class="mc-sub">tap to edit</span>
+      </div>
+    </div>
+
+    <div class="actions">
+      <button class="cmd-btn primary" data-cmd="k">Measure KH</button>
+      <button class="cmd-btn tint-green" data-cmd="p">Measure pH</button>
+      <button class="cmd-btn tint-orange" data-cmd="f">Fill</button>
     </div>
   </section>
 
-  <section class="config collapsible collapsed">
-    <h2 class="section-header">Calibration <span class="chevron"></span></h2>
-    <div class="section-body">
-      <h3 class="cal-heading">pH Calibration <span class="cal-age-badge" id="ph-cal-age"></span> <span class="cal-age-badge" id="ph-sensor-badge" style="font-weight:600"></span></h3>
-      <div id="ezo-cal-info" style="display:none;margin:0 0 8px;font-size:0.85em;color:var(--text-secondary)">
-        <span>EZO Cal Points: <b id="ezo-cal-pts">0</b>/3</span>
-        &nbsp;&bull;&nbsp;Acid Slope: <b id="ezo-acid-slope">--</b>%
-        &nbsp;&bull;&nbsp;Base Slope: <b id="ezo-base-slope">--</b>%
-        <br><small>EZO requires calibration order: pH 7 first, then pH 4, then pH 10</small>
-      </div>
-      <div class="cal-ph-grid">
-        <div class="cal-ph-col">
-          <button class="cmd-btn cal-4" data-cmd="4">Cal pH 4</button>
-          <label>Buffer pH 4<input type="number" id="cfg-buf_ph4" step="0.01" min="3.0" max="5.0"></label>
-          <span class="cal-mv" id="cal-mv-4"></span>
+  <!-- ============================== HISTORY ============================== -->
+  <section class="page-section" data-page="history">
+    <div class="card chart-card">
+      <div class="chart-toolbar">
+        <div class="seg" role="tablist">
+          <button class="tab active" data-tab="kh" role="tab">KH</button>
+          <button class="tab" data-tab="ph" role="tab">pH</button>
+          <button class="tab" data-tab="gran" role="tab">Gran</button>
+          <button class="tab" data-tab="live" role="tab">Live</button>
         </div>
-        <div class="cal-ph-col">
-          <button class="cmd-btn cal-7" data-cmd="7">Cal pH 7</button>
-          <label>Buffer pH 7<input type="number" id="cfg-buf_ph7" step="0.01" min="6.0" max="8.0"></label>
-          <span class="cal-mv" id="cal-mv-7"></span>
-        </div>
-        <div class="cal-ph-col">
-          <button class="cmd-btn cal-10" data-cmd="10">Cal pH 10</button>
-          <label>Buffer pH 10<input type="number" id="cfg-buf_ph10" step="0.01" min="9.0" max="11.0"></label>
-          <span class="cal-mv" id="cal-mv-10"></span>
+        <div id="chart-range" class="chart-range">
+          <button class="range-btn" data-days="1">1d</button>
+          <button class="range-btn" data-days="3">3d</button>
+          <button class="range-btn active" data-days="7">7d</button>
+          <button class="range-btn" data-days="10">10d</button>
         </div>
       </div>
 
-      <h3 class="cal-heading">Sample Pump <span class="cal-age-badge" id="sample-cal-age"></span></h3>
-      <button class="cmd-btn" data-cmd="cs" id="btn-sample-cal" style="margin-bottom:0.5em">Calibrate Sample Pump</button>
-      <div class="config-grid">
-        <label>Calibration Revolutions
-          <input type="number" id="cfg-sample_cal_revs" step="10" min="50" max="2200">
-        </label>
-        <label>Measured Cal Volume (mL) <span id="sample-cal-current" style="font-weight:normal;color:var(--dim)"></span>
-          <input type="number" id="cfg-sample_cal_vol" step="0.1" min="0.1" max="500" placeholder="enter weighed volume">
-        </label>
+      <div class="chart-container">
+        <canvas id="chart-kh"></canvas>
+        <canvas id="chart-ph" style="display:none"></canvas>
+        <canvas id="chart-live" style="display:none"></canvas>
+        <canvas id="chart-gran-hist" style="display:none"></canvas>
       </div>
-      <div id="sample-cal-info" class="cal-info"></div>
 
-      <h3 class="cal-heading">Titration Pump <span class="cal-age-badge" id="titration-cal-age"></span></h3>
-      <button class="cmd-btn" data-cmd="t" style="margin-bottom:0.5em">Calibrate Titration Pump</button>
-      <div class="config-grid">
-        <label>Calibration Revolutions
-          <input type="number" id="cfg-cal_drops" step="1" min="10" max="500">
-        </label>
-        <label>Measured Titration Volume (mL) <span id="titration-cal-current" style="font-weight:normal;color:var(--dim)"></span>
-          <input type="number" id="cfg-titration_vol" step="0.1" min="0.1" max="50" placeholder="enter weighed volume">
-        </label>
+      <div id="kh-layers" class="kh-layers">
+        <label><input type="checkbox" id="kh-show-points" checked> Points</label>
+        <label><input type="checkbox" id="kh-show-smooth" checked> Smooth</label>
+        <label><input type="checkbox" id="kh-show-trend" checked> Trend</label>
+        <label><input type="checkbox" id="kh-show-score"> Score</label>
+        <label><input type="checkbox" id="kh-show-forecast" checked> Forecast</label>
       </div>
-      <div id="titration-cal-info" class="cal-info"></div>
 
-      <h3 class="cal-heading">Measurement Chemistry</h3>
-      <div class="config-grid">
-        <label>HCl Molarity (mol/L)
-          <input type="number" id="cfg-hcl_molarity" step="0.001" min="0.001" max="1">
-        </label>
-        <label>HCl Remaining (mL)
-          <input type="number" id="cfg-hcl_volume" step="1" min="0" max="20000">
-        </label>
-        <label>Correction Factor
-          <input type="number" id="cfg-correction_factor" step="0.01" min="0.5" max="2">
-        </label>
+      <div id="kh-trend" class="chart-sub">Trend: <strong id="val-kh-slope-h">--</strong> dKH/day</div>
+      <div id="gran-info" class="gran-info" style="display:none"></div>
+      <div id="gran-quality" class="gran-quality" style="display:none">
+        <span>Confidence: <strong id="val-confidence">--</strong> %</span>
       </div>
+
+      <details class="gran-details" id="gran-details" style="display:none">
+        <summary>Last titration curve</summary>
+        <div class="gd-body"><canvas id="chart-gran"></canvas></div>
+      </details>
     </div>
   </section>
 
-  <section class="config collapsible collapsed">
-    <h2 class="section-header">Advanced Configuration <span class="chevron"></span></h2>
-    <div class="section-body">
-      <h3 class="cal-heading" style="margin-top:0;padding-top:0;border-top:none">General</h3>
-      <div class="config-grid">
-        <label>Device Name
-          <input type="text" id="cfg-device_name" maxlength="20" pattern="[A-Za-z0-9\-]+" title="Letters, numbers, hyphens only">
-        </label>
-        <label>Measurement Temperature (&deg;C)
-          <input type="number" id="cfg-meas_temp_c" step="0.5" min="0" max="40">
-        </label>
-        <label>KH Trend Window (h)
-          <input type="number" id="cfg-slope_hours" step="1" min="24" max="168">
-        </label>
-        <label>Smooth Half-Life (h, 0=auto)
-          <input type="number" id="ui-smooth-halflife" step="1" min="0" max="48" value="0" class="ui-only">
-        </label>
-        <label>Wash Cycles
-          <input type="number" id="cfg-num_washes" step="1" min="1" max="5">
-        </label>
-        <label>KH EMA Alpha
-          <input type="number" id="cfg-kh_ema_alpha" step="0.05" min="0.1" max="1.0" value="0.30">
-        </label>
-        <label>pH Sensor
-          <select id="cfg-ph_sensor">
-            <option value="0">Auto</option>
-            <option value="1">Internal ADC</option>
-            <option value="2">ADS1115</option>
-            <option value="3">EZO pH</option>
-          </select>
-        </label>
-      </div>
+  <!-- ============================== SETUP ============================== -->
+  <section class="page-section" data-page="setup">
+    <details class="acc" open data-acc="cal">
+      <summary><span class="acc-icon"></span><span class="acc-title">Calibration</span><span class="acc-meta" id="cal-acc-meta"></span></summary>
+      <div class="acc-body">
+        <h4>pH Sensor <span class="cal-age-badge" id="ph-cal-age"></span> <span class="cal-age-badge" id="ph-sensor-badge" style="font-weight:600"></span></h4>
+        <div id="ezo-cal-info" style="display:none;font-size:var(--t-xs);color:var(--text-tertiary);margin-bottom:var(--s2)">
+          EZO Cal Points: <b id="ezo-cal-pts">0</b>/3 &nbsp;&bull;&nbsp;
+          Acid Slope: <b id="ezo-acid-slope">--</b>% &nbsp;&bull;&nbsp;
+          Base Slope: <b id="ezo-base-slope">--</b>%
+          <br>EZO calibration order: pH 7 first, then pH 4, then pH 10
+        </div>
+        <div class="cal-ph-grid">
+          <div class="cal-ph-col">
+            <button class="cmd-btn cal-4" data-cmd="4">Cal pH 4</button>
+            <label>Buffer pH 4<input type="number" id="cfg-buf_ph4" step="0.01" min="3.0" max="5.0"></label>
+            <span class="cal-mv" id="cal-mv-4"></span>
+          </div>
+          <div class="cal-ph-col">
+            <button class="cmd-btn cal-7" data-cmd="7">Cal pH 7</button>
+            <label>Buffer pH 7<input type="number" id="cfg-buf_ph7" step="0.01" min="6.0" max="8.0"></label>
+            <span class="cal-mv" id="cal-mv-7"></span>
+          </div>
+          <div class="cal-ph-col">
+            <button class="cmd-btn cal-10" data-cmd="10">Cal pH 10</button>
+            <label>Buffer pH 10<input type="number" id="cfg-buf_ph10" step="0.01" min="9.0" max="11.0"></label>
+            <span class="cal-mv" id="cal-mv-10"></span>
+          </div>
+        </div>
 
-      <h3 class="cal-heading">MQTT</h3>
-      <div class="config-grid">
-        <label>Broker
-          <input type="text" id="cfg-mqtt_server" maxlength="63">
-        </label>
-        <label>Port
-          <input type="number" id="cfg-mqtt_port" min="1" max="65535">
-        </label>
-        <label>Username
-          <input type="text" id="cfg-mqtt_user" maxlength="31" autocomplete="off">
-        </label>
-        <label>Password
-          <input type="password" id="cfg-mqtt_pass" maxlength="31" autocomplete="off">
-        </label>
-      </div>
+        <h4>Sample Pump <span class="cal-age-badge" id="sample-cal-age"></span></h4>
+        <button class="cmd-btn" data-cmd="cs" id="btn-sample-cal" style="margin-bottom:var(--s2)">Calibrate Sample Pump</button>
+        <div class="config-grid">
+          <label>Calibration Revolutions
+            <input type="number" id="cfg-sample_cal_revs" step="10" min="50" max="2200">
+          </label>
+          <label>Measured Cal Volume (mL)
+            <input type="number" id="cfg-sample_cal_vol" step="0.1" min="0.1" max="500" placeholder="weighed mL">
+            <span id="sample-cal-current" class="cfg-hint"></span>
+          </label>
+        </div>
+        <div id="sample-cal-info" class="cal-info"></div>
 
-      <h3 class="cal-heading">Titration</h3>
-      <div class="config-grid">
-        <label>Endpoint Method
-          <select id="cfg-endpoint_method">
-            <option value="0">Gran</option>
-            <option value="1">Fixed pH</option>
-          </select>
-        </label>
-        <label>Min Start pH
-          <input type="number" id="cfg-min_start_ph" step="0.1" min="6.0" max="9.0">
-        </label>
-        <label>Fast Phase pH
-          <input type="number" id="cfg-fast_ph" step="0.1" min="4.5" max="7.0">
-        </label>
-        <label>Max Acid Volume (mL)
-          <input type="number" id="cfg-max_acid_ml" step="1" min="5" max="100">
-        </label>
-        <label>Stabilization Timeout (ms)
-          <input type="number" id="cfg-stab_timeout" step="100" min="500" max="5000">
-        </label>
-        <label>Mix Delay (ms)
-          <input type="number" id="cfg-mix_delay" step="100" min="500" max="5000">
-        </label>
-        <label>Gran Readings / Step
-          <input type="number" id="cfg-gran_readings" step="1" min="3" max="50" value="10">
-        </label>
-        <label>Min R² Cutoff
-          <input type="number" id="cfg-gran_min_r2" step="0.001" min="0.990" max="1.000">
-        </label>
+        <h4>Titration Pump <span class="cal-age-badge" id="titration-cal-age"></span></h4>
+        <button class="cmd-btn" data-cmd="t" style="margin-bottom:var(--s2)">Calibrate Titration Pump</button>
+        <div class="config-grid">
+          <label>Calibration Revolutions
+            <input type="number" id="cfg-cal_drops" step="1" min="10" max="500">
+          </label>
+          <label>Measured Volume (mL)
+            <input type="number" id="cfg-titration_vol" step="0.1" min="0.1" max="50" placeholder="weighed mL">
+            <span id="titration-cal-current" class="cfg-hint"></span>
+          </label>
+        </div>
+        <div id="titration-cal-info" class="cal-info"></div>
       </div>
+    </details>
 
-      <h3 class="cal-heading">Pumps</h3>
-      <div class="config-grid">
-        <label>Sample Pump RPM
-          <input type="number" id="cfg-sample_pump_rpm" step="5" min="20" max="250">
-        </label>
-        <label>Prefill Volume (uL)
-          <input type="number" id="cfg-prefill_ul" step="10" min="10" max="500">
-        </label>
-        <label>Cal / Prefill RPM
-          <input type="number" id="cfg-titration_rpm" step="1" min="10" max="200">
-        </label>
-        <label>Fast Phase RPM
-          <input type="number" id="cfg-fast_phase_rpm" step="5" min="10" max="150">
-        </label>
-        <label>Drop Size (uL)
-          <input type="number" id="cfg-drop_ul" step="1" min="5" max="200">
-        </label>
-        <label>Fast Step Size (uL)
-          <input type="number" id="cfg-fast_step_ul" step="10" min="50" max="2000">
-        </label>
-        <label>Gran Burst RPM
-          <input type="number" id="cfg-gran_burst_rpm" step="5" min="80" max="250">
-        </label>
-        <label>Gran Burst Accel (steps/s²)
-          <input type="number" id="cfg-gran_burst_accel" step="10000" min="50000" max="500000">
-        </label>
+    <details class="acc" data-acc="chem">
+      <summary><span class="acc-icon"></span><span class="acc-title">Chemistry</span></summary>
+      <div class="acc-body">
+        <div class="config-grid">
+          <label>HCl Molarity (mol/L)<input type="number" id="cfg-hcl_molarity" step="0.001" min="0.001" max="1"></label>
+          <label>HCl Remaining (mL)<input type="number" id="cfg-hcl_volume" step="1" min="0" max="20000"></label>
+          <label>Correction Factor<input type="number" id="cfg-correction_factor" step="0.01" min="0.5" max="2"></label>
+        </div>
       </div>
-      <h3 class="cal-heading">Gran Burst Test</h3>
-      <button class="cmd-btn" data-cmd="gran_test" id="btn-gran-test">Test 5 Drops</button>
-      <p style="font-size:.75em;color:var(--text-tertiary);margin:4px 0 0">Dispenses 5 &times; Gran burst drops using current burst settings</p>
-    </div>
+    </details>
+
+    <details class="acc" data-acc="sched">
+      <summary><span class="acc-icon"></span><span class="acc-title">Schedule</span><span class="acc-meta" id="sched-acc-meta"></span></summary>
+      <div class="acc-body">
+        <div class="sched-mode-toggle" id="sched-mode-toggle">
+          <button class="sched-mode-btn active" data-mode="0">Custom</button>
+          <button class="sched-mode-btn" data-mode="1">Interval</button>
+          <button class="sched-mode-btn" data-mode="2">Never</button>
+        </div>
+        <div id="sched-custom-panel">
+          <div class="sched-grid" id="sched-grid"></div>
+          <button class="sched-add-btn" id="sched-add" title="Add schedule slot">+ Add time</button>
+        </div>
+        <div id="sched-interval-panel" style="display:none">
+          <div class="interval-config">
+            <label>Every
+              <select id="sched-interval-hours">
+                <option value="1">1 hour</option>
+                <option value="2">2 hours</option>
+                <option value="3">3 hours</option>
+                <option value="4">4 hours</option>
+                <option value="6" selected>6 hours</option>
+                <option value="8">8 hours</option>
+                <option value="12">12 hours</option>
+                <option value="24">24 hours</option>
+              </select>
+            </label>
+            <label>Anchor Time<input type="time" id="sched-anchor-time" value="06:00"></label>
+          </div>
+          <div class="interval-preview" id="interval-preview"></div>
+        </div>
+        <div class="next-meas">Next: <span id="next-meas-setup">--</span></div>
+      </div>
+    </details>
+
+    <details class="acc" data-acc="general">
+      <summary><span class="acc-icon"></span><span class="acc-title">General</span></summary>
+      <div class="acc-body">
+        <div class="config-grid">
+          <label>Device Name<input type="text" id="cfg-device_name" maxlength="20" pattern="[A-Za-z0-9\-]+" title="Letters, numbers, hyphens only"></label>
+          <label>Measurement Temp (&deg;C)<input type="number" id="cfg-meas_temp_c" step="0.5" min="0" max="40"></label>
+          <label>KH Trend Window (h)<input type="number" id="cfg-slope_hours" step="1" min="24" max="168"></label>
+          <label>Smooth Half-Life (h, 0=auto)<input type="number" id="ui-smooth-halflife" step="1" min="0" max="48" value="0" class="ui-only"></label>
+          <label>Wash Cycles<input type="number" id="cfg-num_washes" step="1" min="1" max="5"></label>
+          <label>KH EMA Alpha<input type="number" id="cfg-kh_ema_alpha" step="0.05" min="0.1" max="1.0"></label>
+          <label>pH Sensor
+            <select id="cfg-ph_sensor">
+              <option value="0">Auto</option>
+              <option value="1">Internal ADC</option>
+              <option value="2">ADS1115</option>
+              <option value="3">EZO pH</option>
+            </select>
+          </label>
+        </div>
+      </div>
+    </details>
+
+    <details class="acc" data-acc="net">
+      <summary><span class="acc-icon"></span><span class="acc-title">Network (MQTT)</span></summary>
+      <div class="acc-body">
+        <div class="config-grid">
+          <label>Broker<input type="text" id="cfg-mqtt_server" maxlength="63"></label>
+          <label>Port<input type="number" id="cfg-mqtt_port" min="1" max="65535"></label>
+          <label>Username<input type="text" id="cfg-mqtt_user" maxlength="31" autocomplete="off"></label>
+          <label>Password<input type="password" id="cfg-mqtt_pass" maxlength="31" autocomplete="off"></label>
+        </div>
+      </div>
+    </details>
+
+    <details class="acc" data-acc="advanced">
+      <summary><span class="acc-icon"></span><span class="acc-title">Advanced</span><span class="acc-meta">tune only if you know why</span></summary>
+      <div class="acc-body">
+        <h4>Titration</h4>
+        <div class="config-grid">
+          <label>Endpoint Method
+            <select id="cfg-endpoint_method">
+              <option value="0">Gran</option>
+              <option value="1">Fixed pH</option>
+            </select>
+          </label>
+          <label>Min Start pH<input type="number" id="cfg-min_start_ph" step="0.1" min="6.0" max="9.0"></label>
+          <label>Fast Phase pH<input type="number" id="cfg-fast_ph" step="0.1" min="4.5" max="7.0"></label>
+          <label>Max Acid Volume (mL)<input type="number" id="cfg-max_acid_ml" step="1" min="5" max="100"></label>
+          <label>Stabilization Timeout (ms)<input type="number" id="cfg-stab_timeout" step="100" min="500" max="5000"></label>
+          <label>Mix Delay (ms)<input type="number" id="cfg-mix_delay" step="100" min="500" max="5000"></label>
+          <label>Gran Readings / Step<input type="number" id="cfg-gran_readings" step="1" min="3" max="50"></label>
+          <label>Min R² Cutoff<input type="number" id="cfg-gran_min_r2" step="0.001" min="0.990" max="1.000"></label>
+        </div>
+
+        <h4>Pumps</h4>
+        <div class="config-grid">
+          <label>Sample Pump RPM<input type="number" id="cfg-sample_pump_rpm" step="5" min="20" max="250"></label>
+          <label>Prefill Volume (uL)<input type="number" id="cfg-prefill_ul" step="10" min="10" max="500"></label>
+          <label>Cal / Prefill RPM<input type="number" id="cfg-titration_rpm" step="1" min="10" max="200"></label>
+          <label>Fast Phase RPM<input type="number" id="cfg-fast_phase_rpm" step="5" min="10" max="150"></label>
+          <label>Drop Size (uL)<input type="number" id="cfg-drop_ul" step="1" min="5" max="200"></label>
+          <label>Fast Step Size (uL)<input type="number" id="cfg-fast_step_ul" step="10" min="50" max="2000"></label>
+          <label>Gran Burst RPM<input type="number" id="cfg-gran_burst_rpm" step="5" min="80" max="250"></label>
+          <label>Gran Burst Accel (steps/s²)<input type="number" id="cfg-gran_burst_accel" step="10000" min="50000" max="500000"></label>
+        </div>
+
+        <h4>Gran Burst Test</h4>
+        <button class="cmd-btn" data-cmd="gran_test" id="btn-gran-test">Test 5 Drops</button>
+        <p class="hint">Dispenses 5 × Gran burst drops using current burst settings.</p>
+      </div>
+    </details>
+
+    <details class="acc" data-acc="firmware">
+      <summary><span class="acc-icon"></span><span class="acc-title">Firmware Update</span></summary>
+      <div class="acc-body">
+        <div class="ota-upload">
+          <label>Firmware (.bin)<input type="file" id="ota-firmware" accept=".bin"></label>
+          <button class="cmd-btn" id="btn-upload-fw" style="margin-top:var(--s2)">Upload Firmware</button>
+        </div>
+        <div class="ota-upload">
+          <label>Filesystem Image (.bin)<input type="file" id="ota-fs" accept=".bin"></label>
+          <button class="cmd-btn" id="btn-upload-fs" style="margin-top:var(--s2)">Upload Filesystem</button>
+        </div>
+        <div id="ota-progress-section" style="display:none;margin-top:var(--s3)">
+          <div class="progress-bar"><div class="progress-fill" id="ota-progress-fill"></div></div>
+          <div class="progress-label" id="ota-progress-label">0%</div>
+        </div>
+        <div id="ota-status" style="margin-top:var(--s2);font-size:var(--t-xs);color:var(--text-secondary)"></div>
+      </div>
+    </details>
   </section>
 
-  <section class="config collapsible collapsed">
-    <h2 class="section-header">Diagnostics <span class="chevron"></span></h2>
-    <div class="section-body">
-      <h3 class="cal-heading" style="margin-top:0;padding-top:0;border-top:none">Tube Maintenance</h3>
-      <button class="cmd-btn" data-cmd="cw" id="btn-clean-tube">Clean Tube</button>
-      <p style="font-size:.75em;color:var(--text-tertiary);margin:4px 0 12px">Flushes 10 mL &times; 5 cycles at max speed</p>
-
-      <h3 class="cal-heading">Precision Test</h3>
-      <button class="cmd-btn" data-cmd="precision" id="btn-precision-test">Run Precision Test</button>
-      <p style="font-size:.75em;color:var(--text-tertiary);margin:4px 0 0">Runs 3 consecutive KH measurements, reports SD</p>
-      <div id="precision-status" style="display:none;margin:6px 0 0;font-size:0.85em;color:var(--text-secondary)"></div>
-      <canvas id="precision-chart" style="display:none;max-height:180px;margin:8px 0 4px"></canvas>
-      <div id="precision-result" style="display:none;margin:4px 0 12px;padding:8px;background:var(--card-elevated);border-radius:6px;font-size:0.85em"></div>
-
-      <h3 class="cal-heading">Motor Diagnostics</h3>
-      <div style="display:flex;gap:0.5em;flex-wrap:wrap">
-        <button class="cmd-btn" data-cmd="d" id="btn-motor-diag">Both Motors</button>
-        <button class="cmd-btn" data-cmd="ds" id="btn-motor-diag-sample">Sample Pump</button>
-        <button class="cmd-btn" data-cmd="dt" id="btn-motor-diag-titrate">Titration Pump</button>
+  <!-- ============================== SYSTEM ============================== -->
+  <section class="page-section" data-page="system">
+    <div class="sys-status">
+      <div class="ss-cell">
+        <span class="ss-label">Probe</span>
+        <span class="ss-state" id="sys-stat-probe"><span class="dot"></span><span>--</span></span>
       </div>
-      <div id="motor-diag-progress" style="display:none;margin-top:0.5em;font-size:0.9em;color:var(--text-secondary)"></div>
-      <div id="motor-diag-results" style="display:none;margin-top:0.5em;padding:8px;background:var(--card-elevated);border-radius:6px;font-size:0.85em"></div>
-
-      <h3 class="cal-heading">Hardware Diagnostics</h3>
-      <p style="font-size:0.85em;color:var(--text-secondary);margin:0 0 0.5em">ADC noise, I2C, temperature, motors, GPIO, probe. ~90s runtime.</p>
-      <button class="cmd-btn" data-cmd="H" id="btn-hw-diag">Run Full Diagnostics</button>
-      <div id="hw-diag-status" style="display:none;margin-top:0.5em;font-size:0.9em;color:var(--text-secondary)">Running hardware diagnostics...</div>
-      <div id="hw-diag-results" style="display:none;margin-top:0.5em">
-        <a class="export-btn" id="hw-diag-dl" href="/api/hwdiag" download="hw_diagnostics.json" style="display:inline-block;margin-bottom:0.5em">Download Report (JSON)</a>
-        <div id="hw-diag-summary" style="font-size:0.85em"></div>
+      <div class="ss-cell">
+        <span class="ss-label">Network</span>
+        <span class="ss-state" id="sys-stat-network"><span class="dot"></span><span>--</span></span>
       </div>
+      <div class="ss-cell">
+        <span class="ss-label">Storage</span>
+        <span class="ss-state ok" id="sys-stat-storage"><span class="dot"></span><span>OK</span></span>
+      </div>
+    </div>
 
-      <h3 class="cal-heading">Probe Health</h3>
+    <div class="card">
+      <div class="card-title">Probe Health</div>
       <div class="probe-grid">
         <div class="probe-item">
           <span class="probe-label">Status</span>
@@ -354,23 +383,23 @@
           <span class="probe-value" id="probe-alk-eff"><span class="health-dot"></span>--</span>
         </div>
         <div class="probe-item">
+          <span class="probe-label">Cal Age</span>
+          <span class="probe-value" id="probe-cal-age">--</span>
+        </div>
+        <div class="probe-item">
           <span class="probe-label">Asymmetry</span>
-          <span class="probe-value" id="probe-asymmetry">-- <small>%</small></span>
+          <span class="probe-value" id="probe-asymmetry">--<small>%</small></span>
         </div>
         <div class="probe-item analog-only">
-          <span class="probe-label">Noise (mV)</span>
+          <span class="probe-label">Noise</span>
           <span class="probe-value" id="probe-noise"><span class="health-dot"></span>--</span>
         </div>
         <div class="probe-item ezo-only" style="display:none">
           <span class="probe-label">Cal Points</span>
           <span class="probe-value" id="probe-cal-pts">--</span>
         </div>
-        <div class="probe-item">
-          <span class="probe-label">Cal Age (days)</span>
-          <span class="probe-value" id="probe-cal-age">--</span>
-        </div>
         <div class="probe-item analog-only">
-          <span class="probe-label">Current (mV)</span>
+          <span class="probe-label">Current</span>
           <span class="probe-value" id="probe-mv">--</span>
         </div>
         <div class="probe-item analog-only">
@@ -378,96 +407,72 @@
           <span class="probe-value" id="probe-cal-v">--</span>
         </div>
       </div>
-      <div class="probe-chart-container">
-        <canvas id="chart-efficiency"></canvas>
+      <div class="probe-charts">
+        <div class="probe-chart-container"><canvas id="chart-efficiency"></canvas></div>
+        <div class="probe-chart-container"><canvas id="chart-noise"></canvas></div>
       </div>
-      <div class="probe-chart-container">
-        <canvas id="chart-noise"></canvas>
+    </div>
+
+    <div class="card">
+      <div class="card-title">Tools</div>
+      <div class="tools-row">
+        <button class="cmd-btn" data-cmd="cw" id="btn-clean-tube">Clean Tube</button>
+        <button class="cmd-btn" data-cmd="precision" id="btn-precision-test">Precision Test</button>
+        <button class="cmd-btn" data-cmd="H" id="btn-hw-diag">Full Diagnostics</button>
+      </div>
+      <h4 style="font-size:var(--t-xs);font-weight:600;color:var(--text-secondary);text-transform:uppercase;letter-spacing:.05em;margin:var(--s4) 0 var(--s2);padding-top:var(--s3);border-top:1px solid var(--border-soft)">Motor Ramp Test</h4>
+      <p class="hint" style="margin:0 0 var(--s2)">Finds safe max RPM per pump. Listen for unusual noise. ~30 s.</p>
+      <div class="btn-row">
+        <button class="cmd-btn" data-cmd="ds" id="btn-motor-diag-sample">Sample Pump</button>
+        <button class="cmd-btn" data-cmd="dt" id="btn-motor-diag-titrate">Titration Pump</button>
       </div>
 
-      <h3 class="cal-heading">System Info</h3>
+      <div id="precision-status" class="tool-result"></div>
+      <canvas id="precision-chart" style="display:none;max-height:180px;margin-top:var(--s3)"></canvas>
+      <div id="precision-result" class="tool-result"></div>
+      <div id="motor-diag-progress" class="tool-result"></div>
+      <div id="motor-diag-results" class="tool-result"></div>
+      <div id="hw-diag-status" class="tool-result">Running hardware diagnostics…</div>
+      <div id="hw-diag-results" class="tool-result">
+        <a class="export-btn" id="hw-diag-dl" href="/api/hwdiag" download="hw_diagnostics.json" style="display:inline-flex;margin-bottom:var(--s2);min-height:32px;padding:6px 12px">Download Report (JSON)</a>
+        <div id="hw-diag-summary" style="font-size:var(--t-xs)"></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">System Info</div>
       <div class="status-bar-inline">
-        <div><strong>Water:</strong> <span id="water-temp">--</span></div>
-        <div><strong>RSSI:</strong> <span id="rssi">--</span> dBm</div>
-        <div><strong>Uptime:</strong> <span id="uptime">--</span></div>
+        <div><strong id="rssi">--</strong> dBm RSSI</div>
+        <div><strong id="uptime">--</strong> uptime</div>
+        <div><strong id="meas-temp-info">--</strong></div>
       </div>
-      <div id="last-crash" style="display:none;margin-top:6px;padding:6px 10px;background:#ff453a22;border:1px solid #ff453a55;border-radius:6px;font-size:0.85em;color:#ff453a"></div>
-      <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
-        <a class="export-btn" href="/api/export.csv" download="kh_history.csv" style="flex:1;text-align:center">Export History</a>
-        <a class="export-btn" href="/api/diagnostics" download="kh_diagnostics.json" style="flex:1;text-align:center">Diagnostics JSON</a>
+      <div id="last-crash" class="crash-card" style="display:none"></div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">Export</div>
+      <div class="export-row">
+        <a class="export-btn" href="/api/export.csv" download="kh_history.csv">Export History (.csv)</a>
+        <a class="export-btn" href="/api/diagnostics" download="kh_diagnostics.json">Diagnostics (.json)</a>
       </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">Activity</div>
+      <div class="log-container" id="log-container"></div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">Power</div>
+      <button class="cmd-btn warn" data-cmd="o" style="width:100%">Restart Device</button>
     </div>
   </section>
 
-  <section class="config collapsible collapsed">
-    <h2 class="section-header">Firmware Update <span class="chevron"></span></h2>
-    <div class="section-body">
-      <div class="ota-upload">
-        <label>Firmware (.bin)
-          <input type="file" id="ota-firmware" accept=".bin">
-        </label>
-        <button class="cmd-btn" id="btn-upload-fw" style="margin-top:8px">Upload Firmware</button>
-      </div>
-      <div class="ota-upload" style="margin-top:12px">
-        <label>Filesystem Image (.bin)
-          <input type="file" id="ota-fs" accept=".bin">
-        </label>
-        <button class="cmd-btn" id="btn-upload-fs" style="margin-top:8px">Upload Filesystem</button>
-      </div>
-      <div id="ota-progress-section" style="display:none;margin-top:12px">
-        <div class="progress-bar"><div class="progress-fill" id="ota-progress-fill"></div></div>
-        <div class="progress-label" id="ota-progress-label">0%</div>
-      </div>
-      <div id="ota-status" style="margin-top:8px;font-size:0.85em;color:var(--text-secondary)"></div>
-    </div>
-  </section>
-
-  <section class="schedule collapsible">
-    <h2 class="section-header">Schedule <span class="chevron"></span></h2>
-    <div class="section-body">
-      <div class="sched-mode-toggle" id="sched-mode-toggle">
-        <button class="sched-mode-btn active" data-mode="0">Custom</button>
-        <button class="sched-mode-btn" data-mode="1">Interval</button>
-        <button class="sched-mode-btn" data-mode="2">Never</button>
-      </div>
-
-      <div id="sched-custom-panel">
-        <div class="sched-grid" id="sched-grid"></div>
-        <button class="sched-add-btn" id="sched-add" title="Add schedule slot">+ Add</button>
-      </div>
-
-      <div id="sched-interval-panel" style="display:none">
-        <div class="interval-config">
-          <label>Every
-            <select id="sched-interval-hours">
-              <option value="1">1 hour</option>
-              <option value="2">2 hours</option>
-              <option value="3">3 hours</option>
-              <option value="4">4 hours</option>
-              <option value="6" selected>6 hours</option>
-              <option value="8">8 hours</option>
-              <option value="12">12 hours</option>
-              <option value="24">24 hours</option>
-            </select>
-          </label>
-          <label>Anchor Time
-            <input type="time" id="sched-anchor-time" value="06:00">
-          </label>
-        </div>
-        <div class="interval-preview" id="interval-preview"></div>
-      </div>
-
-      <div class="next-meas">Next: <span id="next-meas">--</span></div>
-    </div>
-  </section>
-
-  <section class="event-log">
-    <h2>Event Log</h2>
-    <div class="log-container" id="log-container"></div>
-  </section>
-
+  <footer class="app-footer">
+    <span id="footer-info">KHpro</span>
+  </footer>
 
   <script src="chart.min.js?v=3"></script>
-  <script src="app.js?v=44"></script>
+  <script src="app.js?v=50"></script>
 </body>
 </html>

@@ -108,25 +108,47 @@ All parameters can be configured via the web interface or Home Assistant. They a
 
 Access the dashboard at `http://<devicename>.local` (default: `http://khpro.local`) or the device's IP address.
 
-The web interface provides:
+The dashboard is organized as a 4-tab single-page app (segmented top nav: **Overview · History · Setup · System**). The header carries the device name and color-coded status pills for WiFi, MQTT, NTP, WebSocket, and probe health. A live-measurement banner appears at the top of any tab while a titration is running and tapping it jumps to History → Live.
 
-- **KH, pH, and measured pH gauges** with last measurement values
-- **HCl tank level** indicator showing remaining acid
-- **Live titration chart** showing pH vs. volume (mL) with linear x-axis during measurement
-- **Gran analysis chart** with scatter plot, regression line, and R² display
-- **Gran history chart** tracking R² and endpoint pH across measurements
-- **Historical charts** for KH and pH (7-day rolling window) with trend line
-- **KH trend** (dKH/day) computed via linear regression
-- **Measurement confidence** score combining R², cross-validation, and data quality
-- **Progress bar** during active measurements
-- **Command buttons** for measurement, calibration, and maintenance
-- **Configuration panel** with common settings and collapsible advanced section
-- **Schedule editor** with custom time slots or interval mode
-- **Probe health** section showing acid/alkaline slope efficiency, asymmetry, calibration age, and efficiency trend sparkline
-- **Event log** with timestamped messages and errors
-- **Status indicators** for WiFi, MQTT, NTP, WebSocket, and probe health
-- **CSV export** of measurement history
-- **Hardware diagnostics** with comprehensive ADC noise analysis, I2C bus health, motor tests, temperature sensor validation, GPIO state checks, and downloadable JSON report for troubleshooting and data-driven hardware improvements
+### Overview
+
+- **KH and pH hero cards**: large value, status pill (in-range / check / out-of-range), and a 7-day smoothed spark with min/max readouts. The KH spark also overlays the server-fitted trend line.
+- **Metric strip**: Measured pH (latest), HCl remaining (mL + horizontal fill bar), and a tap-able **Next measurement** card that jumps to Setup → Schedule.
+- **Action row**: tinted buttons for Measure KH (blue), Measure pH (green), and Fill (orange). The KH/pH buttons turn into red **Abort** controls while a measurement runs.
+- **Alerts strip**: surfaces low HCl, replace-grade probe health, and overdue calibration only when a condition is active.
+
+### History
+
+- **Mode segmented control**: KH / pH / Gran / Live, all sharing one chart canvas.
+- **Range pills**: 1 d / 3 d / 7 d / 10 d (hidden in Live mode).
+- **KH layer chips**: Points, Smooth, Trend, Score, Forecast — each toggles a dataset; the choices persist in `localStorage`.
+- **Gran view** shows the R²/endpoint-pH history as the main chart, with a "Last titration curve" `<details>` that reveals the scatter + fit + window + equivalence point on demand.
+- **Live mode** is always available, not buried — it shows the current titration in progress and the most recent curve when idle.
+- Sub-info row: KH trend slope, Gran confidence percentage.
+
+### Setup
+
+A stack of accordion sections (the first is open by default):
+
+1. **Calibration** — pH 4 / 7 / 10 buffers (with cal age + measured mV per buffer; EZO order-enforcement built in), Sample Pump cal, Titration Pump cal.
+2. **Chemistry** — HCl molarity, HCl remaining, correction factor.
+3. **Schedule** — Custom time slots / fixed Interval / Never, with anchor time and live preview.
+4. **General** — device name, measurement temperature, KH trend window, smooth half-life, EMA alpha, wash cycles, pH sensor selector.
+5. **Network (MQTT)** — broker host, port, user, password.
+6. **Advanced** — collapsed by default. Titration internals (start/fast pH, max acid, stab/mix timeouts, Gran readings/step, R² cutoff), pump RPMs and step sizes, Gran burst settings, and the Gran burst test button.
+7. **Firmware Update** — separate `.bin` upload for firmware and filesystem images, with an inline progress bar.
+
+Each input writes immediately on change with a transient "Saved" confirmation; the WebSocket round-trip echoes a `configResult` to confirm.
+
+### System
+
+- **Status overview**: 3 pills — Probe (Good/Fair/Replace), Network (OK / WiFi only / MQTT only / Offline), Storage.
+- **Probe Health** card with per-metric values (status, acid/alk slope, cal age, asymmetry, noise, current mV, cal voltages) and inline asymmetry + noise trend sparklines.
+- **Tools**: Clean Tube, Precision Test, Full Diagnostics; below that, **Motor Ramp Test** with split per-pump buttons (Sample / Titration) — finds the safe max RPM per pump and writes it to config. Run it on a new build or after a maintenance event.
+- **System Info**: WiFi RSSI, uptime, water temperature; a red crash card appears only when the previous boot recorded a fault.
+- **Activity**: full event log with timestamped messages and errors.
+- **Export**: CSV history download and JSON diagnostics download.
+- **Power**: Restart Device (with confirmation).
 
 ## Home Assistant Integration
 
@@ -208,7 +230,11 @@ Commands can be sent via MQTT (`<devicename>/cmd`), the web interface, or Home A
 | Remove sample | `r` | Empty the sample chamber |
 | Restart | `o` | Reboot the device |
 | Measure voltage | `v` | Raw pH probe voltage reading |
-| Motor diagnostics | `d` | Test both motor drivers in StealthChop and SpreadCycle modes |
+| Motor ramp test (both) | `d` | Ramp each pump to find the safe max RPM and persist it to config |
+| Motor ramp test (sample) | `ds` | Ramp the sample pump only |
+| Motor ramp test (titration) | `dt` | Ramp the titration pump only |
+| Clean tube | `cw` | Flush the tube with several wash cycles at max RPM |
+| Precision test | `precision` | Run 3 consecutive KH measurements and report SD/range |
 | Hardware diagnostics | `H` | Run full hardware diagnostic suite (~90s) |
 | Calibrate pH 4 | `4` | Calibrate with pH 4 buffer |
 | Calibrate pH 7 | `7` | Calibrate with pH 7 buffer |
@@ -268,7 +294,7 @@ For best results, calibrate the pump (`t`) and carefully measure the dispensed v
 
 ## Hardware Diagnostics
 
-The device includes a comprehensive hardware diagnostic suite accessible from the web interface under **Configuration > Advanced > Hardware Diagnostics**. Run it by clicking "Run Full Diagnostics" (~90 seconds). The results are downloadable as a JSON report (`/api/hwdiag`).
+The device includes a comprehensive hardware diagnostic suite accessible from the web interface under **System → Tools → Full Diagnostics**. Run it by clicking the button (~90 seconds). The results are downloadable as a JSON report (`/api/hwdiag`).
 
 Tests performed:
 
@@ -276,8 +302,9 @@ Tests performed:
 - **I2C bus health**: Config register readback verification, NAK count, conversion timing, RDY pin check, bus scan.
 - **Temperature sensor**: DS18B20 consistency check (5 readings), CRC error and power-on-reset detection.
 - **TMC2209 motor drivers**: UART communication test, DRV_STATUS flags (overtemp, open load, short circuit).
-- **Motor performance**: StealthChop vs SpreadCycle StallGuard comparison for both pumps.
 - **GPIO pin states**: Motor enables, DIAG pins, RDY pin — expected vs actual state.
+
+Mechanical motor health (does each pump actually spin reliably at the chosen RPM?) is checked separately via the **Motor Ramp Test** under System → Tools, which ramps each pump from a low RPM upward and persists the discovered safe max RPM to config.
 - **pH probe health**: Nernst efficiency, asymmetry, noise stats, calibration age (from cached data, no new measurement).
 - **System health**: Heap usage, uptime, reset reason, flash usage, WiFi RSSI.
 

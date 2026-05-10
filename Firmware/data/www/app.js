@@ -17,8 +17,17 @@
       wsOk = true;
       lastMsgTime = Date.now();
       setDot('ws', true);
-      ws.send(JSON.stringify({type:'getHistory', sensor:'kh', days: chartDays}));
-      ws.send(JSON.stringify({type:'getHistory', sensor:'ph', days: chartDays}));
+      // Spark fetches first (always 7d). Order is preserved over WS so the
+      // first kh/ph history responses fill sparkKhData/sparkPhData.
+      sparkFetchPending.kh = true;
+      sparkFetchPending.ph = true;
+      ws.send(JSON.stringify({type:'getHistory', sensor:'kh', days: 7}));
+      ws.send(JSON.stringify({type:'getHistory', sensor:'ph', days: 7}));
+      // Chart fetches at user-selected range (skip if the spark fetch already covers it)
+      if (chartDays !== 7) {
+        ws.send(JSON.stringify({type:'getHistory', sensor:'kh', days: chartDays}));
+        ws.send(JSON.stringify({type:'getHistory', sensor:'ph', days: chartDays}));
+      }
       ws.send(JSON.stringify({type:'getHistory', sensor:'gran', days: chartDays}));
       ws.send(JSON.stringify({type:'getHistory', sensor:'precision'}));
     };
@@ -98,6 +107,8 @@
     var section = document.getElementById('progress-section');
     var fill = document.getElementById('progress-fill');
     var label = document.getElementById('progress-label');
+    var bannerFill = document.getElementById('live-banner-fill');
+    if (bannerFill) bannerFill.style.width = Math.max(0, Math.min(100, pct)) + '%';
     if (!section || !fill || !label) return;
     if (pct >= 100) {
       section.style.display = 'none';
@@ -112,8 +123,8 @@
   function handleMsg(d) {
     if (d.type === 'state') updateState(d);
     else if (d.type === 'mesPh') updateLivePH(d);
-    else if (d.type === 'mesStart') { clearLiveChart(); setMeasuringMode(true); }
-    else if (d.type === 'mesData') { loadMesData(d); setMeasuringMode(false); }
+    else if (d.type === 'mesStart') { clearLiveChart(); setMeasuringMode(true); showLiveBanner(true, 'KH'); }
+    else if (d.type === 'mesData') { loadMesData(d); setMeasuringMode(false); showLiveBanner(false); }
     else if (d.type === 'history') updateHistory(d);
     else if (d.type === 'msg') {
       addLogEntry('msg', d.text);
@@ -124,7 +135,7 @@
       }
       if (d.text.indexOf('already running') !== -1) resetHWDiagUI();
     }
-    else if (d.type === 'error') { addLogEntry('error', d.text); updateProgress(100); setMeasuringMode(false); }
+    else if (d.type === 'error') { addLogEntry('error', d.text); updateProgress(100); setMeasuringMode(false); showLiveBanner(false); }
     else if (d.type === 'logData') loadLogData(d.entries);
     else if (d.type === 'granData') updateGranChart(d);
     else if (d.type === 'progress') updateProgress(d.pct);
@@ -175,8 +186,8 @@
     // KH gauge (only update when field present — light broadcasts omit NVS-backed values)
     if (d.kh !== undefined) {
       var khVal = (d.kh > 0) ? d.kh : 0;
-      setGaugeArc('gauge-kh-arc', khVal, 0, 15);
       setText('val-kh', (d.kh > 0) ? d.kh.toFixed(1) : '--');
+      setKhStatusPill(d.kh);
     }
 
     // KH slope, intercept, and trend line parameters from server
@@ -187,7 +198,10 @@
       if (d.slopeNPts != null) serverSlopeNPts = d.slopeNPts;
       var st = isNaN(serverSlope) ? '--' : (serverSlope >= 0 ? '+' : '') + serverSlope.toFixed(2);
       setText('val-kh-slope', st);
-      renderKHChart();  // re-render trend line with updated server params
+      setText('val-kh-slope-h', st);
+      setKhTrendArrow(serverSlope);
+      renderKHChart();      // re-render trend line on main chart
+      renderHeroKhSpark();  // ...and on the hero spark
     }
     if (d.predCurve != null) {
       predCurveData = d.predCurve.map(function(p) { return [p[0], parseFloat(p[1])]; });
@@ -199,39 +213,47 @@
       setText('val-confidence', (d.confidence != null && !isNaN(d.confidence)) ? (d.confidence * 100).toFixed(0) + '%' : '--');
     }
 
-    // pH gauge (start pH from last KH measurement)
+    // pH (start pH from last KH measurement) — primary hero pH value
     if (d.lastStartPh !== undefined) {
-      var phVal = (d.lastStartPh > 0) ? d.lastStartPh : 0;
-      setGaugeArc('gauge-ph-arc', phVal, 6, 9);
       setText('val-ph', (d.lastStartPh > 0) ? d.lastStartPh.toFixed(2) : '--');
+      setPhStatusPill(d.lastStartPh);
     }
 
-    // Measured pH gauge (latest pH reading from any source)
+    // Measured pH (latest pH reading from any source) — secondary metric
     if (d.ph !== undefined) {
       var mesPhVal = (d.ph > 0) ? d.ph : 0;
-      setGaugeArc('gauge-mesph-arc', mesPhVal, 6, 9);
       setText('val-mesph', mesPhVal > 0 ? mesPhVal.toFixed(2) : '--');
     }
 
-    // HCl tank
+    // HCl tank fill (now horizontal bar; width-based)
     if (d.hclVol !== undefined) {
       var hclMax = 5000;
       var hclPct = Math.max(0, Math.min(100, ((d.hclVol || 0) / hclMax) * 100));
       var fill = document.getElementById('hcl-fill');
-      if (fill) fill.style.height = hclPct + '%';
+      if (fill) fill.style.width = hclPct + '%';
       setText('val-hcl', d.hclVol ? Math.round(d.hclVol) : '--');
+      updateAlerts({ hclVol: d.hclVol });
     }
 
     // Status dots (only update when present)
     if (d.wifiOk !== undefined) setDot('wifi', d.wifiOk);
     if (d.mqttOk !== undefined) setDot('mqtt', d.mqttOk);
     if (d.ntpOk !== undefined) setDot('ntp', d.ntpOk);
+    if (d.wifiOk !== undefined || d.mqttOk !== undefined) updateNetworkStatus(d);
 
     // Measuring state sync — shows/hides Abort button for all clients
-    if (d.measuring != null) setMeasuringMode(!!d.measuring);
+    if (d.measuring != null) {
+      setMeasuringMode(!!d.measuring);
+      if (!!d.measuring) showLiveBanner(true, 'KH');
+      else showLiveBanner(false);
+    }
 
     // Status bar
-    if (d.temp_sensor !== undefined) setText('water-temp', d.temp_sensor ? d.water_temp.toFixed(1) + ' \u00B0C' : '--');
+    if (d.temp_sensor !== undefined) {
+      var wt = d.temp_sensor ? d.water_temp.toFixed(1) + ' \u00B0C' : '--';
+      setText('water-temp', wt);
+      setText('meas-temp-info', wt + ' water');
+    }
     if (d.rssi !== undefined) setText('rssi', d.rssi || '--');
     if (d.uptime !== undefined) setText('uptime', fmtUptime(d.uptime || 0));
 
@@ -245,7 +267,10 @@
     }
 
     // Next measurement (server sends formatted string)
-    if (d.nextMeas) setText('next-meas', d.nextMeas);
+    if (d.nextMeas) {
+      setText('next-meas', d.nextMeas);
+      setText('next-meas-setup', d.nextMeas);
+    }
 
     // Config values
     if (d.config) {
@@ -369,6 +394,17 @@
       var h = p.health || '';
       probeInd.className = 'si' + ((h === 'Good') ? ' on' : (h === 'Fair') ? ' warn' : (h === 'Replace') ? ' err' : '');
     }
+    // System tab probe overview cell
+    var probeStat = document.getElementById('sys-stat-probe');
+    if (probeStat) {
+      var h2 = p.health || '--';
+      var sCls = (h2 === 'Good') ? 'ok' : (h2 === 'Fair') ? 'warn' : (h2 === 'Replace') ? 'alert' : '';
+      probeStat.className = 'ss-state' + (sCls ? ' ' + sCls : '');
+      var stText = probeStat.querySelector('span:last-child');
+      if (stText) stText.textContent = h2;
+    }
+    // Surface probe-related issues in alerts strip
+    updateAlerts({ probeHealth: p.health, calAge: p.calAge });
 
     // Acid slope
     var acidEl = document.getElementById('probe-acid-eff');
@@ -447,6 +483,11 @@
     if (phAge && p.calAge != null) {
       phAge.textContent = p.calAge < 0 ? '(never calibrated)' : '(' + p.calAge + 'd ago)';
     }
+    // Mirror cal age into the Calibration accordion summary
+    var calMeta = document.getElementById('cal-acc-meta');
+    if (calMeta && p.calAge != null) {
+      calMeta.textContent = p.calAge < 0 ? 'never calibrated' : 'pH cal: ' + p.calAge + 'd ago';
+    }
 
     // Asymmetry trend chart (over calibrations)
     if (effChart && p.effHist && p.effHist.length > 0) {
@@ -523,8 +564,8 @@
 
   function updateLivePH(d) {
     var mesPhVal = (d.ph > 0) ? d.ph : 0;
-    setGaugeArc('gauge-mesph-arc', mesPhVal, 6, 9);
     setText('val-mesph', mesPhVal > 0 ? mesPhVal.toFixed(2) : '--');
+    setText('live-banner-value', mesPhVal > 0 ? 'pH ' + mesPhVal.toFixed(2) : '--');
 
     if (liveChart) {
       liveChart.data.datasets[0].data.push({x: d.ml, y: d.ph});
@@ -601,18 +642,46 @@
       return;
     }
     if (d.sensor === 'kh') {
-      khHistoryData = d.data;
-      renderKHChart();
+      // First kh response after WS open is the dedicated 7d spark fetch.
+      if (sparkFetchPending.kh) {
+        sparkKhData = d.data;
+        sparkFetchPending.kh = false;
+        renderHeroKhSpark();
+        // If the user's chart range is also 7d, this same data feeds the chart.
+        if (chartDays === 7) {
+          khHistoryData = d.data;
+          renderKHChart();
+        }
+      } else {
+        khHistoryData = d.data;
+        renderKHChart();
+      }
       return;
     }
-    // pH chart
-    if (!phChart) return;
-    phChart.data.datasets[0].data = d.data.map(function(p) { return {x: p[0], y: p[1]}; });
-    if (d.data.length > 0) {
-      phChart.options.scales.x.min = d.data[0][0];
-      phChart.options.scales.x.max = d.data[d.data.length - 1][0];
+    // pH history
+    if (d.sensor === 'ph') {
+      var phData = d.data;
+      if (sparkFetchPending.ph) {
+        sparkPhData = phData;
+        sparkFetchPending.ph = false;
+        renderHeroPhSpark();
+        if (chartDays !== 7) return;  // chart will be filled by a later response
+      }
+      phHistoryData = phData;
+      if (phChart) {
+        phChart.data.datasets[0].data = phData.map(function(p) { return {x: p[0], y: p[1]}; });
+        if (phData.length > 0) {
+          phChart.options.scales.x.min = phData[0][0];
+          phChart.options.scales.x.max = phData[phData.length - 1][0];
+        }
+        phChart.update();
+      }
+      if (phData.length > 0) {
+        var lastTs = phData[phData.length - 1][0];
+        var ago = Math.max(0, Math.floor((Date.now()/1000 - lastTs)));
+        setText('ph-meta', 'last reading ' + fmtAgo(ago));
+      }
     }
-    phChart.update();
   }
 
   function renderKHChart() {
@@ -760,21 +829,16 @@
     granHistChart.update();
   }
 
-  // --- Gauge arc math ---
-  var ARC_LEN = 157;
-  function setGaugeArc(id, val, min, max) {
-    var el = document.getElementById(id);
-    if (!el) return;
-    var pct = Math.max(0, Math.min(1, (val - min) / (max - min)));
-    el.setAttribute('stroke-dasharray', (pct * ARC_LEN) + ' ' + ARC_LEN);
-  }
-
   // --- Charts ---
   var khChart, phChart, liveChart, granChart, granHistChart, effChart, noiseChart, precisionChart;
+  var sparkKhChart, sparkPhChart;     // hero-card mini charts
+  var phHistoryData = null;            // last fetched pH history (matches chart range)
+  var sparkKhData = null;              // dedicated 7-day window for hero KH spark
+  var sparkPhData = null;              // dedicated 7-day window for hero pH spark
+  var sparkFetchPending = { kh: false, ph: false };
   var serverSlope = NaN, serverIntercept = NaN, serverSlopeT0 = 0, serverSlopeNPts = 0;
   var predCurveData = [];    // prediction curve [[ts, kh], ...]
   var predPointsData = [];   // predicted measurement points [[ts, kh], ...]
-  var granView = 'last'; // 'last' or 'history'
   var khHistoryData = null;  // raw kh history [[ts, val], ...]
   var granHistoryData = null; // raw gran history [[ts, r2, eqML, eph, mth, khG, khE, noiseMv, reversals, conf, khCI], ...]
   // Time-proportional X-axis: uses linear scale with Unix timestamps (seconds)
@@ -985,54 +1049,16 @@
     }
   }
 
-  // --- Tabs ---
+  // --- History mode tabs (KH / pH / Gran / Live) ---
   function initTabs() {
-    var tabs = document.querySelectorAll('.tab');
+    var tabs = document.querySelectorAll('.seg .tab[data-tab]');
     tabs.forEach(function(t) {
       t.addEventListener('click', function() {
         tabs.forEach(function(tt) { tt.classList.remove('active'); });
         t.classList.add('active');
-        var sel = t.getAttribute('data-tab');
-        // Hide all chart canvases
-        ['kh','ph','live','gran','gran-hist'].forEach(function(id) {
-          var el = document.getElementById('chart-' + id);
-          if (el) el.style.display = 'none';
-        });
-        // Show selected
-        if (sel === 'gran') {
-          showGranView();
-        } else {
-          var chartEl = document.getElementById('chart-' + sel);
-          if (chartEl) chartEl.style.display = 'block';
-        }
-        // KH trend info and method toggle
-        var khTrend = document.getElementById('kh-trend');
-        if (khTrend) khTrend.style.display = (sel === 'kh') ? '' : 'none';
-        var khLayers = document.getElementById('kh-layers');
-        if (khLayers) khLayers.style.display = (sel === 'kh') ? 'flex' : 'none';
-        // Chart range selector visibility (history tabs only)
-        var rangeEl = document.getElementById('chart-range');
-        if (rangeEl) rangeEl.style.display = (sel === 'kh' || sel === 'ph' || sel === 'gran') ? 'flex' : 'none';
-        // Gran sub-tabs visibility
-        var granSub = document.getElementById('gran-subtabs');
-        if (granSub) granSub.style.display = (sel === 'gran') ? 'flex' : 'none';
-        // Gran info only in scatter view
-        var granInfo = document.getElementById('gran-info');
-        if (granInfo) granInfo.style.display = (sel === 'gran' && granView === 'last' && granInfo.textContent) ? '' : 'none';
-        var granQual = document.getElementById('gran-quality');
-        if (granQual) granQual.style.display = (sel === 'gran' && granView === 'last') ? '' : 'none';
-        // Resize active chart
-        if (sel === 'live' && liveChart) liveChart.resize();
-        else if (sel === 'kh' && khChart) khChart.resize();
-        else if (sel === 'ph' && phChart) phChart.resize();
+        applyHistoryMode(t.getAttribute('data-tab'));
       });
     });
-
-    // Gran sub-tab toggle
-    var btnLast = document.getElementById('gran-tab-last');
-    var btnHist = document.getElementById('gran-tab-hist');
-    if (btnLast) btnLast.addEventListener('click', function() { switchGranView('last'); });
-    if (btnHist) btnHist.addEventListener('click', function() { switchGranView('history'); });
 
     // Chart range selector
     document.querySelectorAll('.range-btn').forEach(function(btn) {
@@ -1047,43 +1073,48 @@
         }
       });
     });
-  }
 
-  function switchGranView(view) {
-    granView = view;
-    var btnLast = document.getElementById('gran-tab-last');
-    var btnHist = document.getElementById('gran-tab-hist');
-    if (btnLast) btnLast.classList.toggle('active', view === 'last');
-    if (btnHist) btnHist.classList.toggle('active', view === 'history');
-    showGranView();
-    var granInfo = document.getElementById('gran-info');
-    if (granInfo) granInfo.style.display = (view === 'last' && granInfo.textContent) ? '' : 'none';
-    var granQual = document.getElementById('gran-quality');
-    if (granQual) granQual.style.display = (view === 'last') ? '' : 'none';
-  }
-
-  function showGranView() {
-    var scatter = document.getElementById('chart-gran');
-    var hist = document.getElementById('chart-gran-hist');
-    scatter.style.display = 'none';
-    hist.style.display = 'none';
-    if (granView === 'last') {
-      scatter.style.display = 'block';
-      if (granChart) granChart.resize();
-    } else {
-      hist.style.display = 'block';
-      if (granHistChart) granHistChart.resize();
+    // Gran "Last titration curve" details — resize chart when opened
+    var granDetails = document.getElementById('gran-details');
+    if (granDetails) {
+      granDetails.addEventListener('toggle', function() {
+        if (granDetails.open && granChart) setTimeout(function() { granChart.resize(); }, 0);
+      });
     }
   }
 
-  // --- Collapsible sections ---
-  function initCollapsible() {
-    document.querySelectorAll('.section-header').forEach(function(header) {
-      header.addEventListener('click', function() {
-        var section = header.parentElement;
-        section.classList.toggle('collapsed');
-      });
+  function applyHistoryMode(sel) {
+    // Hide all chart canvases inside the main chart container
+    ['kh','ph','live','gran-hist'].forEach(function(id) {
+      var el = document.getElementById('chart-' + id);
+      if (el) el.style.display = 'none';
     });
+    // Show the canvas for the selected mode
+    var canvasId = (sel === 'gran') ? 'chart-gran-hist' : 'chart-' + sel;
+    var canvas = document.getElementById(canvasId);
+    if (canvas) canvas.style.display = 'block';
+
+    // Toolbar visibility
+    var khTrend = document.getElementById('kh-trend');
+    if (khTrend) khTrend.style.display = (sel === 'kh') ? '' : 'none';
+    var khLayers = document.getElementById('kh-layers');
+    if (khLayers) khLayers.style.display = (sel === 'kh') ? 'flex' : 'none';
+    var rangeEl = document.getElementById('chart-range');
+    if (rangeEl) rangeEl.style.display = (sel === 'live') ? 'none' : 'flex';
+
+    // Gran-only widgets
+    var granInfo = document.getElementById('gran-info');
+    if (granInfo) granInfo.style.display = (sel === 'gran' && granInfo.textContent) ? '' : 'none';
+    var granQual = document.getElementById('gran-quality');
+    if (granQual) granQual.style.display = (sel === 'gran') ? '' : 'none';
+    var granDetails = document.getElementById('gran-details');
+    if (granDetails) granDetails.style.display = (sel === 'gran') ? '' : 'none';
+
+    // Resize the active chart
+    if (sel === 'live' && liveChart) liveChart.resize();
+    else if (sel === 'kh' && khChart) khChart.resize();
+    else if (sel === 'ph' && phChart) phChart.resize();
+    else if (sel === 'gran' && granHistChart) granHistChart.resize();
   }
 
   function setMeasuringMode(active) {
@@ -1095,7 +1126,6 @@
         btn.setAttribute('data-original-cmd', btn.getAttribute('data-cmd'));
         btn.setAttribute('data-cmd', 'abort');
         btn.textContent = 'Abort';
-        btn.classList.remove('primary');
         btn.style.background = 'var(--red)';
         btn.style.color = '#fff';
       } else {
@@ -1106,7 +1136,6 @@
         }
         var cmd = btn.getAttribute('data-cmd');
         btn.textContent = (cmd === 'k') ? 'Measure KH' : 'Measure pH';
-        btn.classList.add('primary');
         btn.style.background = '';
         btn.style.color = '';
       }
@@ -1725,11 +1754,273 @@
     });
   }
 
+  // ============================================================
+  // ===== Page navigation (Overview / History / Setup / System) =====
+  // ============================================================
+  function initPageNav() {
+    var tabs = document.querySelectorAll('.page-tab[data-page]');
+    function activate(page) {
+      tabs.forEach(function(t) { t.classList.toggle('active', t.getAttribute('data-page') === page); });
+      document.querySelectorAll('.page-section').forEach(function(s) {
+        s.classList.toggle('active', s.getAttribute('data-page') === page);
+      });
+      // Resize charts on the active page (Chart.js needs this when canvases were display:none)
+      if (page === 'history') {
+        var activeTab = document.querySelector('.seg .tab.active');
+        if (activeTab) applyHistoryMode(activeTab.getAttribute('data-tab'));
+      } else if (page === 'system') {
+        if (effChart) effChart.resize();
+        if (noiseChart) noiseChart.resize();
+        if (precisionChart) precisionChart.resize();
+      } else if (page === 'overview') {
+        if (sparkKhChart) sparkKhChart.resize();
+        if (sparkPhChart) sparkPhChart.resize();
+      }
+    }
+    tabs.forEach(function(t) {
+      t.addEventListener('click', function() {
+        var page = t.getAttribute('data-page');
+        activate(page);
+        try { history.replaceState(null, '', '#' + page); } catch(e) {}
+      });
+    });
+    // Initial page from hash, or default to overview
+    var initial = (location.hash || '').replace('#', '');
+    if (!initial || !document.querySelector('[data-page="' + initial + '"]')) initial = 'overview';
+    activate(initial);
+    window.addEventListener('hashchange', function() {
+      var p = (location.hash || '').replace('#', '') || 'overview';
+      if (document.querySelector('[data-page="' + p + '"]')) activate(p);
+    });
+
+    // Tap "Next measurement" card → jump to Setup, open Schedule accordion.
+    var nextMeasCard = document.getElementById('next-meas-card');
+    function openSchedule(e) {
+      if (e) e.preventDefault();
+      activate('setup');
+      try { history.replaceState(null, '', '#setup'); } catch(err) {}
+      var schedAcc = document.querySelector('[data-acc="sched"]');
+      if (schedAcc) schedAcc.open = true;
+      if (schedAcc && schedAcc.scrollIntoView) schedAcc.scrollIntoView({behavior: 'smooth', block: 'start'});
+    }
+    if (nextMeasCard) {
+      nextMeasCard.addEventListener('click', openSchedule);
+      nextMeasCard.addEventListener('keydown', function(e) {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openSchedule(); }
+      });
+    }
+  }
+
+  // ============================================================
+  // ===== Live measurement banner =====
+  // ============================================================
+  function showLiveBanner(active, kind) {
+    var banner = document.getElementById('live-banner');
+    if (!banner) return;
+    if (active) {
+      var label = document.getElementById('live-banner-label');
+      if (label) label.textContent = 'Measuring ' + (kind || 'KH') + '…';
+      banner.classList.add('active');
+    } else {
+      // Hide after a brief grace period so the final progress is readable
+      setTimeout(function() {
+        banner.classList.remove('active');
+        var fill = document.getElementById('live-banner-fill');
+        if (fill) fill.style.width = '0';
+        setText('live-banner-value', '--');
+      }, 1200);
+    }
+  }
+  function initLiveBanner() {
+    var banner = document.getElementById('live-banner');
+    if (!banner) return;
+    banner.addEventListener('click', function() {
+      // Switch to History → Live
+      var liveTab = document.querySelector('.seg .tab[data-tab="live"]');
+      var pageBtn = document.querySelector('.page-tab[data-page="history"]');
+      if (pageBtn) pageBtn.click();
+      if (liveTab) liveTab.click();
+    });
+  }
+
+  // ============================================================
+  // ===== Hero sparks (small charts on Overview) =====
+  // ============================================================
+  function initHeroSparks() {
+    var sparkOpts = {
+      responsive: true, maintainAspectRatio: false, animation: false,
+      plugins: { legend: { display: false }, tooltip: { enabled: false } },
+      scales: {
+        x: { type: 'linear', display: false, offset: false },
+        y: { display: false, offset: false }
+      },
+      elements: { point: { radius: 0 } }
+    };
+    var khEl = document.getElementById('spark-kh');
+    if (khEl) {
+      sparkKhChart = new Chart(khEl, {
+        type: 'line',
+        data: { datasets: [
+          { data: [], borderColor: 'rgba(10,132,255,0.95)', borderWidth: 2, showLine: true, cubicInterpolationMode: 'monotone', tension: 0.4, fill: false },
+          { data: [], borderColor: 'rgba(255,159,10,0.6)', borderDash: [4,3], borderWidth: 1.5, showLine: true, fill: false }
+        ] },
+        options: sparkOpts
+      });
+    }
+    var phEl = document.getElementById('spark-ph');
+    if (phEl) {
+      sparkPhChart = new Chart(phEl, {
+        type: 'line',
+        data: { datasets: [
+          { data: [], borderColor: 'rgba(48,209,88,0.95)', borderWidth: 2, showLine: true, cubicInterpolationMode: 'monotone', tension: 0.4, fill: false }
+        ] },
+        options: sparkOpts
+      });
+    }
+  }
+  function smoothSeries(data) {
+    if (!data || data.length < 2) return [];
+    // Match the History KH chart: honor user's smooth-halflife override, else auto.
+    var hlInp = document.getElementById('ui-smooth-halflife');
+    var hlVal = hlInp ? parseFloat(hlInp.value) : 0;
+    var spanH = (data[data.length - 1][0] - data[0][0]) / 3600;
+    var halfLife = (hlVal > 0) ? hlVal : Math.max(2, Math.min(24, spanH / 8));
+    var fwd = [data[0][1]];
+    for (var i = 1; i < data.length; i++) {
+      var dtH = (data[i][0] - data[i-1][0]) / 3600;
+      var alpha = 1 - Math.pow(0.5, dtH / halfLife);
+      fwd.push(alpha * data[i][1] + (1 - alpha) * fwd[i-1]);
+    }
+    var bwd = new Array(data.length);
+    bwd[data.length - 1] = data[data.length - 1][1];
+    for (var i = data.length - 2; i >= 0; i--) {
+      var dtH2 = (data[i+1][0] - data[i][0]) / 3600;
+      var alpha2 = 1 - Math.pow(0.5, dtH2 / halfLife);
+      bwd[i] = alpha2 * data[i][1] + (1 - alpha2) * bwd[i+1];
+    }
+    var out = [];
+    for (var i = 0; i < data.length; i++) {
+      out.push({ x: data[i][0], y: (fwd[i] + bwd[i]) / 2 });
+    }
+    return out;
+  }
+  function lastNDays(data, days) {
+    if (!data || data.length === 0) return data || [];
+    var cutoff = data[data.length - 1][0] - days * 86400;
+    var out = [];
+    for (var i = 0; i < data.length; i++) {
+      if (data[i][0] >= cutoff) out.push(data[i]);
+    }
+    return out;
+  }
+  function setSparkRange(minId, maxId, smoothed, decimals) {
+    if (!smoothed || smoothed.length === 0) return;
+    var ys = smoothed.map(function(p) { return p.y; });
+    var mn = Math.min.apply(null, ys);
+    var mx = Math.max.apply(null, ys);
+    setText(minId, mn.toFixed(decimals));
+    setText(maxId, mx.toFixed(decimals));
+  }
+  function renderHeroKhSpark() {
+    if (!sparkKhChart || !sparkKhData || sparkKhData.length < 2) return;
+    var window = lastNDays(sparkKhData, 7);
+    if (window.length < 2) window = sparkKhData;
+    var smoothed = smoothSeries(window);
+    sparkKhChart.data.datasets[0].data = smoothed;
+    // Trend line — same server slope/intercept as the main chart
+    var trend = [];
+    if (!isNaN(serverSlope) && !isNaN(serverIntercept) && serverSlopeT0 > 0) {
+      var first = window[0][0];
+      var last = window[window.length - 1][0];
+      trend = [
+        { x: first, y: serverSlope * ((first - serverSlopeT0) / 86400) + serverIntercept },
+        { x: last,  y: serverSlope * ((last  - serverSlopeT0) / 86400) + serverIntercept }
+      ];
+    }
+    sparkKhChart.data.datasets[1].data = trend;
+    sparkKhChart.update('none');
+    setSparkRange('spark-kh-min', 'spark-kh-max', smoothed, 1);
+  }
+  function renderHeroPhSpark() {
+    if (!sparkPhChart || !sparkPhData || sparkPhData.length < 2) return;
+    var window = lastNDays(sparkPhData, 7);
+    if (window.length < 2) window = sparkPhData;
+    var smoothed = smoothSeries(window);
+    sparkPhChart.data.datasets[0].data = smoothed;
+    sparkPhChart.update('none');
+    setSparkRange('spark-ph-min', 'spark-ph-max', smoothed, 2);
+  }
+
+  // ============================================================
+  // ===== Status pills, trend arrow, network status, alerts =====
+  // ============================================================
+  function setKhStatusPill(kh) {
+    var p = document.getElementById('kh-status-pill');
+    if (!p) return;
+    p.classList.remove('ok','warn','alert');
+    if (!kh || kh <= 0) { p.querySelector('span:not(.dot)') ? null : null; p.innerHTML = '<span class="dot"></span>--'; return; }
+    var cls = (kh >= 7 && kh <= 11) ? 'ok' : (kh >= 6 && kh <= 13) ? 'warn' : 'alert';
+    var label = (cls === 'ok') ? 'in range' : (cls === 'warn') ? 'check' : 'out of range';
+    p.classList.add(cls);
+    p.innerHTML = '<span class="dot"></span>' + label;
+  }
+  function setPhStatusPill(ph) {
+    var p = document.getElementById('ph-status-pill');
+    if (!p) return;
+    p.classList.remove('ok','warn','alert');
+    if (!ph || ph <= 0) { p.innerHTML = '<span class="dot"></span>--'; return; }
+    var cls = (ph >= 7.8 && ph <= 8.5) ? 'ok' : (ph >= 7.4 && ph <= 8.7) ? 'warn' : 'alert';
+    var label = (cls === 'ok') ? 'in range' : (cls === 'warn') ? 'check' : 'out of range';
+    p.classList.add(cls);
+    p.innerHTML = '<span class="dot"></span>' + label;
+  }
+  function setKhTrendArrow(slope) {
+    var meta = document.getElementById('kh-trend-meta');
+    if (!meta) return;
+    var arrow = '—'; // em-dash
+    if (!isNaN(slope) && Math.abs(slope) > 0.005) arrow = (slope > 0) ? '↑' : '↓';
+    meta.firstChild && (meta.firstChild.nodeValue = arrow + ' ');
+  }
+  function updateNetworkStatus(d) {
+    var el = document.getElementById('sys-stat-network');
+    if (!el) return;
+    el.classList.remove('ok','warn','alert');
+    var stText = el.querySelector('span:last-child');
+    var both = (d.wifiOk && d.mqttOk);
+    var some = (d.wifiOk || d.mqttOk);
+    var cls = both ? 'ok' : some ? 'warn' : 'alert';
+    var label = both ? 'OK' : some ? (d.wifiOk ? 'WiFi only' : 'MQTT only') : 'Offline';
+    el.classList.add(cls);
+    if (stText) stText.textContent = label;
+  }
+  // Alerts strip — accumulate from various state updates, dedup by key
+  var _alertState = { hcl: false, probe: false, calOld: false };
+  function updateAlerts(d) {
+    var alerts = document.getElementById('alerts');
+    if (!alerts) return;
+    if (d.hclVol !== undefined) _alertState.hcl = (d.hclVol >= 0 && d.hclVol < 200);
+    if (d.probeHealth !== undefined) _alertState.probe = (d.probeHealth === 'Replace');
+    if (d.calAge !== undefined) _alertState.calOld = (d.calAge >= 30);
+    var html = '';
+    if (_alertState.hcl) html += '<div class="alert alert-red"><span class="a-dot"></span><span class="a-text">HCl tank low — refill soon</span></div>';
+    if (_alertState.probe) html += '<div class="alert alert-red"><span class="a-dot"></span><span class="a-text">pH probe needs replacement</span></div>';
+    if (_alertState.calOld) html += '<div class="alert warn"><span class="a-dot"></span><span class="a-text">pH calibration is over 30 days old</span></div>';
+    alerts.innerHTML = html;
+  }
+  function fmtAgo(sec) {
+    if (sec < 60) return sec + 's ago';
+    if (sec < 3600) return Math.floor(sec/60) + 'm ago';
+    if (sec < 86400) return Math.floor(sec/3600) + 'h ago';
+    return Math.floor(sec/86400) + 'd ago';
+  }
+
   function init() {
     initCharts();
+    initHeroSparks();
     initKHLayers();
     initTabs();
-    initCollapsible();
+    initPageNav();
+    initLiveBanner();
     initButtons();
     initConfigInputs();
     // Smooth half-life UI-only setting (localStorage)
