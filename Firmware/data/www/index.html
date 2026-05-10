@@ -54,7 +54,10 @@
     <div class="hero">
       <div class="hero-card">
         <span class="hc-label">Carbonate Hardness</span>
-        <div><span class="hc-value" id="val-kh">--</span><span class="hc-unit">dKH</span></div>
+        <div class="hc-value-row">
+          <div><span class="hc-value" id="val-kh">--</span><span class="hc-unit">dKH</span></div>
+          <button class="cmd-btn primary in-card" data-cmd="k">Measure</button>
+        </div>
         <div class="hc-spark">
           <canvas id="spark-kh"></canvas>
           <div class="hc-spark-range">
@@ -66,7 +69,6 @@
           <span class="pill" id="kh-status-pill"><span class="dot"></span>--</span>
           <span class="hc-trend" id="kh-trend-meta">— <strong id="val-kh-slope">--</strong> dKH/d</span>
         </div>
-        <button class="cmd-btn primary in-card" data-cmd="k">Measure KH</button>
       </div>
       <div class="hero-card">
         <span class="hc-label">pH</span>
@@ -88,15 +90,19 @@
     <div class="metric-row">
       <div class="metric-card">
         <span class="mc-label">Measured pH</span>
-        <span class="mc-value" id="val-mesph">--</span>
+        <div class="mc-value-row">
+          <span class="mc-value" id="val-mesph">--</span>
+          <button class="cmd-btn tint-green in-card" data-cmd="p">Measure</button>
+        </div>
         <span class="mc-sub">latest</span>
-        <button class="cmd-btn tint-green in-card" data-cmd="p">Measure pH</button>
       </div>
       <div class="metric-card metric-card-link" id="hcl-card" role="button" tabindex="0" title="Tap to edit volume">
         <span class="mc-label">HCl</span>
-        <span class="mc-value"><span id="val-hcl">--</span> <small style="font-size:.55em;color:var(--text-tertiary);font-weight:500">mL</small></span>
+        <div class="mc-value-row">
+          <span class="mc-value"><span id="val-hcl">--</span> <small style="font-size:.55em;color:var(--text-tertiary);font-weight:500">mL</small></span>
+          <button class="cmd-btn tint-orange in-card" data-cmd="f">Fill</button>
+        </div>
         <div class="hcl-bar"><span id="hcl-fill"></span></div>
-        <button class="cmd-btn tint-orange in-card" data-cmd="f">Fill</button>
       </div>
       <div class="metric-card metric-card-link" id="next-meas-card" role="button" tabindex="0" title="Edit schedule">
         <span class="mc-label">Next measurement</span>

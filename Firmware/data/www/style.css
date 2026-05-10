@@ -197,12 +197,17 @@ header h1{font-size:var(--t-lg);font-weight:600;letter-spacing:-.02em;white-spac
 .schedule-strip a{color:var(--accent);text-decoration:none;font-size:var(--t-sm);font-weight:500;-webkit-tap-highlight-color:transparent}
 .schedule-strip a:active{opacity:.5}
 
-/* === In-card action buttons (Measure KH / Measure pH / Fill) === */
-.cmd-btn.in-card{
-  width:100%;margin-top:var(--s2);padding:11px var(--s3);
-  font-size:var(--t-sm);font-weight:600;
+/* === In-card action buttons (sit inline, right of the value) === */
+.hc-value-row,.mc-value-row{
+  display:flex;align-items:center;justify-content:space-between;
+  gap:var(--s2);width:100%;
 }
-.hero-card .cmd-btn.in-card{padding:13px var(--s3);font-size:var(--t-md)}
+.cmd-btn.in-card{
+  width:auto;margin-top:0;padding:8px 14px;
+  font-size:var(--t-sm);font-weight:600;
+  white-space:nowrap;flex-shrink:0;min-height:0;
+}
+.hero-card .cmd-btn.in-card{padding:10px 18px;font-size:var(--t-md)}
 
 /* === Recent log section === */
 .recent-log h3{font-size:var(--t-xs);font-weight:600;color:var(--text-secondary);text-transform:uppercase;letter-spacing:.05em;margin-bottom:var(--s2)}
@@ -508,7 +513,7 @@ header h1{font-size:var(--t-lg);font-weight:600;letter-spacing:-.02em;white-spac
   .hero{grid-template-columns:1fr;gap:var(--s2)}
   .hero-card{min-height:auto}
   .hero-card .hc-value{font-size:var(--t-display)}
-  .metric-card .cmd-btn.in-card{padding:9px var(--s2);font-size:var(--t-xs)}
+  .metric-card .cmd-btn.in-card{padding:7px 10px;font-size:var(--t-xs)}
   .config-grid{grid-template-columns:1fr}
   .interval-config{grid-template-columns:1fr}
   .cal-ph-grid{grid-template-columns:1fr}
