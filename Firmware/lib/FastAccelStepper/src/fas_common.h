@@ -209,7 +209,7 @@ struct queue_end_s {
 // Esp32 queue definitions
 #define NUM_QUEUES (QUEUES_MCPWM_PCNT + QUEUES_RMT)
 #define MAX_STEPPER (NUM_QUEUES)
-#define QUEUE_LEN 8  // KHpro patch: reduced from 32 to save BSS
+#define QUEUE_LEN 32  // upstream default; KHpro previously reduced to 8 to save BSS — restored 2026-05-24 to fix sample-pump RMT underrun on long continuous fills
 
 // Esp32 timing definition
 #define TICKS_PER_S 16000000L
