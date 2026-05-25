@@ -187,6 +187,19 @@ float granAnalysis(TitrationPoint* points, int nPoints,
   if (nPoints < 3) return fail("Too few data points");
   if (calUnits <= 0) return fail("Invalid calibration units");
 
+  // Sanity check: require at least MIN_GRAN_POINTS in the Gran region. Without
+  // this, a probe-failure or aborted titration that produced a handful of low-pH
+  // points could pass through to regression and yield a false-confidence result.
+  int granRegionCount = 0;
+  for (int i = 0; i < nPoints; i++) {
+    if (points[i].pH < GRAN_REGION_PH && points[i].pH > GRAN_STOP_PH - 0.5f) granRegionCount++;
+  }
+  if (granRegionCount < MIN_GRAN_POINTS) {
+    char buf[64];
+    snprintf(buf, sizeof(buf), "Only %d Gran-region points (need %d)", granRegionCount, MIN_GRAN_POINTS);
+    return fail(buf);
+  }
+
   float k = titVol / calUnits;
 
   // Adaptive window selection: try multiple pH bounds, select by minimum eqSE (best precision)

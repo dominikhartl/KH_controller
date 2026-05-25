@@ -311,6 +311,37 @@ static float emaValue = NAN;
 
 void resetADCFilter() { emaValue = NAN; }
 
+// --- Probe-transient capture state ---
+// Captures readADCTrimmed results during the first PROBE_CAPTURE_DOSES Gran-zone
+// doses. Memory: 128 entries × 5 bytes (packed) ≈ 640 bytes.
+static const int PROBE_CAPTURE_MAX = 128;
+static const int PROBE_CAPTURE_DOSES = 6;
+static ProbeCaptureEntry probeCapBuf[PROBE_CAPTURE_MAX];
+static int probeCapCount = 0;
+static uint8_t probeCapCurDose = 0;
+static uint8_t probeCapCurSection = 0;
+static unsigned long probeCapDoseStartMs = 0;
+
+void probeCaptureReset() { probeCapCount = 0; probeCapCurDose = 0; probeCapCurSection = 0; }
+void probeCaptureBeginDose(uint8_t doseIdx) {
+  probeCapCurDose = (doseIdx > 0 && doseIdx <= PROBE_CAPTURE_DOSES) ? doseIdx : 0;
+  probeCapCurSection = 0;
+  probeCapDoseStartMs = millis();
+}
+void probeCaptureSetSection(uint8_t section) { probeCapCurSection = section ? 1 : 0; }
+int probeCaptureGetCount() { return probeCapCount; }
+const ProbeCaptureEntry* probeCaptureGetData() { return probeCapBuf; }
+static inline void probeCaptureLog(float mv) {
+  if (probeCapCurDose == 0 || probeCapCount >= PROBE_CAPTURE_MAX || isnan(mv)) return;
+  ProbeCaptureEntry& e = probeCapBuf[probeCapCount++];
+  unsigned long dt = millis() - probeCapDoseStartMs;
+  e.tMs = (dt > 0xFFFF) ? 0xFFFF : (uint16_t)dt;
+  int mvi = (int)lroundf(mv);
+  if (mvi < -32768) mvi = -32768; else if (mvi > 32767) mvi = 32767;
+  e.mv = (int16_t)mvi;
+  e.info = (uint8_t)((probeCapCurDose & 0x0F) << 4) | (probeCapCurSection & 0x01);
+}
+
 // Single ADS1115 conversion attempt (internal helper)
 static float readADS1115Once() {
   // Start single-shot conversion
@@ -402,7 +433,9 @@ static float readADCTrimmed(int nSamples, int interSampleDelayMs) {
     sum += adcBuf[i];
   }
   int count = valid - 2 * trim;
-  return (count > 0) ? sum / count : adcBuf[valid / 2];
+  float result = (count > 0) ? sum / count : adcBuf[valid / 2];
+  probeCaptureLog(result);  // diagnostic: log this trimmed-mean if capture active
+  return result;
 }
 
 void initADC() {
@@ -825,7 +858,9 @@ static void waitForStabilization() {
     if (noiseStart < 0) noiseStart = 0;
   }
   int noiseCount = nReadings - noiseStart;
-  if (noiseCount >= 2) {
+  // Require N>=4 for noise stats. With N=2, the std-dev has only 1 DoF and is
+  // statistically unstable (a single outlier pair swings it wildly).
+  if (noiseCount >= 4) {
     float sum = 0;
     for (int i = noiseStart; i < nReadings; i++) sum += stabReadings[i];
     float mean = sum / noiseCount;

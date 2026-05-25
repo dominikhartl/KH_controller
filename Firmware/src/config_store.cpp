@@ -91,7 +91,11 @@ float ConfigStore::getSampleVolume()    { return clampf(prefs.getFloat("sam_vol"
 float ConfigStore::getCorrectionFactor() { return prefs.getFloat("corr_f", 1.0); }
 float ConfigStore::getHClMolarity() { return prefs.getFloat("hcl_mol", 0.024); }
 float ConfigStore::getHClVolume() { return prefs.getFloat("hcl_vol", 5000.0); }
-int ConfigStore::getCalUnits() { return prefs.getInt("cal_drops", 6000); }
+int ConfigStore::getCalUnits() {
+  // Floor at 100 to prevent division-by-zero from NVS corruption. Default 6000 if missing.
+  int v = prefs.getInt("cal_drops", 6000);
+  return (v < 100) ? 6000 : v;
+}
 float ConfigStore::getFastTitrationPH() { return prefs.getFloat("fast_ph", FAST_TITRATION_PH_DEFAULT); }
 void ConfigStore::setTitrationVolume(float v) { prefs.putFloat("tit_vol", v); }
 void ConfigStore::setSampleVolume(float v) { prefs.putFloat("sam_vol", v); }
@@ -118,8 +122,10 @@ float ConfigStore::getTitrationRPM()             { return clampf(prefs.getFloat(
 void ConfigStore::setTitrationRPM(float rpm)     { prefs.putFloat("tit_rpm", clampf(rpm, 10.0f, 200.0f)); }
 float ConfigStore::getGranBurstRPM()             { return clampf(prefs.getFloat("gran_brpm", GRAN_BURST_RPM), 80.0f, 250.0f); }
 void ConfigStore::setGranBurstRPM(float rpm)     { prefs.putFloat("gran_brpm", clampf(rpm, 80.0f, 250.0f)); }
-uint32_t ConfigStore::getGranBurstAccel()        { return clampu32(prefs.getUInt("gran_baccel", GRAN_BURST_ACCEL), 50000, 500000); }
-void ConfigStore::setGranBurstAccel(uint32_t accel) { prefs.putUInt("gran_baccel", clampu32(accel, 50000, 500000)); }
+// Accel clamp widened for stall-limit testing. Floor kept at 50k to avoid
+// pathologically slow ramps. Upper bound very wide — user must test for stall.
+uint32_t ConfigStore::getGranBurstAccel()        { return clampu32(prefs.getUInt("gran_baccel", GRAN_BURST_ACCEL), 50000, 5000000); }
+void ConfigStore::setGranBurstAccel(uint32_t accel) { prefs.putUInt("gran_baccel", clampu32(accel, 50000, 5000000)); }
 float ConfigStore::getFastPhaseRPM()             { return clampf(prefs.getFloat("fast_rpm", 50.0), 10.0f, 150.0f); }
 void ConfigStore::setFastPhaseRPM(float rpm)     { prefs.putFloat("fast_rpm", clampf(rpm, 10.0f, 150.0f)); }
 

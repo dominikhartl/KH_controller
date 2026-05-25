@@ -22,6 +22,20 @@ static const char FW_VERSION[] = "0.5";
 #define ADC_INTER_SAMPLE_DELAY_FAST_MS 1
 static const int MEASUREMENT_DELAY_FAST_MS = 20;
 
+// Extra mix delay applied only to the FIRST Gran-zone dose. The probe is
+// still settling from the fast/medium-phase exit, so its first stabilization
+// would otherwise pollute probe_noise_mv with the residual transient.
+static const int GRAN_FIRST_DOSE_EXTRA_MIX_MS = 5000;
+
+// End-of-dose "kick" — a small terminal pulse at maximum acceleration after
+// each Gran-zone dose. Forces any hanging drop off the dispensing tip so
+// per-dose delivery is detachment-deterministic rather than accumulating
+// until surface tension yields. Net volume per dose unchanged: the kick
+// volume is taken from the main dose, not added to it. Set GRAN_KICK_UNITS=0
+// to disable.
+static const int GRAN_KICK_UNITS = 0;        // 0 = disabled. Set ≥2 to re-enable.
+static const uint32_t GRAN_KICK_ACCEL = 150000;  // steps/s² — motor stalls above this
+
 // pH stabilization (adaptive: waits for readings to converge)
 static const int STABILIZATION_TIMEOUT_MS = 4000;
 static const float STABILIZATION_THRESHOLD_MV = 3.0;

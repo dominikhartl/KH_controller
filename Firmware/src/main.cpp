@@ -1071,7 +1071,8 @@ KHResult measureKH() {
   setStabilizationTimeoutMs(configStore.getStabilizationTimeout());
   resetStabilizationStats();
   resetNoiseStats();
-  resetADCFilter();  // Clear stale EMA state from previous measurement
+  resetADCFilter();      // Clear stale EMA state from previous measurement
+  probeCaptureReset();   // Clear probe-transient diagnostic buffer
 
   broadcastTitrationStart();  // Signal dashboard to clear live pH chart
   int errorflag = 0;
@@ -1295,7 +1296,8 @@ KHResult measureKH() {
       } else {
         // Store data points near the endpoint even during fast phase
         if (pH < DATA_STORE_PH && nPoints < MAX_TITRATION_POINTS) {
-          dataPoints[nPoints++] = {(float)units, pH, voltage, 0, 0, 0};
+          int16_t mvI = isnan(voltage) ? 0 : (int16_t)constrain((int)lroundf(voltage), -32768, 32767);
+          dataPoints[nPoints++] = {(float)units, pH, mvI, 0, 0, 0, 0, 0};
         }
         if (pH < GRAN_REGION_PH) granCount++;
 
@@ -1370,29 +1372,65 @@ KHResult measureKH() {
         }
         { unsigned long mixEnd = millis() + cachedMixDelay;
           while (millis() < mixEnd) {
+            if (abortRequested) break;  // Don't make user wait full mix delay on abort
             delay(500);
             measurementYield();
           }
         }
+        if (abortRequested) break;
         measurePHStabilized(isExternalADCActive() ? 3 : 8);
       } else {
         // Gran zone (pH below GRAN_REGION_PH): smaller steps, stabilization, accurate readings
         curPhase = 2;
         stepVol = cachedGranStepVol;
-        if (!titrate(stepVol, cachedGranRPM, false, cachedGranAccel)) {
-          errorMessage = "Error: titration pump timeout in Gran zone";
-          errorflag = 1;
-          break;
+        // Split each dose into a main body + a small terminal "kick" at max
+        // acceleration. The kick forcibly ejects any hanging drop from the
+        // dispensing tip so per-dose delivery is detachment-deterministic
+        // (avoids the variable-volume staircase from drop-size accumulation).
+        // Net volume per dose is unchanged — the kick volume is subtracted
+        // from the main body. If stepVol is too small to split, dispense as one.
+        int kickVol = (stepVol > GRAN_KICK_UNITS + 1) ? GRAN_KICK_UNITS : 0;
+        int mainVol = stepVol - kickVol;
+        if (mainVol > 0) {
+          if (!titrate(mainVol, cachedGranRPM, false, cachedGranAccel)) {
+            errorMessage = "Error: titration pump timeout in Gran zone";
+            errorflag = 1;
+            break;
+          }
         }
+        if (kickVol > 0) {
+          if (!titrate(kickVol, cachedGranRPM, false, GRAN_KICK_ACCEL)) {
+            errorMessage = "Error: titration pump timeout in Gran zone (kick)";
+            errorflag = 1;
+            break;
+          }
+        }
+        // Begin probe-transient capture for this Gran-zone dose. The function
+        // ignores dose indices outside the capture range so it's safe to call
+        // for every dose. granStepCount is incremented later, so use +1 here.
+        probeCaptureBeginDose((uint8_t)(granStepCount + 1));
+        probeCaptureSetSection(0);  // stabilization-criterion phase
+        // First Gran-zone dose: probe is still settling from the fast/medium
+        // phase exit. Give it extra mix time and EXCLUDE the resulting σ from
+        // probe_noise_mv averaging by resetting noise stats after this dose.
+        bool isFirstGranDose = (granStepCount == 0);
+        int thisMixDelay = cachedMixDelay + (isFirstGranDose ? GRAN_FIRST_DOSE_EXTRA_MIX_MS : 0);
         // Yielding mix delay: feed UI/MQTT every 500ms instead of blocking
-        { unsigned long mixEnd = millis() + cachedMixDelay;
+        { unsigned long mixEnd = millis() + thisMixDelay;
           while (millis() < mixEnd) {
+            if (abortRequested) break;  // Don't make user wait full mix delay on abort
             delay(500);
             measurementYield();
           }
         }
+        if (abortRequested) break;
         waitForPHStabilization();
+        probeCaptureSetSection(1);  // post-stabilization measurePHCore phase
         measurePHStabilized(isExternalADCActive() ? configStore.getGranReadings() : 20);
+        // Drop the first Gran-zone dose's stabilization noise from the running
+        // average: its σ is dominated by the post-fast-phase transient and not
+        // representative of steady-state probe behaviour.
+        if (isFirstGranDose) resetNoiseStats();
       }
       units += stepVol;
 
@@ -1400,7 +1438,12 @@ KHResult measureKH() {
       if (pH < DATA_STORE_PH && nPoints < MAX_TITRATION_POINTS) {
         uint16_t sMs = (curPhase == 2) ? (uint16_t)min((unsigned long)0xFFFF, getLastStabilizationMs()) : (uint16_t)0;
         uint8_t fl = (curPhase == 2 && getLastStabilizationTimedOut()) ? 1 : 0;
-        dataPoints[nPoints++] = {(float)units, pH, voltage, sMs, curPhase, fl};
+        // Stabilization noise σ (tenths of mV) — only meaningful in Gran zone where
+        // waitForPHStabilization() ran. Medium zone reuses a stale value; record 0.
+        int nDmv = (curPhase == 2) ? (int)roundf(getLastStabNoiseMv() * 10.0f) : 0;
+        if (nDmv < 0) nDmv = 0; else if (nDmv > 255) nDmv = 255;
+        int16_t mvI = isnan(voltage) ? 0 : (int16_t)constrain((int)lroundf(voltage), -32768, 32767);
+        dataPoints[nPoints++] = {(float)units, pH, mvI, sMs, curPhase, fl, (uint8_t)nDmv, 0};
       }
       if (pH < GRAN_REGION_PH) granCount++;
 
@@ -1458,6 +1501,14 @@ KHResult measureKH() {
         errorMessage = "Error: invalid calibration (calUnits or samVol is zero)";
         errorflag = 1;
       } else {
+        // Audit the correction factor — if it's been tweaked away from 1.0 by
+        // more than 5% the user is probably masking a calibration issue.
+        // We warn but proceed so result is still produced.
+        if (fabsf(corrF - 1.0f) > 0.05f) {
+          char warnBuf[96];
+          snprintf(warnBuf, sizeof(warnBuf), "Warning: correction factor %.3f deviates >5%% from 1.0", corrF);
+          publishMessage(warnBuf);
+        }
         // Determine equivalence point
         float granR2 = 0;
         float granSlope = 0, granIntercept = 0;
@@ -1508,6 +1559,7 @@ KHResult measureKH() {
           static const int MAX_GRAN_DIAG = 50;
           float granPtML[MAX_GRAN_DIAG];
           float granPtF[MAX_GRAN_DIAG];
+          uint8_t granPtNoiseDmV[MAX_GRAN_DIAG];
           int nGranPts = 0;
 
           // Collect Gran region points by proximity to window:
@@ -1517,6 +1569,7 @@ KHResult measureKH() {
           auto addGranPt = [&](int i) {
             granPtML[nGranPts] = dataPoints[i].units * k;
             granPtF[nGranPts] = (samVol + dataPoints[i].units * k) * powf(10.0f, -dataPoints[i].pH);
+            granPtNoiseDmV[nGranPts] = dataPoints[i].noiseDmV;
             nGranPts++;
           };
           float wLo = result.granWinLow, wHi = result.granWinHigh;
@@ -1563,7 +1616,7 @@ KHResult measureKH() {
           // Convert regression from units-space to mL-space: F = (slope/k)*mL + intercept
           float slopeML = usedGran ? granSlope / k : 0;
           float interceptF = usedGran ? granIntercept : 0;
-          broadcastGranData(granR2, eqML, usedGran, granPtML, granPtF, nGranPts, winLowML, winHighML, slopeML, interceptF, granWindows, nGranWindows);
+          broadcastGranData(granR2, eqML, usedGran, granPtML, granPtF, granPtNoiseDmV, nGranPts, winLowML, winHighML, slopeML, interceptF, granWindows, nGranWindows);
         }
 
         if (isnan(exactUnits)) {
