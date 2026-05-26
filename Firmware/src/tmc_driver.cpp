@@ -50,6 +50,20 @@ bool initTMCDrivers() {
 
 bool isTMCDetected() { return tmcDetected; }
 
+// Re-apply the sample driver's full configuration. StealthChop autotune state
+// (current chopper config the driver self-adjusts at runtime) lives in driver
+// registers. Writing the config values again resets that state to a known
+// baseline. Suspected cause of progressive sample-volume drift over uptime:
+// autotune wanders to a slightly under-driving config, motor slips slightly
+// under peristaltic load, fewer real revolutions per commanded pulse. Calling
+// this before each sample-pump operation gives every pump op a fresh autotune
+// cycle, matching the post-reboot-fresh state where the issue is not observed.
+void reinitSampleDriver() {
+  if (!tmcDetected || !sampleDriver) return;
+  configureDriver(sampleDriver, TMC_SAMPLE_RMS_MA);
+  sampleDriver->en_spreadCycle(configStore.getSampleSpreadCycle());
+}
+
 void setSampleSpreadCycle(bool enable) {
   if (sampleDriver) sampleDriver->en_spreadCycle(enable);
 }

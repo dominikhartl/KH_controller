@@ -5,6 +5,7 @@
 
 bool initTMCDrivers();
 bool isTMCDetected();
+void reinitSampleDriver();  // Reset StealthChop autotune; call before each sample-pump op
 void setSampleSpreadCycle(bool enable);
 void setTitrateSpreadCycle(bool enable);
 void printTMCDebug();
