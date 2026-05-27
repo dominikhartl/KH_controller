@@ -2068,7 +2068,7 @@ void setupWebServer() {
             int p = 0;
             while (dp < (uint16_t)analysisCount && p < (int)maxLen - 50) {
               if (dp > 0) p += snprintf(b + p, maxLen - p, ",");
-              p += snprintf(b + p, maxLen - p, "[%.0f,%.5f,%d,%u,%u,%u,%u]",
+              p += snprintf(b + p, maxLen - p, "[%.0f,%.3f,%d,%u,%u,%u,%u]",
                            analysisBuf[dp].units, analysisBuf[dp].pH,
                            (int)analysisBuf[dp].mV, analysisBuf[dp].stabMs,
                            analysisBuf[dp].phase, analysisBuf[dp].flags,
