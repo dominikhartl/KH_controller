@@ -109,36 +109,11 @@ bool StepperQueue::isValidStepPin(uint8_t step_pin) {
 }
 int8_t StepperQueue::queueNumForStepPin(uint8_t step_pin) { return -1; }
 
-//*************************************************************************************************
-// KHpro diagnostic globals — written by StepperTask, read by motors.cpp
-// (declared extern in motors.cpp; defined here so the StepperTask updates them
-// without needing extra headers in the vendored library).
-volatile int khpro_fas_task_core = -1;
-volatile int khpro_fas_task_prio = -1;
-volatile uint32_t khpro_fas_max_gap_us = 0;
-volatile uint32_t khpro_fas_gap_count = 0;  // gaps > 8 ms
-volatile uint32_t khpro_fas_cycle_count = 0;
-
 void StepperTask(void *parameter) {
   FastAccelStepperEngine *engine = (FastAccelStepperEngine *)parameter;
   const TickType_t delay_4ms =
       (DELAY_MS_BASE + portTICK_PERIOD_MS - 1) / portTICK_PERIOD_MS;
-  // KHpro diagnostic: capture core + priority once, then track inter-refill
-  // gaps in shared volatiles that motors.cpp publishes to MQTT after each pump.
-  uint32_t last_us = 0;
   while (true) {
-    if (khpro_fas_task_core < 0) {
-      khpro_fas_task_core = (int)xPortGetCoreID();
-      khpro_fas_task_prio = (int)uxTaskPriorityGet(NULL);
-    }
-    uint32_t now_us = micros();
-    if (last_us) {
-      uint32_t gap = now_us - last_us;
-      if (gap > khpro_fas_max_gap_us) khpro_fas_max_gap_us = gap;
-      if (gap > 8000) khpro_fas_gap_count++;
-    }
-    last_us = now_us;
-    khpro_fas_cycle_count++;
     engine->manageSteppers();
     esp_task_wdt_reset();
     vTaskDelay(delay_4ms);

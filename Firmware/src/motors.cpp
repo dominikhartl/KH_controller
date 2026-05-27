@@ -9,14 +9,6 @@
 
 extern void publishMessage(const char* message);
 
-// KHpro diagnostic globals defined in vendored FastAccelStepper's
-// StepperISR_esp32.cpp — used to surface FAS-task health to the dashboard.
-extern volatile int khpro_fas_task_core;
-extern volatile int khpro_fas_task_prio;
-extern volatile uint32_t khpro_fas_max_gap_us;
-extern volatile uint32_t khpro_fas_gap_count;
-extern volatile uint32_t khpro_fas_cycle_count;
-
 // RTC memory survives a panic reset — used to identify which motor operation crashed
 RTC_NOINIT_ATTR char motorCrashHint[48];
 RTC_NOINIT_ATTR uint32_t motorCrashMagic;
@@ -153,11 +145,6 @@ static bool runSamplePump(int volume, bool forward, float speedRpm) {
   // Diagnostic: TMC DRV_STATUS before pump starts (rules in/out chip-side stall/overload)
   uint32_t drvStatusPre = isTMCDetected() ? getSampleDrvStatus() : 0;
 
-  // Reset FAS-task health counters so the post-pump message reflects only this run
-  khpro_fas_max_gap_us = 0;
-  khpro_fas_gap_count = 0;
-  uint32_t fasCyclesAtStart = khpro_fas_cycle_count;
-
   // Backlash compensation on direction reversal
   if (forward != lastSampleDirection) {
     sampleStepper->setSpeedInHz(rpmToHz(MOTOR_START_RPM));
@@ -215,29 +202,19 @@ static bool runSamplePump(int volume, bool forward, float speedRpm) {
   // Diagnostic: TMC DRV_STATUS after pump completes (compare against drvStatusPre)
   uint32_t drvStatusPost = isTMCDetected() ? getSampleDrvStatus() : 0;
 
-  uint32_t fasCycles = khpro_fas_cycle_count - fasCyclesAtStart;
-  uint32_t fasMaxGapUs = khpro_fas_max_gap_us;
-  uint32_t fasGapCount = khpro_fas_gap_count;
-  int fasCore = khpro_fas_task_core;
-  int fasPrio = khpro_fas_task_prio;
-
-  Serial.printf("SamplePump %s: %d revs @ %.0f RPM | steps exp=%d act=%d delta=%d | dur=%lums exp=%lums | DRV pre=0x%08X post=0x%08X | FAS core=%d prio=%d cycles=%u max_gap=%u us gaps>8ms=%u\n",
+  Serial.printf("SamplePump %s: %d revs @ %.0f RPM | steps exp=%d act=%d delta=%d | dur=%lums exp=%lums | DRV pre=0x%08X post=0x%08X\n",
                 forward ? "FILL" : "REMOVE", volume, speedRpm,
                 totalSteps, (int)actualSteps, (int)actualSteps - totalSteps,
-                durationMs, expectedMs, drvStatusPre, drvStatusPost,
-                fasCore, fasPrio, (unsigned)fasCycles,
-                (unsigned)fasMaxGapUs, (unsigned)fasGapCount);
+                durationMs, expectedMs, drvStatusPre, drvStatusPost);
 
   // Mirror the diagnostic to MQTT so it shows up in the dashboard activity log
   {
-    char dbuf[220];
+    char dbuf[160];
     snprintf(dbuf, sizeof(dbuf),
-             "%s %dr@%.0frpm dur=%lu/%lums delta=%d DRV=0x%08X->0x%08X FAS:c%d p%d cyc=%u maxgap=%uus n=%u",
+             "%s %dr@%.0frpm dur=%lu/%lums delta=%d DRV=0x%08X->0x%08X",
              forward ? "FILL" : "REM", volume, speedRpm,
              durationMs, expectedMs, (int)actualSteps - totalSteps,
-             drvStatusPre, drvStatusPost,
-             fasCore, fasPrio, (unsigned)fasCycles,
-             (unsigned)fasMaxGapUs, (unsigned)fasGapCount);
+             drvStatusPre, drvStatusPost);
     publishMessage(dbuf);
   }
 
