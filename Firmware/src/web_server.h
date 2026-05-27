@@ -57,8 +57,7 @@ void broadcastError(const char* msg);
 void broadcastProgress(int percent);
 void broadcastRawJson(const char* json);
 void broadcastGranData(float r2, float eqML, bool usedGran,
-                       float* pointsML, float* pointsF,
-                       const uint8_t* pointsNoiseDmV, int nPts,
+                       float* pointsML, float* pointsF, int nPts,
                        float winLowML = 0, float winHighML = 0,
                        float slopeML = 0, float intercept = 0,
                        GranWindowResult* windows = nullptr, int nWindows = 0);

@@ -672,8 +672,8 @@
       return;
     }
 
-    // Scatter points (p[2] = stabilization noise σ in mV, present from firmware v2+)
-    var pts = d.points.map(function(p) { return { x: p[0], y: p[1], n: (p.length > 2 ? p[2] : null) }; });
+    // Scatter points
+    var pts = d.points.map(function(p) { return { x: p[0], y: p[1] }; });
     granChart.data.datasets[0].data = pts;
 
     // Fit line from firmware's weighted regression — extend across full data range
@@ -1004,20 +1004,7 @@
       },
       options: {
         responsive: true, maintainAspectRatio: false, animation: false,
-        plugins: {
-          legend: { display: true, labels: { color: '#8e8e93', font: { size: 10 }, boxWidth: 12, filter: function(item) { return item.text && item.text.charAt(0) !== '_'; } } },
-          tooltip: {
-            callbacks: {
-              label: function(ctx) {
-                if (ctx.datasetIndex !== 0) return ctx.dataset.label;
-                var p = ctx.raw || {};
-                var lines = ['V: ' + p.x.toFixed(3) + ' mL', 'F: ' + p.y.toFixed(5)];
-                if (p.n !== null && p.n !== undefined) lines.push('σ: ' + Number(p.n).toFixed(1) + ' mV');
-                return lines;
-              }
-            }
-          }
-        },
+        plugins: { legend: { display: true, labels: { color: '#8e8e93', font: { size: 10 }, boxWidth: 12, filter: function(item) { return item.text && item.text.charAt(0) !== '_'; } } } },
         scales: {
           x: { offset: false, title: { display: true, text: 'Volume (mL)', color: '#8e8e93' }, ticks: { color: '#8e8e93', font: { size: 10 } }, grid: { color: '#38383a' } },
           y: { title: { display: true, text: 'Gran F', color: '#8e8e93' }, ticks: { color: '#8e8e93', font: { size: 10 } }, grid: { color: '#38383a' } }

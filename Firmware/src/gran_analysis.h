@@ -14,8 +14,6 @@ struct TitrationPoint {
   uint16_t stabMs;    // stabilization time in ms (0 = no stab wait)
   uint8_t phase;      // 0=fast, 1=medium, 2=gran
   uint8_t flags;      // bit 0: stabTimedOut
-  uint8_t noiseDmV;   // stabilization noise σ in tenths of mV (Gran zone only; 0 otherwise)
-  uint8_t _pad;
 };
 
 // Gran window search result for R² distribution plot

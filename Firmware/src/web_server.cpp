@@ -119,7 +119,7 @@ static uint8_t logHead = 0;    // next write position
 
 // In-memory cache for last Gran measurement (replayed to new clients on connect)
 static const uint8_t GRAN_BUF_MAX = 50;
-struct GranBufPoint { float ml; float f; uint8_t noiseDmV; };
+struct GranBufPoint { float ml; float f; };
 static GranBufPoint granBuffer[GRAN_BUF_MAX];
 static uint8_t granBufCount = 0;
 static float granBufR2 = 0;
@@ -282,7 +282,6 @@ static void sendGranData(AsyncWebSocketClient* client) {
     JsonArray pt = pts.add<JsonArray>();
     pt.add(granBuffer[i].ml);
     pt.add(granBuffer[i].f);
-    pt.add(serialized(String(granBuffer[i].noiseDmV * 0.1f, 1)));  // mV, 1 decimal
   }
 
   if (granBufNWindows > 0) {
@@ -1164,8 +1163,7 @@ void broadcastRawJson(const char* json) {
 }
 
 void broadcastGranData(float r2, float eqML, bool usedGran,
-                       float* pointsML, float* pointsF,
-                       const uint8_t* pointsNoiseDmV, int nPts,
+                       float* pointsML, float* pointsF, int nPts,
                        float winLowML, float winHighML,
                        float slopeML, float intercept,
                        GranWindowResult* windows, int nWindows) {
@@ -1179,8 +1177,7 @@ void broadcastGranData(float r2, float eqML, bool usedGran,
   granBufIntercept = intercept;
   granBufCount = (uint8_t)min(nPts, (int)GRAN_BUF_MAX);
   for (uint8_t i = 0; i < granBufCount; i++) {
-    granBuffer[i] = { pointsML[i], pointsF[i],
-                      pointsNoiseDmV ? pointsNoiseDmV[i] : (uint8_t)0 };
+    granBuffer[i] = { pointsML[i], pointsF[i] };
   }
   granBufNWindows = (uint8_t)min(nWindows, (int)MAX_GRAN_WINDOWS);
   if (windows) {
@@ -1206,8 +1203,6 @@ void broadcastGranData(float r2, float eqML, bool usedGran,
     JsonArray pt = pts.add<JsonArray>();
     pt.add(pointsML[i]);
     pt.add(pointsF[i]);
-    float noiseMv = pointsNoiseDmV ? pointsNoiseDmV[i] * 0.1f : 0.0f;
-    pt.add(serialized(String(noiseMv, 1)));
   }
 
   if (nWindows > 0 && windows) {
@@ -2044,11 +2039,10 @@ void setupWebServer() {
               granBufUsed ? "true" : "false",
               lastKHResult.granWinLow, lastKHResult.granWinHigh,
               (int)granBufCount);
-            for (uint8_t i = 0; i < granBufCount && p < (int)maxLen - 40; i++) {
+            for (uint8_t i = 0; i < granBufCount && p < (int)maxLen - 30; i++) {
               if (i > 0) p += snprintf(b + p, maxLen - p, ",");
-              p += snprintf(b + p, maxLen - p, "[%.3f,%.6f,%.1f]",
-                           granBuffer[i].ml, granBuffer[i].f,
-                           granBuffer[i].noiseDmV * 0.1f);
+              p += snprintf(b + p, maxLen - p, "[%.3f,%.6f]",
+                           granBuffer[i].ml, granBuffer[i].f);
             }
             p += snprintf(b + p, maxLen - p, "]},");
             n = p;
@@ -2058,7 +2052,7 @@ void setupWebServer() {
           case 6: { // Analysis data points header
             n = snprintf(b, maxLen,
               "\"analysis_points\":{\"count\":%d,"
-              "\"fields\":[\"units\",\"pH\",\"mV\",\"stabMs\",\"phase\",\"flags\",\"noiseDmV\"],"
+              "\"fields\":[\"units\",\"pH\",\"mV\",\"stabMs\",\"phase\",\"flags\"],"
               "\"points\":[", analysisCount);
             dp = 0;
             ds = (analysisCount > 0) ? 7 : 8;
@@ -2068,11 +2062,10 @@ void setupWebServer() {
             int p = 0;
             while (dp < (uint16_t)analysisCount && p < (int)maxLen - 50) {
               if (dp > 0) p += snprintf(b + p, maxLen - p, ",");
-              p += snprintf(b + p, maxLen - p, "[%.0f,%.3f,%d,%u,%u,%u,%u]",
+              p += snprintf(b + p, maxLen - p, "[%.0f,%.3f,%d,%u,%u,%u]",
                            analysisBuf[dp].units, analysisBuf[dp].pH,
                            (int)analysisBuf[dp].mV, analysisBuf[dp].stabMs,
-                           analysisBuf[dp].phase, analysisBuf[dp].flags,
-                           analysisBuf[dp].noiseDmV);
+                           analysisBuf[dp].phase, analysisBuf[dp].flags);
               dp++;
             }
             n = p;
@@ -2129,34 +2122,9 @@ void setupWebServer() {
             if (dp >= logCount) ds = 12;
             break;
           }
-          case 12: { // Close event log + open probe_capture array
-            int capCount = probeCaptureGetCount();
-            n = snprintf(b, maxLen,
-              "],\"probe_capture\":{\"count\":%d,"
-              "\"fields\":[\"tMs\",\"mV\",\"doseIdx\",\"section\"],\"points\":[",
-              capCount);
-            dp = 0;
-            ds = (capCount > 0) ? 13 : 14;
-            break;
-          }
-          case 13: { // Probe capture entries (batched)
-            int p = 0;
-            int capCount = probeCaptureGetCount();
-            const ProbeCaptureEntry* cap = probeCaptureGetData();
-            while (dp < (uint16_t)capCount && p < (int)maxLen - 50) {
-              if (dp > 0) p += snprintf(b + p, maxLen - p, ",");
-              p += snprintf(b + p, maxLen - p, "[%u,%d,%u,%u]",
-                           cap[dp].tMs, (int)cap[dp].mv,
-                           (cap[dp].info >> 4) & 0x0F, cap[dp].info & 0x01);
-              dp++;
-            }
-            n = p;
-            if (dp >= (uint16_t)capCount) ds = 14;
-            break;
-          }
-          case 14: { // Close probe_capture + close JSON
-            n = snprintf(b, maxLen, "]}}");
-            ds = 15;
+          case 12: { // Close event log + close JSON
+            n = snprintf(b, maxLen, "]}");
+            ds = 13;
             break;
           }
           default:

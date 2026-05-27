@@ -82,21 +82,6 @@ const char* getProbeHealthDetail(char* reasonBuf, size_t reasonLen);  // Same, w
 // Reset EMA filter state (call when switching measurement contexts)
 void resetADCFilter();
 
-// --- Probe-transient capture (diagnostics) ---
-// Captures every readADCTrimmed result during the first PROBE_CAPTURE_DOSES Gran-zone
-// doses, with timestamp relative to dose start, dose index, and section tag.
-// Used to visualise probe settling behaviour per dose. Packed to 5 bytes/entry.
-struct __attribute__((packed)) ProbeCaptureEntry {
-  uint16_t tMs;     // ms since current dose's capture started
-  int16_t  mv;      // mV reading (rounded)
-  uint8_t  info;    // bits 7-4: doseIdx (1-10); bit 0: section (0=stab, 1=measure)
-};
-void probeCaptureReset();
-void probeCaptureBeginDose(uint8_t doseIdx);   // call at start of each Gran-zone iter; 0 to disable
-void probeCaptureSetSection(uint8_t section);  // 0 before stab, 1 before measure
-int  probeCaptureGetCount();
-const ProbeCaptureEntry* probeCaptureGetData();
-
 // Diagnostic ADC reads (for hardware diagnostics module)
 // Read ADS1115 with configurable MUX and data rate (returns raw 16-bit value, or INT16_MIN on error)
 // muxBits: 100=AIN0/GND (pH), 101=AIN1/GND (baseline), etc.

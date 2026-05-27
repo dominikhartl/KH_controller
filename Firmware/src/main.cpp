@@ -1063,7 +1063,6 @@ KHResult measureKH() {
   resetStabilizationStats();
   resetNoiseStats();
   resetADCFilter();      // Clear stale EMA state from previous measurement
-  probeCaptureReset();   // Clear probe-transient diagnostic buffer
 
   broadcastTitrationStart();  // Signal dashboard to clear live pH chart
   int errorflag = 0;
@@ -1288,7 +1287,7 @@ KHResult measureKH() {
         // Store data points near the endpoint even during fast phase
         if (pH < DATA_STORE_PH && nPoints < MAX_TITRATION_POINTS) {
           int16_t mvI = isnan(voltage) ? 0 : (int16_t)constrain((int)lroundf(voltage), -32768, 32767);
-          dataPoints[nPoints++] = {(float)units, pH, mvI, 0, 0, 0, 0, 0};
+          dataPoints[nPoints++] = {(float)units, pH, mvI, 0, 0, 0};
         }
         if (pH < GRAN_REGION_PH) granCount++;
 
@@ -1379,11 +1378,6 @@ KHResult measureKH() {
           errorflag = 1;
           break;
         }
-        // Begin probe-transient capture for this Gran-zone dose. The function
-        // ignores dose indices outside the capture range so it's safe to call
-        // for every dose. granStepCount is incremented later, so use +1 here.
-        probeCaptureBeginDose((uint8_t)(granStepCount + 1));
-        probeCaptureSetSection(0);  // stabilization-criterion phase
         // First Gran-zone dose: probe is still settling from the fast/medium
         // phase exit. Give it extra mix time and EXCLUDE the resulting σ from
         // probe_noise_mv averaging by resetting noise stats after this dose.
@@ -1399,7 +1393,6 @@ KHResult measureKH() {
         }
         if (abortRequested) break;
         waitForPHStabilization();
-        probeCaptureSetSection(1);  // post-stabilization measurePHCore phase
         measurePHStabilized(isExternalADCActive() ? configStore.getGranReadings() : 20);
         // Drop the first Gran-zone dose's stabilization noise from the running
         // average: its σ is dominated by the post-fast-phase transient and not
@@ -1412,12 +1405,8 @@ KHResult measureKH() {
       if (pH < DATA_STORE_PH && nPoints < MAX_TITRATION_POINTS) {
         uint16_t sMs = (curPhase == 2) ? (uint16_t)min((unsigned long)0xFFFF, getLastStabilizationMs()) : (uint16_t)0;
         uint8_t fl = (curPhase == 2 && getLastStabilizationTimedOut()) ? 1 : 0;
-        // Stabilization noise σ (tenths of mV) — only meaningful in Gran zone where
-        // waitForPHStabilization() ran. Medium zone reuses a stale value; record 0.
-        int nDmv = (curPhase == 2) ? (int)roundf(getLastStabNoiseMv() * 10.0f) : 0;
-        if (nDmv < 0) nDmv = 0; else if (nDmv > 255) nDmv = 255;
         int16_t mvI = isnan(voltage) ? 0 : (int16_t)constrain((int)lroundf(voltage), -32768, 32767);
-        dataPoints[nPoints++] = {(float)units, pH, mvI, sMs, curPhase, fl, (uint8_t)nDmv, 0};
+        dataPoints[nPoints++] = {(float)units, pH, mvI, sMs, curPhase, fl};
       }
       if (pH < GRAN_REGION_PH) granCount++;
 
@@ -1533,7 +1522,6 @@ KHResult measureKH() {
           static const int MAX_GRAN_DIAG = 50;
           float granPtML[MAX_GRAN_DIAG];
           float granPtF[MAX_GRAN_DIAG];
-          uint8_t granPtNoiseDmV[MAX_GRAN_DIAG];
           int nGranPts = 0;
 
           // Collect Gran region points by proximity to window:
@@ -1543,7 +1531,6 @@ KHResult measureKH() {
           auto addGranPt = [&](int i) {
             granPtML[nGranPts] = dataPoints[i].units * k;
             granPtF[nGranPts] = (samVol + dataPoints[i].units * k) * powf(10.0f, -dataPoints[i].pH);
-            granPtNoiseDmV[nGranPts] = dataPoints[i].noiseDmV;
             nGranPts++;
           };
           float wLo = result.granWinLow, wHi = result.granWinHigh;
@@ -1590,7 +1577,7 @@ KHResult measureKH() {
           // Convert regression from units-space to mL-space: F = (slope/k)*mL + intercept
           float slopeML = usedGran ? granSlope / k : 0;
           float interceptF = usedGran ? granIntercept : 0;
-          broadcastGranData(granR2, eqML, usedGran, granPtML, granPtF, granPtNoiseDmV, nGranPts, winLowML, winHighML, slopeML, interceptF, granWindows, nGranWindows);
+          broadcastGranData(granR2, eqML, usedGran, granPtML, granPtF, nGranPts, winLowML, winHighML, slopeML, interceptF, granWindows, nGranWindows);
         }
 
         if (isnan(exactUnits)) {
