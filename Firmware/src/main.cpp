@@ -924,7 +924,6 @@ void calibrateTitrationPump() {
   const int fastPhaseTarget   = max(0, targetUnits - mediumPhaseUnits - granPhaseUnits);
 
   // --- Fast phase ---
-  publishMessage("Cal: fast phase");
   while (units < fastPhaseTarget) {
     int batch = min(FAST_STEP, fastPhaseTarget - units);
     if (!titrate(batch, fastRPM_cal)) {
@@ -939,13 +938,10 @@ void calibrateTitrationPump() {
     broadcastProgress((units * 99) / targetUnits);
     delay(TITRATION_MIX_DELAY_FAST_MS);
     ArduinoOTA.handle();
-    snprintf(buf, sizeof(buf), "Cal: %d / %d rev", units / 100, targetUnits / 100);
-    publishMessage(buf);
   }
 
   // --- Medium phase ---
   int mediumTarget = fastPhaseTarget + mediumPhaseUnits;
-  publishMessage("Cal: medium phase");
   while (units < mediumTarget && units < targetUnits) {
     int step = min(MEDIUM_STEP, mediumTarget - units);
     if (!titrate(step, fastRPM_cal)) {
@@ -960,12 +956,9 @@ void calibrateTitrationPump() {
     broadcastProgress((units * 99) / targetUnits);
     delay(TITRATION_MIX_DELAY_MEDIUM_MS);
     ArduinoOTA.handle();
-    snprintf(buf, sizeof(buf), "Cal: %d / %d rev (medium)", units / 100, targetUnits / 100);
-    publishMessage(buf);
   }
 
   // --- Gran phase ---
-  publishMessage("Cal: Gran phase");
   float granRPM_cal      = configStore.getGranBurstRPM();
   uint32_t granAccel_cal = configStore.getGranBurstAccel();
   while (units < targetUnits) {
@@ -982,8 +975,6 @@ void calibrateTitrationPump() {
     broadcastProgress((units * 99) / targetUnits);
     delay(TITRATION_MIX_DELAY_FAST_MS);
     ArduinoOTA.handle();
-    snprintf(buf, sizeof(buf), "Cal: %d / %d rev (Gran)", units / 100, targetUnits / 100);
-    publishMessage(buf);
   }
 
   subtractHCl(targetUnits);
