@@ -122,10 +122,8 @@ float ConfigStore::getTitrationRPM()             { return clampf(prefs.getFloat(
 void ConfigStore::setTitrationRPM(float rpm)     { prefs.putFloat("tit_rpm", clampf(rpm, 10.0f, 200.0f)); }
 float ConfigStore::getGranBurstRPM()             { return clampf(prefs.getFloat("gran_brpm", GRAN_BURST_RPM), 80.0f, 250.0f); }
 void ConfigStore::setGranBurstRPM(float rpm)     { prefs.putFloat("gran_brpm", clampf(rpm, 80.0f, 250.0f)); }
-// Accel clamp widened for stall-limit testing. Floor kept at 50k to avoid
-// pathologically slow ramps. Upper bound very wide — user must test for stall.
-uint32_t ConfigStore::getGranBurstAccel()        { return clampu32(prefs.getUInt("gran_baccel", GRAN_BURST_ACCEL), 50000, 5000000); }
-void ConfigStore::setGranBurstAccel(uint32_t accel) { prefs.putUInt("gran_baccel", clampu32(accel, 50000, 5000000)); }
+uint32_t ConfigStore::getGranBurstAccel()        { return clampu32(prefs.getUInt("gran_baccel", GRAN_BURST_ACCEL), 50000, 500000); }
+void ConfigStore::setGranBurstAccel(uint32_t accel) { prefs.putUInt("gran_baccel", clampu32(accel, 50000, 500000)); }
 float ConfigStore::getFastPhaseRPM()             { return clampf(prefs.getFloat("fast_rpm", 50.0), 10.0f, 150.0f); }
 void ConfigStore::setFastPhaseRPM(float rpm)     { prefs.putFloat("fast_rpm", clampf(rpm, 10.0f, 150.0f)); }
 
