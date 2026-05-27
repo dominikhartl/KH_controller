@@ -1113,14 +1113,8 @@ KHResult measureKH() {
   float revsPerML = configStore.getSampleCalRevsPerML();
   int sampleFillRevs = configStore.getSampleCalRevolutions();
   float sampVolML = (revsPerML > 0) ? (float)sampleFillRevs / revsPerML : 0.0f;
+  (void)sampVolML;
   int sampleRemoveRevs = (int)(sampleFillRevs * 1.5f);
-  {
-    char logBuf[96];
-    snprintf(logBuf, sizeof(logBuf), "MEAS: fill=%d rem=%d rpm=%.0f revsPerML=%.2f sampVol=%.1fml",
-             sampleFillRevs, sampleRemoveRevs, configStore.getSamplePumpRPM(),
-             revsPerML, sampVolML);
-    publishMessage(logBuf);
-  }
   // Configurable wash count: rinses clean the chamber, last wash takes the actual sample
   int numWashes = configStore.getNumWashes();
   setMeasPhase(1);  // wash phase

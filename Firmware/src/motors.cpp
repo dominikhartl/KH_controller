@@ -142,9 +142,6 @@ static bool runSamplePump(int volume, bool forward, float speedRpm) {
   digitalWrite(EN_PIN1, LOW);
   delay(MOTOR_ENABLE_DELAY_MS);
 
-  // Diagnostic: TMC DRV_STATUS before pump starts (rules in/out chip-side stall/overload)
-  uint32_t drvStatusPre = isTMCDetected() ? getSampleDrvStatus() : 0;
-
   // Backlash compensation on direction reversal
   if (forward != lastSampleDirection) {
     sampleStepper->setSpeedInHz(rpmToHz(MOTOR_START_RPM));
@@ -196,27 +193,6 @@ static bool runSamplePump(int volume, bool forward, float speedRpm) {
   int32_t endPos = sampleStepper->getCurrentPosition();
   int32_t actualSteps = abs(endPos - startPos);
   bool ok = ((int)actualSteps >= totalSteps - 2);
-
-  unsigned long durationMs = millis() - startTime;
-
-  // Diagnostic: TMC DRV_STATUS after pump completes (compare against drvStatusPre)
-  uint32_t drvStatusPost = isTMCDetected() ? getSampleDrvStatus() : 0;
-
-  Serial.printf("SamplePump %s: %d revs @ %.0f RPM | steps exp=%d act=%d delta=%d | dur=%lums exp=%lums | DRV pre=0x%08X post=0x%08X\n",
-                forward ? "FILL" : "REMOVE", volume, speedRpm,
-                totalSteps, (int)actualSteps, (int)actualSteps - totalSteps,
-                durationMs, expectedMs, drvStatusPre, drvStatusPost);
-
-  // Mirror the diagnostic to MQTT so it shows up in the dashboard activity log
-  {
-    char dbuf[160];
-    snprintf(dbuf, sizeof(dbuf),
-             "%s %dr@%.0frpm dur=%lu/%lums delta=%d DRV=0x%08X->0x%08X",
-             forward ? "FILL" : "REM", volume, speedRpm,
-             durationMs, expectedMs, (int)actualSteps - totalSteps,
-             drvStatusPre, drvStatusPost);
-    publishMessage(dbuf);
-  }
 
   yieldingDelay(MOTOR_HOLD_MS);
   digitalWrite(EN_PIN1, HIGH);
