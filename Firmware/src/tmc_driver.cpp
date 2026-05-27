@@ -74,12 +74,3 @@ uint32_t getTitrateIOIN() {
   return titrateDriver ? titrateDriver->IOIN() : 0;
 }
 
-void printTMCDebug() {
-  if (!tmcDetected) { Serial.println("TMC: not detected"); return; }
-  uint32_t gconf_s = sampleDriver->GCONF();
-  uint32_t gconf_t = titrateDriver->GCONF();
-  Serial.printf("TMC sample:  GCONF=0x%04X TSTEP=%lu\n",
-    gconf_s, sampleDriver->TSTEP());
-  Serial.printf("TMC titrate: GCONF=0x%04X TSTEP=%lu\n",
-    gconf_t, titrateDriver->TSTEP());
-}
