@@ -1374,27 +1374,10 @@ KHResult measureKH() {
         // Gran zone (pH below GRAN_REGION_PH): smaller steps, stabilization, accurate readings
         curPhase = 2;
         stepVol = cachedGranStepVol;
-        // Split each dose into a main body + a small terminal "kick" at max
-        // acceleration. The kick forcibly ejects any hanging drop from the
-        // dispensing tip so per-dose delivery is detachment-deterministic
-        // (avoids the variable-volume staircase from drop-size accumulation).
-        // Net volume per dose is unchanged — the kick volume is subtracted
-        // from the main body. If stepVol is too small to split, dispense as one.
-        int kickVol = (stepVol > GRAN_KICK_UNITS + 1) ? GRAN_KICK_UNITS : 0;
-        int mainVol = stepVol - kickVol;
-        if (mainVol > 0) {
-          if (!titrate(mainVol, cachedGranRPM, false, cachedGranAccel)) {
-            errorMessage = "Error: titration pump timeout in Gran zone";
-            errorflag = 1;
-            break;
-          }
-        }
-        if (kickVol > 0) {
-          if (!titrate(kickVol, cachedGranRPM, false, GRAN_KICK_ACCEL)) {
-            errorMessage = "Error: titration pump timeout in Gran zone (kick)";
-            errorflag = 1;
-            break;
-          }
+        if (!titrate(stepVol, cachedGranRPM, false, cachedGranAccel)) {
+          errorMessage = "Error: titration pump timeout in Gran zone";
+          errorflag = 1;
+          break;
         }
         // Begin probe-transient capture for this Gran-zone dose. The function
         // ignores dose indices outside the capture range so it's safe to call
