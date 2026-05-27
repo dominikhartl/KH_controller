@@ -150,14 +150,6 @@ static bool runSamplePump(int volume, bool forward, float speedRpm) {
   digitalWrite(EN_PIN1, LOW);
   delay(MOTOR_ENABLE_DELAY_MS);
 
-  // Reset TMC StealthChop autotune state before each sample-pump op. Without
-  // this, autotune drifts during uptime and the motor begins to slip slightly
-  // under load — peristaltic rollers compressing tubing — reducing effective
-  // revolutions per commanded pulse. The drift accumulates over many operations
-  // and gets reset only by a reboot, matching the observed pattern of pump
-  // volume returning to calibrated value after every firmware upload.
-  if (isTMCDetected()) reinitSampleDriver();
-
   // Diagnostic: TMC DRV_STATUS before pump starts (rules in/out chip-side stall/overload)
   uint32_t drvStatusPre = isTMCDetected() ? getSampleDrvStatus() : 0;
 
