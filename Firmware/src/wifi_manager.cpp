@@ -71,6 +71,13 @@ void WifiManager::startConnection() {
   String hostname = String(deviceName);
   hostname.toLowerCase();
   WiFi.setHostname(hostname.c_str());
+  // Scan all channels and pick the strongest AP for this SSID. Default ESP32
+  // behaviour (WIFI_FAST_SCAN + WIFI_CONNECT_AP_BY_SIGNAL_OFF) picks the FIRST
+  // AP it sees regardless of signal — so with mesh/repeater setups it often
+  // stays glued to a distant router instead of a nearby repeater. These two
+  // calls fix that: full-channel scan, pick by RSSI.
+  WiFi.setScanMethod(WIFI_ALL_CHANNEL_SCAN);
+  WiFi.setSortMethod(WIFI_CONNECT_AP_BY_SIGNAL);
   WiFi.begin(ssid, password);
   state = CONNECTING;
   connectStartTime = millis();
