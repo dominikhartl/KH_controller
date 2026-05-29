@@ -113,6 +113,10 @@ static float stabNoiseMvSum = 0;       // Running sum of noise StdDevs
 static int stabNoiseMvCount = 0;       // Number of stabilizations measured
 static float stabNoiseMvMax = 0;       // Peak noise across all stabilizations
 static int stabNoiseMvHighCount = 0;   // Count of stabilizations with noise > PROBE_NOISE_GOOD_MV
+// Probe noise is only meaningful on a settled, fully-mixed solution. We capture it
+// during the start-pH measurement and disable capture during titration, where every
+// stabilization is contaminated by incomplete mixing of the just-added acid.
+static bool stabNoiseCaptureEnabled = true;
 
 void setStabilizationTimeoutMs(int ms) { stabilizationTimeoutMs = ms; }
 
@@ -121,6 +125,7 @@ static void (*stabYieldCallback)() = nullptr;
 void setStabilizationYieldCallback(void (*cb)()) { stabYieldCallback = cb; }
 void resetStabilizationStats() { stabTimeoutCount = 0; stabTotalMs = 0; lastStabTimedOut = false; }
 void resetNoiseStats() { lastStabNoiseMv = 0; stabNoiseMvSum = 0; stabNoiseMvCount = 0; stabNoiseMvMax = 0; stabNoiseMvHighCount = 0; }
+void setStabNoiseCaptureEnabled(bool e) { stabNoiseCaptureEnabled = e; }
 int getStabilizationTimeoutCount() { return stabTimeoutCount; }
 unsigned long getTotalStabilizationMs() { return stabTotalMs; }
 bool getLastStabilizationTimedOut() { return lastStabTimedOut; }
@@ -680,9 +685,10 @@ const char* getProbeHealthDetail(char* reasonBuf, size_t reasonLen) {
     return "Fair";
   }
 
-  // Tertiary: noise check (only after enough stabilization readings for a meaningful average)
+  // Tertiary: noise check. Noise is captured only at the (settled) start-pH
+  // measurement, so a single clean stabilization is enough for a meaningful value.
   float avgNoise = getAvgStabNoiseMv();
-  if (avgNoise > 0 && stabNoiseMvCount >= 5) {
+  if (avgNoise > 0 && stabNoiseMvCount >= 1) {
     if (avgNoise > PROBE_NOISE_FAIR_MV) {
       if (reasonBuf) snprintf(reasonBuf, reasonLen, "high noise %.1f mV (limit %.0f mV)", avgNoise, PROBE_NOISE_FAIR_MV);
       return "Fair";
@@ -827,7 +833,8 @@ static void waitForStabilization() {
   int noiseCount = nReadings - noiseStart;
   // Require N>=4 for noise stats. With N=2, the std-dev has only 1 DoF and is
   // statistically unstable (a single outlier pair swings it wildly).
-  if (noiseCount >= 4) {
+  // Capture only when enabled (start-pH measurement) — see stabNoiseCaptureEnabled.
+  if (stabNoiseCaptureEnabled && noiseCount >= 4) {
     float sum = 0;
     for (int i = noiseStart; i < nReadings; i++) sum += stabReadings[i];
     float mean = sum / noiseCount;

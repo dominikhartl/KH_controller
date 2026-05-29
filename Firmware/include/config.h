@@ -22,9 +22,10 @@ static const char FW_VERSION[] = "0.5";
 #define ADC_INTER_SAMPLE_DELAY_FAST_MS 1
 static const int MEASUREMENT_DELAY_FAST_MS = 20;
 
-// Extra mix delay applied only to the FIRST Gran-zone dose. The probe is
-// still settling from the fast/medium-phase exit, so its first stabilization
-// would otherwise pollute probe_noise_mv with the residual transient.
+// Extra mix/settle delay applied only to the FIRST Gran-zone dose. The probe is
+// still settling from the fast/medium-phase exit, so this extra time lets the
+// first Gran data point be read on a properly settled solution. (Probe noise is
+// captured only at start-pH, so this no longer affects probe_noise_mv.)
 static const int GRAN_FIRST_DOSE_EXTRA_MIX_MS = 5000;
 
 // pH stabilization (adaptive: waits for readings to converge)

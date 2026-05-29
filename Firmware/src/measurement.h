@@ -63,6 +63,7 @@ bool getLastStabilizationTimedOut();      // Whether last stabilization call tim
 
 // Noise statistics (reset per measurement cycle)
 void resetNoiseStats();
+void setStabNoiseCaptureEnabled(bool e); // Capture probe noise only at start-pH (settled solution)
 float getLastStabNoiseMv();              // StdDev of mV readings during last stabilization
 float getAvgStabNoiseMv();               // Average noise StdDev across all stabilizations
 float getMaxStabNoiseMv();               // Peak noise StdDev across all stabilizations

@@ -1062,6 +1062,7 @@ KHResult measureKH() {
   setStabilizationTimeoutMs(configStore.getStabilizationTimeout());
   resetStabilizationStats();
   resetNoiseStats();
+  setStabNoiseCaptureEnabled(true);  // Capture clean probe noise at the settled start-pH only
   resetADCFilter();      // Clear stale EMA state from previous measurement
 
   broadcastTitrationStart();  // Signal dashboard to clear live pH chart
@@ -1314,8 +1315,10 @@ KHResult measureKH() {
     float lastPrecisePH = pH;
     int preciseStall = 0;
 
-    // Reset noise stats so only Gran zone stabilization noise is counted
-    resetNoiseStats();
+    // Probe noise was captured during the settled start-pH reading. Stop capturing
+    // now so titration stabilizations — contaminated by unfinished mixing of the
+    // just-added acid — don't pollute the probe_noise_mv figure.
+    setStabNoiseCaptureEnabled(false);
 
     // Gran zone noise tracking
     float prevGranPH = NAN;
@@ -1361,7 +1364,7 @@ KHResult measureKH() {
             measurementYield();
           }
         }
-        if (abortRequested) break;
+        if (abortRequested) { errorMessage = "Measurement aborted"; errorflag = 1; break; }
         measurePHStabilized(isExternalADCActive() ? 3 : 8);
       } else {
         // Gran zone (pH below GRAN_REGION_PH): smaller steps, stabilization, accurate readings
@@ -1373,8 +1376,8 @@ KHResult measureKH() {
           break;
         }
         // First Gran-zone dose: probe is still settling from the fast/medium
-        // phase exit. Give it extra mix time and EXCLUDE the resulting σ from
-        // probe_noise_mv averaging by resetting noise stats after this dose.
+        // phase exit. Give it extra mix time so this first Gran data point is read
+        // on a properly settled solution. (Noise capture is already off here.)
         bool isFirstGranDose = (granStepCount == 0);
         int thisMixDelay = cachedMixDelay + (isFirstGranDose ? GRAN_FIRST_DOSE_EXTRA_MIX_MS : 0);
         // Yielding mix delay: feed UI/MQTT every 500ms instead of blocking
@@ -1385,13 +1388,9 @@ KHResult measureKH() {
             measurementYield();
           }
         }
-        if (abortRequested) break;
+        if (abortRequested) { errorMessage = "Measurement aborted"; errorflag = 1; break; }
         waitForPHStabilization();
         measurePHStabilized(isExternalADCActive() ? configStore.getGranReadings() : 20);
-        // Drop the first Gran-zone dose's stabilization noise from the running
-        // average: its σ is dominated by the post-fast-phase transient and not
-        // representative of steady-state probe behaviour.
-        if (isFirstGranDose) resetNoiseStats();
       }
       units += stepVol;
 
@@ -1748,6 +1747,7 @@ KHResult measureKH() {
   }
   publishMessage(doneBuf);
   abortRequested = false;
+  setStabNoiseCaptureEnabled(true);  // Restore default for diagnostics/calibration/next run
   isMeasuringKH = false; setMeasPhase(0);
   return result;
 }
