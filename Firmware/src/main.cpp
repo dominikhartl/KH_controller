@@ -658,7 +658,7 @@ void processPendingCommand() {
       digitalWrite(EN_PIN2, LOW);
       delay(MOTOR_ENABLE_DELAY_MS);
       for (int i = 0; i < 5; i++) {
-        titrate(gStepVol, gRPM, false, gAccel);
+        if (!titrate(gStepVol, gRPM, false, gAccel)) { publishError("Error: titration pump timeout during Gran burst test"); break; }
         delay(1000);
       }
       digitalWrite(EN_PIN2, HIGH);
@@ -1100,21 +1100,21 @@ KHResult measureKH() {
     return result;
   }
   // 5 Gran burst drops to eject any hanging drop from the tip before measurement
+  int burstUnits = 0;  // acid dispensed by tip-clear bursts — counted for HCl accounting
   {
     float dropUL   = configStore.getDropVolumeUL();
     int burstStep  = max(2, (int)round(dropUL * calU / (titV * 1000.0f)));
     float burstRPM = configStore.getGranBurstRPM();
     uint32_t burstAccel = configStore.getGranBurstAccel();
     for (int i = 0; i < 5; i++) {
+      if (abortRequested) break;  // honor abort promptly during tip-clear
       titrate(burstStep, burstRPM, false, burstAccel);
+      burstUnits += burstStep;
     }
   }
   // Keep titration motor enabled after prefill to prevent suckback
   publishMessage("Taking sample");
-  float revsPerML = configStore.getSampleCalRevsPerML();
   int sampleFillRevs = configStore.getSampleCalRevolutions();
-  float sampVolML = (revsPerML > 0) ? (float)sampleFillRevs / revsPerML : 0.0f;
-  (void)sampVolML;
   int sampleRemoveRevs = (int)(sampleFillRevs * 1.5f);
   // Configurable wash count: rinses clean the chamber, last wash takes the actual sample
   int numWashes = configStore.getNumWashes();
@@ -1685,9 +1685,10 @@ KHResult measureKH() {
     }
   }
 
-  // Always subtract HCl used (even on error/abort — acid was dispensed regardless)
-  if (units + prefillUnits > 0) {
-    subtractHCl(units + prefillUnits);
+  // Always subtract HCl used (even on error/abort — acid was dispensed regardless).
+  // Includes prefill and the tip-clear burst drops, not just the titration `units`.
+  if (units + prefillUnits + burstUnits > 0) {
+    subtractHCl(units + prefillUnits + burstUnits);
   }
 
   // Anti-suckback: small reverse to prevent drip from titration nozzle
