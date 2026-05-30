@@ -46,7 +46,7 @@ public:
   void setGranMinR2(float v);
   float getDropVolumeUL();       // Gran zone drop volume in µL (default 26.0)
   void setDropVolumeUL(float ul);
-  float getTitrationRPM();       // Cal/prefill/fill pump speed in RPM (default TITRATION_RPM)
+  float getTitrationRPM();       // Titration pump speed in RPM (default TITRATION_RPM)
   void setTitrationRPM(float rpm);
   float getGranBurstRPM();       // Gran zone burst ejection speed in RPM (default GRAN_BURST_RPM)
   void setGranBurstRPM(float rpm);
