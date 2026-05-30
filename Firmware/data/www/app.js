@@ -337,8 +337,7 @@
 
     // Status bar
     if (d.temp_sensor !== undefined) {
-      var wt = d.temp_sensor ? d.water_temp.toFixed(1) + ' \u00B0C' : '--';
-      setText('water-temp', wt);
+      var wt = (d.temp_sensor && d.water_temp != null) ? d.water_temp.toFixed(1) + ' \u00B0C' : '--';
       setText('meas-temp-info', wt + ' water');
     }
     if (d.rssi !== undefined) setText('rssi', d.rssi || '--');
@@ -364,7 +363,6 @@
       setInput('cfg-device_name', d.config.device_name);
       setInput('cfg-correction_factor', d.config.correction_factor);
       setInput('cfg-hcl_molarity', d.config.hcl_molarity);
-      setInput('cfg-hcl_volume', d.config.hcl_volume);
       setInput('cfg-cal_drops', d.config.cal_drops / 100);
       if (_initCalDropsRevs === null) _initCalDropsRevs = d.config.cal_drops / 100;
       setInput('cfg-sample_cal_revs', d.config.sample_cal_revs);
@@ -378,7 +376,6 @@
       setInput('cfg-gran_readings', d.config.gran_readings);
       setInput('cfg-kh_ema_alpha', d.config.kh_ema_alpha);
       setInput('cfg-drop_ul', d.config.drop_ul);
-      setInput('cfg-titration_rpm', d.config.titration_rpm);
       setInput('cfg-gran_burst_rpm', d.config.gran_burst_rpm);
       setInput('cfg-gran_burst_accel', d.config.gran_burst_accel);
       setInput('cfg-fast_phase_rpm', d.config.fast_phase_rpm);
@@ -414,7 +411,7 @@
       // Titration pump calibration info
       var titCalInfo = document.getElementById('titration-cal-info');
       if (titCalInfo && d.config.cal_drops && d.config.titration_vol > 0) {
-        titCalInfo.textContent = 'Cal factor: ' + (d.config.cal_drops / d.config.titration_vol).toFixed(2) + ' units/mL';
+        titCalInfo.textContent = 'Cal factor: ' + ((d.config.cal_drops / 100) / d.config.titration_vol).toFixed(2) + ' revs/mL';
       }
 
       // Pump calibration age badges
@@ -678,7 +675,7 @@
     granChart.data.datasets[0].data = pts;
 
     // Fit line from firmware's weighted regression — extend across full data range
-    if (d.slope && d.intercept !== undefined) {
+    if (d.slope !== undefined && d.intercept !== undefined) {
       var xMin = Math.min.apply(null, pts.map(function(p) { return p.x; }));
       var xMax = Math.max.apply(null, pts.map(function(p) { return p.x; }));
       var xStart = d.eqML > 0 ? Math.min(d.eqML, xMin) : xMin;
@@ -1217,6 +1214,7 @@
     var btnKH = document.querySelector('[data-original-cmd="k"]') || document.querySelector('[data-cmd="k"]');
     if (!btnKH) return;
     if (active) {
+      if (btnKH.getAttribute('data-cmd') === 'abort') return;  // already in abort mode — don't re-clobber data-original-cmd on repeat broadcasts
       btnKH.setAttribute('data-original-cmd', btnKH.getAttribute('data-cmd'));
       btnKH.setAttribute('data-cmd', 'abort');
       btnKH.textContent = 'Abort';
@@ -1571,7 +1569,7 @@
     if (prog) prog.style.display = 'none';
 
     // Restore all buttons
-    ['btn-motor-diag', 'btn-motor-diag-sample', 'btn-motor-diag-titrate'].forEach(function(id) {
+    ['btn-motor-diag-sample', 'btn-motor-diag-titrate'].forEach(function(id) {
       var b = document.getElementById(id);
       if (b) { b.disabled = false; b.textContent = b.getAttribute('data-label'); b.style.background = ''; }
     });
@@ -1591,7 +1589,7 @@
   }
 
   function initMotorDiag() {
-    var diagBtns = ['btn-motor-diag', 'btn-motor-diag-sample', 'btn-motor-diag-titrate'];
+    var diagBtns = ['btn-motor-diag-sample', 'btn-motor-diag-titrate'];
     diagBtns.forEach(function(id) {
       var btn = document.getElementById(id);
       if (!btn) return;

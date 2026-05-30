@@ -98,8 +98,6 @@ void ConfigStore::setMixDelay(int) {}
 void ConfigStore::setGranMinR2(float v) { _granMinR2 = v; }
 float ConfigStore::getDropVolumeUL() { return 26.0f; }
 void ConfigStore::setDropVolumeUL(float) {}
-float ConfigStore::getTitrationRPM() { return 47.0f; }
-void ConfigStore::setTitrationRPM(float) {}
 float ConfigStore::getGranBurstRPM() { return 250.0f; }
 void ConfigStore::setGranBurstRPM(float) {}
 uint32_t ConfigStore::getGranBurstAccel() { return 200000; }

@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <meta name="theme-color" content="#000000">
   <title>KH Controller</title>
-  <link rel="stylesheet" href="style.css?v=6">
+  <link rel="stylesheet" href="style.css?v=7">
 </head>
 <body>
   <header>
@@ -136,7 +136,7 @@
       <div id="kh-trend" class="chart-sub">Trend: <strong id="val-kh-slope-h">--</strong> dKH/day</div>
       <div id="gran-info" class="gran-info" style="display:none"></div>
       <div id="gran-quality" class="gran-quality" style="display:none">
-        <span>Confidence: <strong id="val-confidence">--</strong> %</span>
+        <span>Confidence: <strong id="val-confidence">--</strong></span>
       </div>
 
       <details class="gran-details" id="gran-details" style="display:none">
@@ -182,7 +182,7 @@
           <label>Calibration Revolutions
             <input type="number" id="cfg-sample_cal_revs" step="10" min="50" max="2200">
           </label>
-          <label>Measured Cal Volume (mL)
+          <label>Measured Volume (mL)
             <input type="number" id="cfg-sample_cal_vol" step="0.1" min="0.1" max="500" placeholder="weighed mL">
             <span id="sample-cal-current" class="cfg-hint"></span>
           </label>
@@ -215,7 +215,7 @@
     </details>
 
     <details class="acc" data-acc="sched">
-      <summary><span class="acc-icon"></span><span class="acc-title">Schedule</span><span class="acc-meta" id="sched-acc-meta"></span></summary>
+      <summary><span class="acc-icon"></span><span class="acc-title">Schedule</span><span class="acc-meta"></span></summary>
       <div class="acc-body">
         <div class="sched-mode-toggle" id="sched-mode-toggle">
           <button class="sched-mode-btn active" data-mode="0">Custom</button>
@@ -294,7 +294,7 @@
             </select>
           </label>
           <label>Min Start pH<input type="number" id="cfg-min_start_ph" step="0.1" min="6.0" max="9.0"></label>
-          <label>Fast Phase pH<input type="number" id="cfg-fast_ph" step="0.1" min="4.5" max="7.0"></label>
+          <label>Fast Phase pH<input type="number" id="cfg-fast_ph" step="0.1" min="4.0" max="7.0"></label>
           <label>Max Acid Volume (mL)<input type="number" id="cfg-max_acid_ml" step="1" min="5" max="100"></label>
           <label>Stabilization Timeout (ms)<input type="number" id="cfg-stab_timeout" step="100" min="500" max="5000"></label>
           <label>Mix Delay (ms)<input type="number" id="cfg-mix_delay" step="100" min="500" max="5000"></label>
@@ -307,10 +307,9 @@
           <label>Sample Pump RPM<input type="number" id="cfg-sample_pump_rpm" step="5" min="20" max="250"></label>
           <label>Fill detach bursts (×50 µL)<input type="number" id="cfg-fill_brst_n" step="1" min="0" max="30"></label>
           <label>Fill flush pulses (×1 mL)<input type="number" id="cfg-fill_pls_n" step="1" min="0" max="20"></label>
-          <label>Titration RPM<input type="number" id="cfg-titration_rpm" step="1" min="10" max="200"></label>
           <label>Fast Phase RPM<input type="number" id="cfg-fast_phase_rpm" step="5" min="10" max="150"></label>
-          <label>Drop Size (uL)<input type="number" id="cfg-drop_ul" step="1" min="5" max="200"></label>
-          <label>Fast Step Size (uL)<input type="number" id="cfg-fast_step_ul" step="10" min="50" max="2000"></label>
+          <label>Drop Size (µL)<input type="number" id="cfg-drop_ul" step="1" min="5" max="200"></label>
+          <label>Fast Step Size (µL)<input type="number" id="cfg-fast_step_ul" step="10" min="50" max="2000"></label>
           <label>Gran Burst RPM<input type="number" id="cfg-gran_burst_rpm" step="5" min="80" max="250"></label>
           <label>Gran Burst Accel (steps/s²)<input type="number" id="cfg-gran_burst_accel" step="10000" min="50000" max="500000"></label>
         </div>
@@ -408,7 +407,7 @@
       <div id="precision-result" class="tool-result"></div>
       <div id="motor-diag-progress" class="tool-result"></div>
       <div id="motor-diag-results" class="tool-result"></div>
-      <div id="hw-diag-status" class="tool-result">Running hardware diagnostics…</div>
+      <div id="hw-diag-status" class="tool-result" style="display:none">Running hardware diagnostics…</div>
       <div id="hw-diag-results" class="tool-result">
         <a class="export-btn" id="hw-diag-dl" href="/api/hwdiag" download="hw_diagnostics.json" style="display:inline-flex;margin-bottom:var(--s2);min-height:32px;padding:6px 12px">Download Report (JSON)</a>
         <div id="hw-diag-summary" style="font-size:var(--t-xs)"></div>
@@ -421,6 +420,8 @@
         <div><strong id="rssi">--</strong> dBm RSSI</div>
         <div><strong id="uptime">--</strong> uptime</div>
         <div><strong id="meas-temp-info">--</strong></div>
+        <div><strong id="sys-stat-probe" class="ss-state"><span>--</span></strong> probe</div>
+        <div><strong id="sys-stat-network" class="ss-state"><span>--</span></strong> network</div>
       </div>
       <div id="last-crash" class="crash-card" style="display:none"></div>
     </div>
@@ -449,6 +450,6 @@
   </footer>
 
   <script src="chart.min.js?v=3"></script>
-  <script src="app.js?v=51"></script>
+  <script src="app.js?v=52"></script>
 </body>
 </html>

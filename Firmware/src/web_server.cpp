@@ -561,7 +561,6 @@ static void handleWebSocketMessage(AsyncWebSocketClient* client, void* arg, uint
       else if (strcmp(key, "drop_ul") == 0) { configStore.setDropVolumeUL(value); }
       else if (strcmp(key, "gran_readings") == 0) { configStore.setGranReadings((int)value); }
       else if (strcmp(key, "kh_ema_alpha") == 0) { configStore.setKHEMAAlpha(value); }
-      else if (strcmp(key, "titration_rpm") == 0)   { configStore.setTitrationRPM(value); }
       else if (strcmp(key, "gran_burst_rpm") == 0)   { configStore.setGranBurstRPM(value); }
       else if (strcmp(key, "gran_burst_accel") == 0) { configStore.setGranBurstAccel((uint32_t)value); }
       else if (strcmp(key, "fast_phase_rpm") == 0) { configStore.setFastPhaseRPM(value); }
@@ -975,7 +974,6 @@ void broadcastState() {
   cfg["mix_delay"] = configStore.getMixDelay();
   cfg["gran_min_r2"] = configStore.getGranMinR2();
   cfg["drop_ul"] = configStore.getDropVolumeUL();
-  cfg["titration_rpm"]   = configStore.getTitrationRPM();
   cfg["gran_burst_rpm"]  = configStore.getGranBurstRPM();
   cfg["gran_burst_accel"] = configStore.getGranBurstAccel();
   cfg["fast_phase_rpm"] = configStore.getFastPhaseRPM();
@@ -1888,7 +1886,7 @@ void setupWebServer() {
               "\"hcl_volume\":%.1f,\"cal_units\":%d,"
               "\"fast_ph\":%.1f,\"endpoint_method\":%d,"
               "\"min_start_ph\":%.1f,\"stab_timeout\":%d,\"mix_delay\":%d,"
-              "\"drop_ul\":%.1f,\"titration_rpm\":%.1f,\"gran_burst_rpm\":%.1f,\"gran_burst_accel\":%u,\"fast_phase_rpm\":%.1f,\"fill_brst_n\":%d,\"fill_pls_n\":%d,"
+              "\"drop_ul\":%.1f,\"gran_burst_rpm\":%.1f,\"gran_burst_accel\":%u,\"fast_phase_rpm\":%.1f,\"fill_brst_n\":%d,\"fill_pls_n\":%d,"
               "\"max_acid_ml\":%.1f,\"fast_step_ul\":%d,"
               "\"cal_v4\":%.2f,\"cal_v7\":%.2f,\"cal_v10\":%.2f,"
               "\"schedule_mode\":%d,\"interval_hours\":%d,\"anchor_time\":%d,"
@@ -1902,7 +1900,7 @@ void setupWebServer() {
               configStore.getHClVolume(), configStore.getCalUnits(),
               configStore.getFastTitrationPH(), (int)configStore.getEndpointMethod(),
               configStore.getMinStartPH(), configStore.getStabilizationTimeout(), configStore.getMixDelay(),
-              configStore.getDropVolumeUL(), configStore.getTitrationRPM(), configStore.getGranBurstRPM(), configStore.getGranBurstAccel(), configStore.getFastPhaseRPM(), configStore.getFillBurstCount(), configStore.getFillPulseCount(),
+              configStore.getDropVolumeUL(), configStore.getGranBurstRPM(), configStore.getGranBurstAccel(), configStore.getFastPhaseRPM(), configStore.getFillBurstCount(), configStore.getFillPulseCount(),
               configStore.getMaxAcidML(), configStore.getFastStepUL(),
               voltage_4PH, voltage_7PH, voltage_10PH,
               (int)configStore.getScheduleMode(),

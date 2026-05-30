@@ -118,8 +118,6 @@ void ConfigStore::setGranMinR2(float v)          { prefs.putFloat("gran_r2", cla
 
 float ConfigStore::getDropVolumeUL()             { return clampf(prefs.getFloat("drop_ul", 15.0), 5.0f, 200.0f); }
 void ConfigStore::setDropVolumeUL(float ul)      { prefs.putFloat("drop_ul", clampf(ul, 5.0f, 200.0f)); }
-float ConfigStore::getTitrationRPM()             { return clampf(prefs.getFloat("tit_rpm", TITRATION_RPM), 10.0f, 200.0f); }
-void ConfigStore::setTitrationRPM(float rpm)     { prefs.putFloat("tit_rpm", clampf(rpm, 10.0f, 200.0f)); }
 float ConfigStore::getGranBurstRPM()             { return clampf(prefs.getFloat("gran_brpm", GRAN_BURST_RPM), 80.0f, 250.0f); }
 void ConfigStore::setGranBurstRPM(float rpm)     { prefs.putFloat("gran_brpm", clampf(rpm, 80.0f, 250.0f)); }
 uint32_t ConfigStore::getGranBurstAccel()        { return clampu32(prefs.getUInt("gran_baccel", GRAN_BURST_ACCEL), 50000, 500000); }

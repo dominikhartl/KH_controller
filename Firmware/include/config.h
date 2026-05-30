@@ -60,7 +60,6 @@ static const float MOTOR_START_RPM    = 9.4f;     // Acceleration ramp start spe
 static const float TITRATION_RPM      = 47.0f;    // Titration pump speed in RPM (~400 us)
 static const float GRAN_BURST_RPM     = 250.0f;   // Gran zone burst ejection speed (RPM)
 static const uint32_t GRAN_BURST_ACCEL = 200000;  // Gran zone burst acceleration (steps/s²)
-static const float PREFILL_RPM        = 63.0f;    // Prefill/fill pump speed (~300 us)
 static const float FILL_BURST_UL  = 50.0f;    // Phase-1 bubble-detach burst volume (µL)
 static const float FILL_PULSE_UL  = 1000.0f;  // Phase-2 bubble-flush pulse volume (µL)
 static const int   FILL_BURST_COUNT = 10;     // Default phase-1 detach burst count

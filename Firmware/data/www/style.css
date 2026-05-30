@@ -133,6 +133,9 @@ header h1{font-size:var(--t-lg);font-weight:600;letter-spacing:-.02em;white-spac
 .pill.warn{background:var(--orange-dim);color:var(--orange)}
 .pill.alert{background:var(--red-dim);color:var(--red)}
 .pill.info{background:var(--accent-dim);color:var(--accent)}
+.ss-state.ok{color:var(--green)}
+.ss-state.warn{color:var(--orange)}
+.ss-state.alert{color:var(--red)}
 
 /* === Cards === */
 .card{
