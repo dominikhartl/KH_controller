@@ -92,6 +92,21 @@ void test_removal_ratio_consistent(void) {
   TEST_ASSERT_EQUAL_INT(675, sampleRemoveRevs);
 }
 
+void test_fill_default_total_volume(void) {
+  // Default fill mirrors runBurstFill() in main.cpp and config.h:
+  //   FILL_BURST_UL=50, FILL_PULSE_UL=1000, FILL_BURST_COUNT=10, FILL_PULSE_COUNT=5
+  float calU = 6000.0f;
+  float titV = 9.8f;  // mL per calUnits
+  int burstUnits = (int)round(50.0f * calU / (titV * 1000.0f));
+  if (burstUnits < 2) burstUnits = 2;
+  int pulseUnits = (int)round(1000.0f * calU / (titV * 1000.0f));
+  if (pulseUnits < 2) pulseUnits = 2;
+  int totalUnits = 10 * burstUnits + 5 * pulseUnits;
+  // Convert units back to µL and check it equals the expected 5.5 mL fill.
+  float totalUL = (float)totalUnits * titV * 1000.0f / calU;
+  TEST_ASSERT_FLOAT_WITHIN(60.0f, 5500.0f, totalUL);  // ~5.5 mL, tolerance for unit rounding
+}
+
 void run_volume_tests(void) {
   RUN_TEST(test_volume_round_trip);
   RUN_TEST(test_volume_round_trip_80ml);
@@ -101,4 +116,5 @@ void run_volume_tests(void) {
   RUN_TEST(test_volume_changes_after_cal_revs_change);
   RUN_TEST(test_kh_confidence_interval);
   RUN_TEST(test_removal_ratio_consistent);
+  RUN_TEST(test_fill_default_total_volume);
 }

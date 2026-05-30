@@ -123,6 +123,7 @@ void publishError(const char* errorMessage);
 void calibrateTitrationPump();
 static void checkBootButton();
 void subtractHCl(int unitsUsed);
+int runBurstFill(bool &ok);
 
 KHResult measureKH();
 void measureKHWithValidation();
@@ -609,41 +610,15 @@ void processPendingCommand() {
     }
     case 'f': {
       publishMessage("Filling (burst mode)");
-      float fCalU          = (float)configStore.getCalUnits();
-      float fTitV          = configStore.getTitrationVolume();
-      float fBurstRPM      = configStore.getGranBurstRPM();
-      uint32_t fBurstAccel = configStore.getGranBurstAccel();
-
-      int dropUnits  = max(2, (int)round(50.0f * fCalU / (fTitV * 1000.0f)));
-      int pulseUnits = max(2, (int)round(1000.0f * fCalU / (fTitV * 1000.0f)));
-
-      digitalWrite(EN_PIN2, LOW);
-      delay(MOTOR_ENABLE_DELAY_MS);
-
-      int unitsDispensed = 0;
       bool fillOk = true;
-
-      // Phase 1: 10 × 50 µL bursts to detach bubbles
-      for (int i = 0; i < 10 && fillOk; i++) {
-        if (!titrate(dropUnits, fBurstRPM, false, fBurstAccel)) { fillOk = false; break; }
-        unitsDispensed += dropUnits;
-        if (i < 9) delay(200);
-      }
-
-      // Phase 2: 5 × 1 mL pulses to flush bubbles out
-      for (int i = 0; i < 5 && fillOk; i++) {
-        if (!titrate(pulseUnits, fBurstRPM, false, fBurstAccel)) { fillOk = false; break; }
-        unitsDispensed += pulseUnits;
-        if (i < 4) delay(200);
-      }
-
+      int unitsDispensed = runBurstFill(fillOk);  // titrate() auto-enables EN_PIN2
       if (!fillOk) {
         publishError("Error: titration pump timeout during fill");
       } else {
         publishMessage("Fill done");
       }
       subtractHCl(unitsDispensed);
-      digitalWrite(EN_PIN2, HIGH);
+      digitalWrite(EN_PIN2, HIGH);  // standalone: disable driver after
       broadcastState();
       break;
     }
@@ -857,6 +832,44 @@ void subtractHCl(int unitsUsed) {
   if (remaining < 0) remaining = 0;
   configStore.setHClVolume(remaining);
   updateCachedHClVol(remaining);
+}
+
+// Two-phase bubble-clearing fill, shared by the Fill button and the
+// pre-measurement fill. Phase 1: detach bursts of FILL_BURST_UL; Phase 2:
+// flush pulses of FILL_PULSE_UL — both at Gran-burst speed, 200 ms apart.
+// Counts come from config. Honors abortRequested (breaks early, returning
+// units dispensed so far). Relies on titrate()'s auto-enable and leaves
+// EN_PIN2 enabled; the caller disables it if standalone. Sets ok=false on
+// pump timeout. Returns total units dispensed (for HCl accounting).
+int runBurstFill(bool &ok) {
+  ok = true;
+  float calU = (float)configStore.getCalUnits();
+  float titV = configStore.getTitrationVolume();
+  if (calU <= 0 || titV <= 0) { ok = false; return 0; }
+
+  float burstRPM      = configStore.getGranBurstRPM();
+  uint32_t burstAccel = configStore.getGranBurstAccel();
+  int burstCount = configStore.getFillBurstCount();
+  int pulseCount = configStore.getFillPulseCount();
+  int burstUnits = max(2, (int)round(FILL_BURST_UL * calU / (titV * 1000.0f)));
+  int pulseUnits = max(2, (int)round(FILL_PULSE_UL * calU / (titV * 1000.0f)));
+  int dispensed = 0;
+
+  // Phase 1: detach bubbles with small bursts
+  for (int i = 0; i < burstCount; i++) {
+    if (abortRequested) return dispensed;
+    if (!titrate(burstUnits, burstRPM, false, burstAccel)) { ok = false; return dispensed; }
+    dispensed += burstUnits;
+    if (i < burstCount - 1) delay(200);
+  }
+  // Phase 2: flush bubbles out with larger pulses
+  for (int i = 0; i < pulseCount; i++) {
+    if (abortRequested) return dispensed;
+    if (!titrate(pulseUnits, burstRPM, false, burstAccel)) { ok = false; return dispensed; }
+    dispensed += pulseUnits;
+    if (i < pulseCount - 1) delay(200);
+  }
+  return dispensed;
 }
 
 
@@ -1075,8 +1088,7 @@ KHResult measureKH() {
   // Track WiFi RSSI range during measurement
   int8_t rssiMin = 127, rssiMax = -127;
 
-  // Compute prefill volume in units from µL config
-  float prefillUL = configStore.getPrefillVolumeUL();
+  // calU / titV are reused below (tip-clear burst sizing, dilution compensation)
   float calU = (float)configStore.getCalUnits();
   float titV = configStore.getTitrationVolume();
   if (titV <= 0 || calU <= 0) {
@@ -1084,7 +1096,6 @@ KHResult measureKH() {
     isMeasuringKH = false; setMeasPhase(0);
     return result;
   }
-  int prefillUnits = max(2, (int)round(prefillUL * calU / (titV * 1000.0f)));
 
   // Validate calibration before starting
   if (!isCalibrationValid()) {
@@ -1093,8 +1104,14 @@ KHResult measureKH() {
     return result;
   }
 
-  if (!titrate(prefillUnits, configStore.getTitrationRPM())) {
+  // Pre-measurement bubble-clearing fill — same routine as the Fill button.
+  // Fill acid is flushed out before the sample, so it counts toward HCl tank
+  // depletion but NOT toward the post-titration dilution compensation (hclPart).
+  bool fillOk = true;
+  int fillUnits = runBurstFill(fillOk);
+  if (!fillOk) {
     publishError("Error: titration pump timeout during prefill");
+    if (fillUnits > 0) subtractHCl(fillUnits);  // account for acid dispensed before timeout
     digitalWrite(EN_PIN2, HIGH);
     isMeasuringKH = false; setMeasPhase(0);
     return result;
@@ -1112,7 +1129,11 @@ KHResult measureKH() {
       burstUnits += burstStep;
     }
   }
-  // Keep titration motor enabled after prefill to prevent suckback
+  // Account for fill + tip-clear acid now: it is flushed before the sample, and
+  // doing it here (rather than at end-of-run) ensures it is tracked even when a
+  // later abort returns early before the final subtractHCl.
+  if (fillUnits + burstUnits > 0) subtractHCl(fillUnits + burstUnits);
+  // Keep titration motor enabled after fill to prevent suckback
   publishMessage("Taking sample");
   int sampleFillRevs = configStore.getSampleCalRevolutions();
   int sampleRemoveRevs = (int)(sampleFillRevs * 1.5f);
@@ -1685,10 +1706,10 @@ KHResult measureKH() {
     }
   }
 
-  // Always subtract HCl used (even on error/abort — acid was dispensed regardless).
-  // Includes prefill and the tip-clear burst drops, not just the titration `units`.
-  if (units + prefillUnits + burstUnits > 0) {
-    subtractHCl(units + prefillUnits + burstUnits);
+  // Subtract titration acid. Fill + tip-clear acid was already accounted for
+  // right after sampling (it is flushed before the sample).
+  if (units > 0) {
+    subtractHCl(units);
   }
 
   // Anti-suckback: small reverse to prevent drip from titration nozzle
@@ -1715,7 +1736,7 @@ KHResult measureKH() {
     float revsPerMLpost = configStore.getSampleCalRevsPerML();
     float samV = (revsPerMLpost > 0) ? (float)configStore.getSampleCalRevolutions() / revsPerMLpost : 0.0f;
     if (calU > 0 && samV > 0) {
-      hclPart = ((float)(units + prefillUnits) / calU) * titV / samV;
+      hclPart = ((float)units / calU) * titV / samV;
     }
   }
 

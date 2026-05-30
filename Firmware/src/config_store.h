@@ -54,8 +54,10 @@ public:
   void setGranBurstAccel(uint32_t accel);
   float getFastPhaseRPM();       // Fast titration phase speed in RPM (default 50)
   void setFastPhaseRPM(float rpm);
-  float getPrefillVolumeUL();    // Prefill volume in µL (default 100.0)
-  void setPrefillVolumeUL(float ul);
+  int getFillBurstCount();       // Fill phase-1 detach burst count (×FILL_BURST_UL, default FILL_BURST_COUNT)
+  void setFillBurstCount(int n);
+  int getFillPulseCount();       // Fill phase-2 flush pulse count (×FILL_PULSE_UL, default FILL_PULSE_COUNT)
+  void setFillPulseCount(int n);
   float getMaxAcidML();           // Max acid volume per measurement in mL (default 16.0)
   void setMaxAcidML(float ml);
   int getFastStepUL();             // Fast phase max step volume in µL (default 330, range 50-2000)

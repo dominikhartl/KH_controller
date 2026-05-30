@@ -582,7 +582,8 @@ static void handleWebSocketMessage(AsyncWebSocketClient* client, void* arg, uint
         addLogEntry('m', buf);
         stateDirty.store(true, std::memory_order_release);
       }
-      else if (strcmp(key, "prefill_ul") == 0) { configStore.setPrefillVolumeUL(value); }
+      else if (strcmp(key, "fill_brst_n") == 0) { configStore.setFillBurstCount((int)value); }
+      else if (strcmp(key, "fill_pls_n") == 0)  { configStore.setFillPulseCount((int)value); }
       else if (strcmp(key, "max_acid_ml") == 0) { configStore.setMaxAcidML(value); }
       else if (strcmp(key, "fast_step_ul") == 0) { configStore.setFastStepUL((int)value); }
       else if (strcmp(key, "meas_temp_c") == 0) { configStore.setMeasTempC(value); }
@@ -985,7 +986,8 @@ void broadcastState() {
     int calRevs = configStore.getSampleCalRevolutions();
     cfg["sample_cal_vol"] = (rpm > 0) ? (float)calRevs / rpm : 0;
   }
-  cfg["prefill_ul"] = configStore.getPrefillVolumeUL();
+  cfg["fill_brst_n"] = configStore.getFillBurstCount();
+  cfg["fill_pls_n"] = configStore.getFillPulseCount();
   cfg["max_acid_ml"] = configStore.getMaxAcidML();
   cfg["fast_step_ul"] = configStore.getFastStepUL();
   cfg["meas_temp_c"] = configStore.getMeasTempC();
@@ -1886,7 +1888,7 @@ void setupWebServer() {
               "\"hcl_volume\":%.1f,\"cal_units\":%d,"
               "\"fast_ph\":%.1f,\"endpoint_method\":%d,"
               "\"min_start_ph\":%.1f,\"stab_timeout\":%d,\"mix_delay\":%d,"
-              "\"drop_ul\":%.1f,\"titration_rpm\":%.1f,\"gran_burst_rpm\":%.1f,\"gran_burst_accel\":%u,\"fast_phase_rpm\":%.1f,\"prefill_ul\":%.1f,"
+              "\"drop_ul\":%.1f,\"titration_rpm\":%.1f,\"gran_burst_rpm\":%.1f,\"gran_burst_accel\":%u,\"fast_phase_rpm\":%.1f,\"fill_brst_n\":%d,\"fill_pls_n\":%d,"
               "\"max_acid_ml\":%.1f,\"fast_step_ul\":%d,"
               "\"cal_v4\":%.2f,\"cal_v7\":%.2f,\"cal_v10\":%.2f,"
               "\"schedule_mode\":%d,\"interval_hours\":%d,\"anchor_time\":%d,"
@@ -1900,7 +1902,7 @@ void setupWebServer() {
               configStore.getHClVolume(), configStore.getCalUnits(),
               configStore.getFastTitrationPH(), (int)configStore.getEndpointMethod(),
               configStore.getMinStartPH(), configStore.getStabilizationTimeout(), configStore.getMixDelay(),
-              configStore.getDropVolumeUL(), configStore.getTitrationRPM(), configStore.getGranBurstRPM(), configStore.getGranBurstAccel(), configStore.getFastPhaseRPM(), configStore.getPrefillVolumeUL(),
+              configStore.getDropVolumeUL(), configStore.getTitrationRPM(), configStore.getGranBurstRPM(), configStore.getGranBurstAccel(), configStore.getFastPhaseRPM(), configStore.getFillBurstCount(), configStore.getFillPulseCount(),
               configStore.getMaxAcidML(), configStore.getFastStepUL(),
               voltage_4PH, voltage_7PH, voltage_10PH,
               (int)configStore.getScheduleMode(),

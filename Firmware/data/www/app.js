@@ -385,7 +385,8 @@
       setInput('cfg-sample_pump_rpm', d.config.sample_pump_rpm);
       setText('sample-cal-current', d.config.sample_cal_vol > 0 ? '(current: ' + d.config.sample_cal_vol.toFixed(1) + ' mL)' : '');
       setText('titration-cal-current', d.config.titration_vol > 0 ? '(current: ' + d.config.titration_vol.toFixed(2) + ' mL)' : '');
-      setInput('cfg-prefill_ul', d.config.prefill_ul);
+      setInput('cfg-fill_brst_n', d.config.fill_brst_n);
+      setInput('cfg-fill_pls_n', d.config.fill_pls_n);
       setInput('cfg-max_acid_ml', d.config.max_acid_ml);
       setInput('cfg-fast_step_ul', d.config.fast_step_ul);
       setInput('cfg-meas_temp_c', d.config.meas_temp_c);

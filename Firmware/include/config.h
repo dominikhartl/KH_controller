@@ -61,6 +61,10 @@ static const float TITRATION_RPM      = 47.0f;    // Titration pump speed for ca
 static const float GRAN_BURST_RPM     = 250.0f;   // Gran zone burst ejection speed (RPM)
 static const uint32_t GRAN_BURST_ACCEL = 200000;  // Gran zone burst acceleration (steps/s²)
 static const float PREFILL_RPM        = 63.0f;    // Prefill/fill pump speed (~300 us)
+static const float FILL_BURST_UL  = 50.0f;    // Phase-1 bubble-detach burst volume (µL)
+static const float FILL_PULSE_UL  = 1000.0f;  // Phase-2 bubble-flush pulse volume (µL)
+static const int   FILL_BURST_COUNT = 10;     // Default phase-1 detach burst count
+static const int   FILL_PULSE_COUNT = 5;      // Default phase-2 flush pulse count
 
 // Titration tuning parameters
 static const int TITRATION_STEP_SIZE = 2;        // Base units per titration step

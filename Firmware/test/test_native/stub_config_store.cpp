@@ -106,8 +106,10 @@ uint32_t ConfigStore::getGranBurstAccel() { return 200000; }
 void ConfigStore::setGranBurstAccel(uint32_t) {}
 float ConfigStore::getFastPhaseRPM() { return 50.0f; }
 void ConfigStore::setFastPhaseRPM(float) {}
-float ConfigStore::getPrefillVolumeUL() { return 100.0f; }
-void ConfigStore::setPrefillVolumeUL(float) {}
+int ConfigStore::getFillBurstCount() { return 10; }
+void ConfigStore::setFillBurstCount(int) {}
+int ConfigStore::getFillPulseCount() { return 5; }
+void ConfigStore::setFillPulseCount(int) {}
 float ConfigStore::getMaxAcidML() { return 16.0f; }
 void ConfigStore::setMaxAcidML(float) {}
 int ConfigStore::getFastStepUL() { return 330; }

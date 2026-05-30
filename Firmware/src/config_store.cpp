@@ -127,8 +127,10 @@ void ConfigStore::setGranBurstAccel(uint32_t accel) { prefs.putUInt("gran_baccel
 float ConfigStore::getFastPhaseRPM()             { return clampf(prefs.getFloat("fast_rpm", 50.0), 10.0f, 150.0f); }
 void ConfigStore::setFastPhaseRPM(float rpm)     { prefs.putFloat("fast_rpm", clampf(rpm, 10.0f, 150.0f)); }
 
-float ConfigStore::getPrefillVolumeUL()          { return clampf(prefs.getFloat("prefill_ul", 100.0), 10.0f, 500.0f); }
-void ConfigStore::setPrefillVolumeUL(float ul)   { prefs.putFloat("prefill_ul", clampf(ul, 10.0f, 500.0f)); }
+int ConfigStore::getFillBurstCount()             { return (int)clampu32(prefs.getUInt("fill_brst_n", FILL_BURST_COUNT), 0, 30); }
+void ConfigStore::setFillBurstCount(int n)       { prefs.putUInt("fill_brst_n", clampu32((uint32_t)n, 0, 30)); }
+int ConfigStore::getFillPulseCount()             { return (int)clampu32(prefs.getUInt("fill_pls_n", FILL_PULSE_COUNT), 0, 20); }
+void ConfigStore::setFillPulseCount(int n)       { prefs.putUInt("fill_pls_n", clampu32((uint32_t)n, 0, 20)); }
 
 // Max acid volume per measurement (mL)
 float ConfigStore::getMaxAcidML()                { return clampf(prefs.getFloat("max_acid_ml", 16.0f), 5.0f, 100.0f); }
