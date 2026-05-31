@@ -1246,11 +1246,12 @@ void appendHistory(const char* sensor, float value, uint32_t ts) {
       snprintf(tmpFile, sizeof(tmpFile), "%s.tmp", filename);
       File fw = LittleFS.open(tmpFile, "w");
       if (fw) {
-        int lines = 0;
         bool writeOk = true;
-        while (f.available() && lines < 200) {
+        // Stream every line within the cutoff to the temp file. No line cap: the
+        // file is chronological (oldest first), so a cap would silently drop the
+        // NEWEST entries once the file exceeds it (e.g. sub-daily intervals).
+        while (f.available()) {
           String line = f.readStringUntil('\n');
-          lines++;
           yield();
           if (line.length() == 0) continue;
           int comma = line.indexOf(',');
@@ -1315,23 +1316,37 @@ void appendGranHistory(float r2, float eqML, float endpointPH, bool usedGran, fl
     uint32_t cutoff = ts - (10UL * 86400UL);
     File f = LittleFS.open(filename, "r");
     if (f) {
-      String kept;
-      kept.reserve(f.size());
-      int lines = 0;
-      while (f.available() && lines < 200) {
-        String line = f.readStringUntil('\n');
-        lines++;
-        yield();
-        if (line.length() == 0) continue;
-        int comma = line.indexOf(',');
-        if (comma < 0) continue;
-        uint32_t lineTs = line.substring(0, comma).toInt();
-        if (lineTs >= cutoff) kept += line + "\n";
+      char tmpFile[36];
+      snprintf(tmpFile, sizeof(tmpFile), "%s.tmp", filename);
+      File fw = LittleFS.open(tmpFile, "w");
+      if (fw) {
+        bool writeOk = true;
+        // Stream to a temp file (bounded heap, atomic rename). No line cap: the
+        // file is chronological, so a cap would silently drop the NEWEST entries.
+        while (f.available()) {
+          String line = f.readStringUntil('\n');
+          yield();
+          if (line.length() == 0) continue;
+          int comma = line.indexOf(',');
+          if (comma < 0) continue;
+          uint32_t lineTs = line.substring(0, comma).toInt();
+          if (lineTs >= cutoff) {
+            if (fw.print(line + "\n") == 0) { writeOk = false; break; }
+          }
+        }
+        fw.close();
+        f.close();
+        if (writeOk) {
+          LittleFS.remove(filename);
+          LittleFS.rename(tmpFile, filename);
+        } else {
+          LittleFS.remove(tmpFile);  // discard partial file, keep original intact
+          Serial.println("Warning: write failed during gran.csv pruning, keeping original");
+        }
+      } else {
+        f.close();
+        Serial.println("Warning: failed to open gran.csv temp file for pruning");
       }
-      f.close();
-      File fw = LittleFS.open(filename, "w");
-      if (fw) { chunkedWrite(fw, kept); fw.close(); }
-      else { Serial.println("Warning: failed to open gran.csv for pruning"); }
     }
     clearFSCrashHint();
   }

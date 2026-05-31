@@ -87,23 +87,21 @@ void ConfigStore::setVoltage10PH(float v) { prefs.putFloat("v10ph", v); }
 
 // KH calculation parameters
 float ConfigStore::getTitrationVolume() { return clampf(prefs.getFloat("tit_vol", 9.8), 1.0f, 100.0f); }
-float ConfigStore::getSampleVolume()    { return clampf(prefs.getFloat("sam_vol", 77.0), 10.0f, 500.0f); }
-float ConfigStore::getCorrectionFactor() { return prefs.getFloat("corr_f", 1.0); }
-float ConfigStore::getHClMolarity() { return prefs.getFloat("hcl_mol", 0.024); }
+float ConfigStore::getCorrectionFactor() { return clampf(prefs.getFloat("corr_f", 1.0), 0.5f, 2.0f); }
+float ConfigStore::getHClMolarity() { return clampf(prefs.getFloat("hcl_mol", 0.024), 0.001f, 1.0f); }
 float ConfigStore::getHClVolume() { return prefs.getFloat("hcl_vol", 5000.0); }
 int ConfigStore::getCalUnits() {
   // Floor at 100 to prevent division-by-zero from NVS corruption. Default 6000 if missing.
   int v = prefs.getInt("cal_drops", 6000);
   return (v < 100) ? 6000 : v;
 }
-float ConfigStore::getFastTitrationPH() { return prefs.getFloat("fast_ph", FAST_TITRATION_PH_DEFAULT); }
+float ConfigStore::getFastTitrationPH() { return clampf(prefs.getFloat("fast_ph", FAST_TITRATION_PH_DEFAULT), 4.0f, 7.0f); }
 void ConfigStore::setTitrationVolume(float v) { prefs.putFloat("tit_vol", v); }
-void ConfigStore::setSampleVolume(float v) { prefs.putFloat("sam_vol", v); }
-void ConfigStore::setCorrectionFactor(float v) { prefs.putFloat("corr_f", v); }
-void ConfigStore::setHClMolarity(float v) { prefs.putFloat("hcl_mol", v); }
+void ConfigStore::setCorrectionFactor(float v) { prefs.putFloat("corr_f", clampf(v, 0.5f, 2.0f)); }
+void ConfigStore::setHClMolarity(float v) { prefs.putFloat("hcl_mol", clampf(v, 0.001f, 1.0f)); }
 void ConfigStore::setHClVolume(float v) { prefs.putFloat("hcl_vol", v); }
 void ConfigStore::setCalUnits(int v) { prefs.putInt("cal_drops", v); }
-void ConfigStore::setFastTitrationPH(float v) { prefs.putFloat("fast_ph", v); }
+void ConfigStore::setFastTitrationPH(float v) { prefs.putFloat("fast_ph", clampf(v, 4.0f, 7.0f)); }
 uint8_t ConfigStore::getEndpointMethod() { return prefs.getUChar("ep_method", 0); }
 void ConfigStore::setEndpointMethod(uint8_t m) { prefs.putUChar("ep_method", m); }
 float ConfigStore::getMinStartPH() { return prefs.getFloat("min_sph", MIN_START_PH_DEFAULT); }

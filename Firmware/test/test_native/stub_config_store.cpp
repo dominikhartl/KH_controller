@@ -74,7 +74,6 @@ void ConfigStore::setVoltage4PH(float) {}
 void ConfigStore::setVoltage7PH(float) {}
 void ConfigStore::setVoltage10PH(float) {}
 float ConfigStore::getTitrationVolume() { return 10.0f; }
-float ConfigStore::getSampleVolume() { return 80.0f; }
 float ConfigStore::getCorrectionFactor() { return 1.0f; }
 float ConfigStore::getHClMolarity() { return 0.02f; }
 float ConfigStore::getHClVolume() { return 5000.0f; }
@@ -85,7 +84,6 @@ float ConfigStore::getMinStartPH() { return 7.5f; }
 int ConfigStore::getStabilizationTimeout() { return 2000; }
 int ConfigStore::getMixDelay() { return 2500; }
 void ConfigStore::setTitrationVolume(float) {}
-void ConfigStore::setSampleVolume(float) {}
 void ConfigStore::setCorrectionFactor(float) {}
 void ConfigStore::setHClMolarity(float) {}
 void ConfigStore::setHClVolume(float) {}

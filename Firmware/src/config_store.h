@@ -21,7 +21,6 @@ public:
 
   // KH calculation parameters
   float getTitrationVolume();   // mL per calUnits (default 9.8)
-  float getSampleVolume();      // mL (legacy, not used in measurement — volume computed from calibration)
   float getCorrectionFactor();  // unitless (default 1.0)
   float getHClMolarity();       // mol/L (default 0.02)
   float getHClVolume();         // mL remaining (default 5000)
@@ -33,7 +32,6 @@ public:
   int getMixDelay();         // Mixing delay in ms for medium+Gran zones (default TITRATION_MIX_DELAY_GRAN_MS)
   float getGranMinR2();          // Minimum R² for Gran fit (default 0.995, range 0.990-1.000)
   void setTitrationVolume(float v);
-  void setSampleVolume(float v);
   void setCorrectionFactor(float v);
   void setHClMolarity(float v);
   void setHClVolume(float v);

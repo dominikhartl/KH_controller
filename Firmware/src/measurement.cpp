@@ -329,6 +329,7 @@ static float readADS1115Once() {
   unsigned long t0 = millis();
   while (millis() - t0 < 150) {
     delay(1);
+    esp_task_wdt_reset();  // I2C polling must not starve the WDT (sustained failure can stack up)
     Wire.beginTransmission(ADS1115_I2C_ADDR);
     Wire.write(ADS_REG_CONFIG);
     if (Wire.endTransmission() != 0) return NAN;
@@ -382,6 +383,7 @@ static float readADCTrimmed(int nSamples, int interSampleDelayMs) {
 
   int valid = 0;
   for (int i = 0; i < nSamples; i++) {
+    esp_task_wdt_reset();  // oversampled reads (esp. ADS retries) must not starve the WDT
     float sample;
     if (adsActive()) {
       sample = readADS1115MilliVolts();

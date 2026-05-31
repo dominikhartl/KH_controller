@@ -1125,7 +1125,14 @@ KHResult measureKH() {
     uint32_t burstAccel = configStore.getGranBurstAccel();
     for (int i = 0; i < 5; i++) {
       if (abortRequested) break;  // honor abort promptly during tip-clear
-      titrate(burstStep, burstRPM, false, burstAccel);
+      if (!titrate(burstStep, burstRPM, false, burstAccel)) {
+        publishError("Error: titration pump timeout during tip clear");
+        // account for fill + completed bursts dispensed before the timeout
+        if (fillUnits + burstUnits > 0) subtractHCl(fillUnits + burstUnits);
+        digitalWrite(EN_PIN2, HIGH);
+        isMeasuringKH = false; setMeasPhase(0);
+        return result;
+      }
       burstUnits += burstStep;
     }
   }
@@ -1612,7 +1619,9 @@ KHResult measureKH() {
           if (usedGran) {
             for (int i = 1; i < nPoints; i++) {
               if (dataPoints[i-1].units <= exactUnits && dataPoints[i].units >= exactUnits) {
-                float frac = (exactUnits - dataPoints[i-1].units) / (dataPoints[i].units - dataPoints[i-1].units);
+                float denom = dataPoints[i].units - dataPoints[i-1].units;
+                if (fabsf(denom) < 1e-6f) continue;  // identical units — avoid div-by-zero
+                float frac = (exactUnits - dataPoints[i-1].units) / denom;
                 endpointPHVal = dataPoints[i-1].pH + frac * (dataPoints[i].pH - dataPoints[i-1].pH);
                 break;
               }
