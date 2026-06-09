@@ -392,6 +392,7 @@
       setInput('cfg-buf_ph10', d.config.buf_ph10);
       setInput('cfg-slope_hours', d.config.slope_hours);
       setInput('cfg-num_washes', d.config.num_washes);
+      setInput('cfg-scavenge', d.config.scavenge);
       setInput('cfg-mqtt_server', d.config.mqtt_server);
       setInput('cfg-mqtt_port', d.config.mqtt_port);
       setInput('cfg-mqtt_user', d.config.mqtt_user);

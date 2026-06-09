@@ -48,7 +48,6 @@ static const uint8_t ADS_REG_HI_THRESH  = 0x03;
 // [4:2]   COMP_MODE=0, COMP_POL=0, COMP_LAT=0
 // [1:0]   COMP_QUE=00 (assert after 1 conversion — enables RDY pin)
 static const uint16_t ADS_CONFIG_SINGLE_A0 = 0xC320;
-static bool adsRdyAvailable = false;  // true if RDY pin configured successfully
 
 // Piecewise linear coefficients: pH = slope * voltage + offset
 // Acid segment (pH 4→7, voltage >= voltage_7PH) and base segment (pH 7→10)
@@ -469,8 +468,10 @@ void initExternalADC() {
     return;
   }
 
-  // Configure comparator thresholds for conversion-ready (RDY) mode:
-  // Lo_thresh = 0x0000, Hi_thresh = 0x8000 → ALERT/RDY asserts when conversion completes
+  // Configure comparator thresholds for conversion-ready (ALERT/RDY) mode:
+  // Lo_thresh = 0x0000, Hi_thresh = 0x8000 → RDY pin asserts when a conversion
+  // completes. Normal reads poll the OS bit instead; this only enables the
+  // RDY-pin wiring check in hardware diagnostics.
   Wire.beginTransmission(ADS1115_I2C_ADDR);
   Wire.write(ADS_REG_LO_THRESH);
   Wire.write((uint8_t)0x00);
@@ -482,31 +483,19 @@ void initExternalADC() {
   Wire.write((uint8_t)0x80);
   Wire.write((uint8_t)0x00);
   Wire.endTransmission();
-
-  // Configure RDY pin (GPIO34) as digital input for conversion-ready polling
   pinMode(ADS_RDY_PIN, INPUT);
-  adsRdyAvailable = true;
 
-  // Verify with a test conversion (uses RDY pin polling)
+  // Verify with a test conversion (reads poll the OS bit in the config register)
   float testMv = readADS1115MilliVolts();
+  if (isnan(testMv)) testMv = readADS1115MilliVolts();  // one retry on boot glitch
   if (!isnan(testMv)) {
     adsAvailable = true;
     adsFallback = false;
     resetADCFilter();
-    Serial.printf("ADS1115 initialized with RDY pin (test read: %.2f mV)\n", testMv);
+    Serial.printf("ADS1115 initialized (test read: %.2f mV)\n", testMv);
   } else {
-    // RDY pin may not be wired — fall back to delay-based reads
-    adsRdyAvailable = false;
-    float testMv2 = readADS1115MilliVolts();
-    if (!isnan(testMv2)) {
-      adsAvailable = true;
-      adsFallback = false;
-      resetADCFilter();
-      Serial.printf("ADS1115 initialized without RDY pin (test read: %.2f mV)\n", testMv2);
-    } else {
-      adsFallback = true;
-      Serial.println("ADS1115 test read failed — falling back to internal ADC");
-    }
+    adsFallback = true;
+    Serial.println("ADS1115 test read failed — falling back to internal ADC");
   }
 }
 
@@ -588,10 +577,10 @@ float getAlkalineSlope() {
   return (voltage_10PH - voltage_7PH) / (calBuf10 - calBuf7);
 }
 
-// Nernst efficiency: probe slope vs theoretical at measurement temperature
-// For internal ADC: raw_slope = conditioned_slope / PH_AMP_GAIN (board amplifier)
-// For ADS1115: the effective gain differs from the nominal 3x due to ESP32 ADC
-//   nonlinearity, so we use a separate empirical gain factor.
+// Nernst efficiency: probe slope vs theoretical at calibration temperature.
+// raw_slope = conditioned_slope / PH_AMP_GAIN (DFRobot board amplifier, 3.0x).
+// The same gain applies to internal ADC and ADS1115 — both read the same
+// conditioned signal.
 static float slopeToEfficiency(float conditionedSlope) {
   if (isnan(conditionedSlope)) return NAN;
   float nernst = NERNST_FACTOR * (273.15f + configStore.getCalTempC());
@@ -776,7 +765,7 @@ static void waitForStabilization() {
   float stabThresh = effectiveStabThreshold();
 
   float prev = readADCTrimmed(stabSamples, ADC_INTER_SAMPLE_DELAY_MS);
-  stabReadings[nReadings++] = prev;
+  if (!isnan(prev)) stabReadings[nReadings++] = prev;  // NAN would poison noise stats
   if (!adsActive()) delay(50);  // ADS1115 conversion time (75ms/sample) provides spacing
   unsigned long start = millis();
   bool converged = false;
@@ -791,6 +780,16 @@ static void waitForStabilization() {
   while (millis() - start < (unsigned long)stabilizationTimeoutMs) {
     esp_task_wdt_reset();  // Feed watchdog — stabilization can take up to 30s
     float curr = readADCTrimmed(stabSamples, ADC_INTER_SAMPLE_DELAY_MS);
+    if (isnan(curr)) {
+      // I2C glitch — skip entirely: a NAN must not enter stabReadings (it
+      // would poison the noise StdDev for the whole measurement) and NAN
+      // comparisons would silently reset the convergence window.
+      if (stabYieldCallback && millis() - lastYield >= 500) {
+        stabYieldCallback();
+        lastYield = millis();
+      }
+      continue;
+    }
     if (nReadings < MAX_STAB_READINGS) stabReadings[nReadings++] = curr;
     bool isGood = fabs(curr - prev) < stabThresh;
     // Evict oldest entry from sliding window if full
@@ -956,7 +955,9 @@ void measurePHFast(int nreadings) {
   pH = medianFilteredMean(pHReadings, validReadings, PH_FAST_OUTLIER_THRESHOLD);
 }
 
-// Voltage measurement with adaptive stabilization and oversampling
+// Voltage measurement with adaptive stabilization and oversampling.
+// Feeds pH calibration — NAN readings (I2C glitches) must be dropped before
+// sorting: NaN comparisons break sortFloats and would corrupt the median.
 float measureVoltage(int nreadings) {
   waitForStabilization();
 
@@ -964,13 +965,19 @@ float measureVoltage(int nreadings) {
   const int maxReadings = (nreadings > 100) ? 100 : nreadings;
 
   int oversample = effectiveOversampling();
+  int valid = 0;
   for (int t = 0; t < maxReadings; t++) {
-    voltageReadings[t] = readADCTrimmed(oversample, ADC_INTER_SAMPLE_DELAY_MS);
+    float v = readADCTrimmed(oversample, ADC_INTER_SAMPLE_DELAY_MS);
+    if (!isnan(v)) voltageReadings[valid++] = v;
     delay(MEASUREMENT_DELAY_MS);
   }
+  if (valid == 0) {
+    voltage = NAN;
+    return NAN;
+  }
 
-  sortFloats(voltageReadings, maxReadings);
-  float avgVoltage = medianFilteredMean(voltageReadings, maxReadings, VOLTAGE_OUTLIER_THRESHOLD);
+  sortFloats(voltageReadings, valid);
+  float avgVoltage = medianFilteredMean(voltageReadings, valid, VOLTAGE_OUTLIER_THRESHOLD);
   voltage = avgVoltage;
   return avgVoltage;
 }

@@ -3,6 +3,7 @@
 #include <FastAccelStepper.h>
 #include "motors.h"
 #include "mqtt_manager.h"
+#include "stirrer.h"
 #include "tmc_driver.h"
 #include <pins.h>
 #include <config.h>
@@ -208,7 +209,7 @@ bool takeSample(int volume, float speedRpm) {
   return runSamplePump(volume, true, speedRpm);
 }
 
-bool washSampleVol(int removeRevs, int fillRevs, float speedRpm) {
+bool washSampleVol(int removeRevs, int fillRevs, float speedRpm, int scavengeRevs) {
   washTotalVol = removeRevs + fillRevs;
   washBaseVol = 0;
 
@@ -221,6 +222,18 @@ bool washSampleVol(int removeRevs, int fillRevs, float speedRpm) {
   }
 
   bool ok = removeSample(removeRevs, speedRpm);
+
+  // Scavenge pass: a brief stir flings wall/stirrer droplets down to the pump
+  // intake, then a short second removal extracts the pooled residual. Makes
+  // the leftover volume — the dominant uncontrolled part of the sample
+  // volume — consistent between runs.
+  if (ok && scavengeRevs > 0) {
+    startStirrer();
+    yieldingDelay(1500);
+    stopStirrer();
+    yieldingDelay(500);
+    ok = removeSample(scavengeRevs, speedRpm);
+  }
 
   if (ok) {
     washBaseVol = removeRevs;
@@ -272,6 +285,22 @@ bool titrate(int volume, float speedRpm, bool noAccel, uint32_t accelOverride) {
   // No hold/disable here — caller manages EN_PIN2 to avoid
   // enable/disable overhead on every small titration step
   return true;
+}
+
+// Small reverse move after titration to prevent a drip from the nozzle.
+// Must go through FastAccelStepper: the STEP/DIR pins are routed to the
+// RMT/MCPWM peripheral via the GPIO matrix, so raw digitalWrite() pulses
+// never reach the driver. Caller keeps EN_PIN2 enabled until this returns.
+void titrationAntiSuckback(int steps) {
+  if (!titrateStepper || steps <= 0) return;
+  titrateStepper->setSpeedInHz(rpmToHz(MOTOR_START_RPM));
+  titrateStepper->setAcceleration(100000);
+  titrateStepper->move(steps);  // dispense is negative — positive reverses
+  unsigned long t0 = millis();
+  while (titrateStepper->isRunning() && millis() - t0 < 1000) {
+    esp_task_wdt_reset();
+    delay(2);
+  }
 }
 
 // Motor ramp test: run motor at increasing speeds to check for mechanical issues.

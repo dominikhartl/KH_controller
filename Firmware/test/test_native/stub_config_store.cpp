@@ -119,8 +119,6 @@ void ConfigStore::setBufferPH7(float v) { _bufPH7 = v; }
 void ConfigStore::setBufferPH10(float v) { _bufPH10 = v; }
 int ConfigStore::getSlopeWindowHours() { return 72; }
 void ConfigStore::setSlopeWindowHours(int) {}
-int ConfigStore::getStirrerSpeed() { return 90; }
-void ConfigStore::setStirrerSpeed(int) {}
 float ConfigStore::getSamplePumpRPM() { return 80.0f; }
 void ConfigStore::setSamplePumpRPM(float) {}
 float ConfigStore::getSampleCalRevsPerML() { return 4.55f; }
@@ -184,3 +182,7 @@ float ConfigStore::getKHEMA() { return NAN; }
 void ConfigStore::setKHEMA(float) {}
 float ConfigStore::getKHEMAAlpha() { return 0.3f; }
 void ConfigStore::setKHEMAAlpha(float) {}
+float ConfigStore::getCrossValEMA() { return NAN; }
+void ConfigStore::setCrossValEMA(float) {}
+bool ConfigStore::getScavengeEnabled() { return false; }
+void ConfigStore::setScavengeEnabled(bool) {}

@@ -25,8 +25,14 @@ void initMotors();
 // All motor functions return true on success, false on timeout
 bool removeSample(int volume, float speedRpm);
 bool takeSample(int volume, float speedRpm);
-bool washSampleVol(int removeRevs, int fillRevs, float speedRpm); // Absolute revolution counts
+// Wash cycle (absolute revolution counts). scavengeRevs > 0 inserts a stir
+// pulse + short second removal between remove and fill (residual consistency).
+bool washSampleVol(int removeRevs, int fillRevs, float speedRpm, int scavengeRevs = 0);
 bool titrate(int volume, float speedRpm, bool noAccel = false, uint32_t accelOverride = 0);
+
+// Small reverse move of the titration pump (anti-drip). Caller must keep
+// EN_PIN2 enabled until this returns.
+void titrationAntiSuckback(int steps);
 
 // Motor ramp test: run motor at increasing speeds from startRPM to maxRPM
 // Returns true if completed full range, false if aborted

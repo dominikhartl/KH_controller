@@ -157,8 +157,6 @@ int ConfigStore::getSlopeWindowHours()           { return clampi(prefs.getInt("s
 void ConfigStore::setSlopeWindowHours(int h)     { prefs.putInt("slope_hrs", clampi(h, 24, 168)); }
 
 // Stirrer speed (percent)
-int ConfigStore::getStirrerSpeed()               { return clampi(prefs.getInt("stir_spd", 90), 80, 100); }
-void ConfigStore::setStirrerSpeed(int pct)       { prefs.putInt("stir_spd", clampi(pct, 80, 100)); }
 
 // Sample pump speed
 float ConfigStore::getSamplePumpRPM()            { return clampf(prefs.getFloat("samp_rpm", MOTOR_TARGET_RPM), 20.0f, 250.0f); }
@@ -189,6 +187,14 @@ void ConfigStore::setKHEMA(float v) {
 }
 float ConfigStore::getKHEMAAlpha()               { return clampf(prefs.getFloat("kh_ema_a", 0.3f), 0.1f, 1.0f); }
 void ConfigStore::setKHEMAAlpha(float a)         { prefs.putFloat("kh_ema_a", clampf(a, 0.1f, 1.0f)); }
+
+// EMA of the Gran-vs-endpoint cross-validation diff (systematic chemistry offset)
+float ConfigStore::getCrossValEMA()              { return prefs.getFloat("cv_ema", NAN); }
+void ConfigStore::setCrossValEMA(float v)        { prefs.putFloat("cv_ema", v); }
+
+// Scavenge pass: extra stir+remove before the final sample fill (residual-volume consistency)
+bool ConfigStore::getScavengeEnabled()           { return prefs.getBool("scavenge", false); }
+void ConfigStore::setScavengeEnabled(bool v)     { prefs.putBool("scavenge", v); }
 
 // pH sensor type: 0=auto, 1=internal, 2=ADS1115, 3=EZO
 uint8_t ConfigStore::getPhSensorType() {

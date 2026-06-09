@@ -558,6 +558,7 @@ static void handleWebSocketMessage(AsyncWebSocketClient* client, void* arg, uint
         configStore.setGranMinR2(value);
       }
       else if (strcmp(key, "num_washes") == 0) { configStore.setNumWashes((int)value); }
+      else if (strcmp(key, "scavenge") == 0) { configStore.setScavengeEnabled((int)value != 0); }
       else if (strcmp(key, "drop_ul") == 0) { configStore.setDropVolumeUL(value); }
       else if (strcmp(key, "gran_readings") == 0) { configStore.setGranReadings((int)value); }
       else if (strcmp(key, "kh_ema_alpha") == 0) { configStore.setKHEMAAlpha(value); }
@@ -684,6 +685,18 @@ void calibratePH(int bufferPH) {
     calTemp = getWaterTemperatureC();
   } else {
     calTemp = configStore.getMeasTempC();
+  }
+  // A single calTempC is stored for all three buffer points. If this point is
+  // calibrated at a different temperature than the previous one (e.g. on
+  // another day), the piecewise slopes mix temperatures — warn the user.
+  {
+    float prevCalTemp = configStore.getCalTempC();
+    if (configStore.getCalTimestamp() > 0 && fabsf(calTemp - prevCalTemp) > 1.0f) {
+      char tw[96];
+      snprintf(tw, sizeof(tw), "Warning: cal temp %.1f°C differs from previous %.1f°C — calibrate all buffers in one session",
+               calTemp, prevCalTemp);
+      publishError(tw);
+    }
   }
   configStore.setCalTempC(calTemp);
 
@@ -994,6 +1007,7 @@ void broadcastState() {
   cfg["buf_ph10"] = configStore.getBufferPH10();
   cfg["slope_hours"] = configStore.getSlopeWindowHours();
   cfg["num_washes"] = configStore.getNumWashes();
+  cfg["scavenge"] = configStore.getScavengeEnabled() ? 1 : 0;
   cfg["gran_readings"] = configStore.getGranReadings();
   cfg["kh_ema_alpha"] = configStore.getKHEMAAlpha();
   cfg["timezone"] = configStore.getTimezone();
@@ -1300,7 +1314,7 @@ void appendHistory(const char* sensor, float value, uint32_t ts) {
   }
 }
 
-void appendGranHistory(float r2, float eqML, float endpointPH, bool usedGran, float confidence, float khGran, float khEndpoint, float probeNoiseMv, int phReversals, float dropUL, float titrationRPM, float khCI, uint32_t ts, float startPH, float acidEff) {
+void appendGranHistory(float r2, float eqML, float endpointPH, bool usedGran, float confidence, float khGran, float khEndpoint, float probeNoiseMv, int phReversals, float dropUL, float titrationRPM, float khCI, uint32_t ts, float startPH, float acidEff, float winLow, float winHigh) {
   const char* filename = "/history/gran.csv";
 
   if (!LittleFS.exists("/history")) {
@@ -1356,12 +1370,15 @@ void appendGranHistory(float r2, float eqML, float endpointPH, bool usedGran, fl
   setFSCrashHint("appendGran");
   File f = LittleFS.open(filename, "a");
   if (f) {
-    f.printf("%u,%.5f,%.3f,%.2f,%d,%.2f,%.2f,%.2f,%.2f,%d,%.1f,%.1f,%.3f,%.2f,%.1f\n", ts, r2, eqML, endpointPH, usedGran ? 1 : 0, confidence,
+    // Columns 16/17 (winLow/winHigh): the pH window the adaptive Gran selection
+    // chose — needed to monitor window-selection jitter across runs
+    f.printf("%u,%.5f,%.3f,%.2f,%d,%.2f,%.2f,%.2f,%.2f,%d,%.1f,%.1f,%.3f,%.2f,%.1f,%.2f,%.2f\n", ts, r2, eqML, endpointPH, usedGran ? 1 : 0, confidence,
              isnan(khGran) ? 0.0f : khGran, isnan(khEndpoint) ? 0.0f : khEndpoint,
              isnan(probeNoiseMv) ? 0.0f : probeNoiseMv, phReversals, dropUL, titrationRPM,
              isnan(khCI) ? 0.0f : khCI,
              isnan(startPH) ? 0.0f : startPH,
-             isnan(acidEff) ? 0.0f : acidEff);
+             isnan(acidEff) ? 0.0f : acidEff,
+             winLow, winHigh);
     f.close();
   } else {
     Serial.println("Warning: failed to append to gran.csv");
@@ -1820,7 +1837,10 @@ void setupWebServer() {
     // Stream response
     String csv;
     csv.reserve(nRows * 80 + 80);
-    csv += "timestamp,datetime,kh,ph,r2,eq_ml,endpoint_ph,method,confidence,kh_gran,kh_endpoint,probe_noise_mv,ph_reversals,kh_ci\n";
+    // kh_fit_ci is the regression-fit CI only — run-to-run scatter (volumetrics)
+    // is larger; see precision.csv for the measured SD. The Gran window per
+    // run is in gran.csv (columns 16/17), not merged here (DRAM budget).
+    csv += "timestamp,datetime,kh,ph,r2,eq_ml,endpoint_ph,method,confidence,kh_gran,kh_endpoint,probe_noise_mv,ph_reversals,kh_fit_ci\n";
     for (int i = 0; i < nRows; i++) {
       time_t t = (time_t)timestamps[i];
       struct tm tm;
@@ -1893,7 +1913,7 @@ void setupWebServer() {
         switch (ds) {
           case 0: { // Header + config
             n = snprintf(b, maxLen,
-              "{\"device\":\"%s\",\"firmware\":\"%s\","
+              "{\"device\":\"%s\",\"firmware\":\"%s\",\"fw_build\":\"%s\","
               "\"timestamp\":%u,\"uptime\":%lu,\"freeHeap\":%u,\"heapMin\":%u,"
               "\"config\":{"
               "\"titration_vol\":%.2f,\"sample_vol\":%.1f,"  // sample_vol derived from cal
@@ -1907,7 +1927,7 @@ void setupWebServer() {
               "\"schedule_mode\":%d,\"interval_hours\":%d,\"anchor_time\":%d,"
               "\"gran_readings\":%d,\"kh_ema_alpha\":%.2f"
               "},",
-              deviceName, FW_VERSION,
+              deviceName, FW_VERSION, FW_BUILD,
               (uint32_t)time(nullptr), millis() / 1000, ESP.getFreeHeap(), heapMin,
               configStore.getTitrationVolume(),
               configStore.getSampleCalRevsPerML() > 0 ? (float)configStore.getSampleCalRevolutions() / configStore.getSampleCalRevsPerML() : 0.0f,
@@ -1932,9 +1952,7 @@ void setupWebServer() {
               "\"endpoint_ph\":%.1f,\"fixed_stop_ph\":%.1f,"
               "\"min_gran_points\":%d,\"gran_min_r2\":%.3f,"
               "\"steps_per_rev\":%d,\"motor_steps_per_unit\":%d,"
-              "\"titration_step_size\":%d,\"medium_step_mult\":%d,"
-              "\"gran_step_mult\":%d,\"fast_batch_max\":%d,"
-              "\"fast_batch_min\":%d,\"nernst_factor\":%.5f,"
+              "\"nernst_factor\":%.5f,"
               "\"meas_temp_c\":%.1f,\"cal_temp_c\":%.1f,\"ph_amp_gain\":%.1f,"
               "\"water_temp\":%.1f,\"temp_sensor\":%s,"
               "\"tmc_detected\":%s},",
@@ -1942,9 +1960,7 @@ void setupWebServer() {
               ENDPOINT_PH, FIXED_ENDPOINT_STOP_PH,
               MIN_GRAN_POINTS, configStore.getGranMinR2(),
               STEPS_PER_REVOLUTION, MOTOR_STEPS_PER_UNIT,
-              TITRATION_STEP_SIZE, MEDIUM_STEP_MULTIPLIER,
-              GRAN_STEP_MULTIPLIER, FAST_BATCH_MAX,
-              FAST_BATCH_MIN, NERNST_FACTOR,
+              NERNST_FACTOR,
               configStore.getMeasTempC(), configStore.getCalTempC(), PH_AMP_GAIN,
               getWaterTemperatureC(),
               hasTemperatureSensor() ? "true" : "false",

@@ -16,6 +16,12 @@ struct TitrationPoint {
   uint8_t flags;      // bit 0: stabTimedOut
 };
 
+// Titration phase identifiers (TitrationPoint.phase). Only PHASE_GRAN points
+// (full mix delay + stabilization) participate in the Gran regression.
+static const uint8_t TITRATION_PHASE_FAST   = 0;
+static const uint8_t TITRATION_PHASE_MEDIUM = 1;
+static const uint8_t TITRATION_PHASE_GRAN   = 2;
+
 // Gran window search result for R² distribution plot
 #define MAX_GRAN_WINDOWS 12
 struct GranWindowResult {

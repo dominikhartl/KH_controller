@@ -257,6 +257,12 @@
           <label>KH Trend Window (h)<input type="number" id="cfg-slope_hours" step="1" min="24" max="168"></label>
           <label>Smooth Half-Life (h, 0=auto)<input type="number" id="ui-smooth-halflife" step="1" min="0" max="48" value="0" class="ui-only"></label>
           <label>Wash Cycles<input type="number" id="cfg-num_washes" step="1" min="1" max="5"></label>
+          <label>Scavenge Pass
+            <select id="cfg-scavenge">
+              <option value="0">Off</option>
+              <option value="1">On</option>
+            </select>
+          </label>
           <label>KH EMA Alpha<input type="number" id="cfg-kh_ema_alpha" step="0.05" min="0.1" max="1.0"></label>
           <label>pH Sensor
             <select id="cfg-ph_sensor">
@@ -450,6 +456,6 @@
   </footer>
 
   <script src="chart.min.js?v=3"></script>
-  <script src="app.js?v=52"></script>
+  <script src="app.js?v=53"></script>
 </body>
 </html>

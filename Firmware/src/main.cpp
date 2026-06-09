@@ -145,7 +145,16 @@ static void publishKHResult(const KHResult& r) {
   uint32_t ts = (uint32_t)time(nullptr);
   appendHistory("kh", r.khValue, ts);
   appendHistory("ph", r.startPH, ts);
-  appendGranHistory(r.granR2, r.hclUsed, r.endpointPH, r.usedGran, r.confidence, r.khGran, r.khEndpoint, r.probeNoiseMv, r.phReversals, configStore.getDropVolumeUL(), configStore.getGranBurstRPM(), r.khCI, ts, r.startPH, getAcidEfficiency());
+  appendGranHistory(r.granR2, r.hclUsed, r.endpointPH, r.usedGran, r.confidence, r.khGran, r.khEndpoint, r.probeNoiseMv, r.phReversals, configStore.getDropVolumeUL(), configStore.getGranBurstRPM(), r.khCI, ts, r.startPH, getAcidEfficiency(), r.granWinLow, r.granWinHigh);
+
+  // Track the systematic Gran-vs-endpoint offset (chemistry: true eq pH ≈4.3
+  // vs fixed 4.5 endpoint). isSuspect() compares each run's cross-val diff
+  // against this baseline instead of the raw value.
+  if (!isnan(r.crossValDiff)) {
+    float prev = configStore.getCrossValEMA();
+    float ema = isnan(prev) ? r.crossValDiff : 0.2f * r.crossValDiff + 0.8f * prev;
+    configStore.setCrossValEMA(ema);
+  }
 
   // Quality metrics
   { char mqBuf[16]; snprintf(mqBuf, sizeof(mqBuf), "%.5f", r.granR2);
@@ -337,9 +346,20 @@ static bool isSuspect(const KHResult& r, const KHPrediction& pred, char* reasonB
       return true;
     }
   }
-  if (!isnan(r.crossValDiff) && r.crossValDiff > CROSS_VALIDATION_THRESHOLD_DKH) {
-    snprintf(reasonBuf, reasonLen, "Cross-val failed (diff %.2f dKH)", r.crossValDiff);
-    return true;
+  if (!isnan(r.crossValDiff)) {
+    // Gran vs endpoint carries a systematic chemistry offset (~0.13 dKH: true
+    // eq pH ≈4.3 vs fixed 4.5). Compare against the learned baseline so the
+    // threshold tests the anomaly, not the known offset.
+    float base = configStore.getCrossValEMA();
+    float dev = isnan(base) ? r.crossValDiff : fabsf(r.crossValDiff - base);
+    if (dev > CROSS_VALIDATION_THRESHOLD_DKH) {
+      if (isnan(base)) {
+        snprintf(reasonBuf, reasonLen, "Cross-val failed (diff %.2f dKH)", r.crossValDiff);
+      } else {
+        snprintf(reasonBuf, reasonLen, "Cross-val failed (diff %.2f, baseline %.2f dKH)", r.crossValDiff, base);
+      }
+      return true;
+    }
   }
   if (r.granR2 > 0 && r.granR2 < configStore.getGranMinR2()) {
     snprintf(reasonBuf, reasonLen, "Poor Gran fit (R²=%.3f)", r.granR2);
@@ -892,8 +912,12 @@ void calibrateSamplePump() {
   }
   setMultiWashContext(numWashes);
   publishMessage("Calibrating sample pump...");
+  // Match the measurement exactly: scavenge before the final fill when enabled,
+  // so the weighed volume includes the same residual as a real measurement
+  int calScavRevs = configStore.getScavengeEnabled() ? max(1, fillRevs / 10) : 0;
   for (int w = 0; w < numWashes; w++) {
-    if (!washSampleVol(removeRevs, fillRevs, sampRpm)) {
+    if (!washSampleVol(removeRevs, fillRevs, sampRpm,
+                       (w == numWashes - 1) ? calScavRevs : 0)) {
       clearMultiWashContext();
       publishError("Error: sample pump timeout during calibration");
       broadcastProgress(100);
@@ -1028,10 +1052,16 @@ static float computeConfidence(float granR2, bool usedGran, int nPoints,
     if (timeoutRate > 0.1f) score -= 0.1f;
     if (timeoutRate > 0.3f) score -= 0.1f;
   }
-  // pH reversal penalty — reversals indicate probe drift or incomplete mixing
-  float reversalRate = (granStepCount > 0) ? (float)phReversals / granStepCount : 0;
-  if (reversalRate > 0.05f) score -= 0.1f;
-  if (reversalRate > 0.10f) score -= 0.1f;
+  // pH reversal penalty — reversals indicate probe drift or incomplete mixing.
+  // No Gran-zone steps at all means the endpoint came from unstabilized
+  // fast/medium data only — inherently low confidence.
+  if (granStepCount > 0) {
+    float reversalRate = (float)phReversals / granStepCount;
+    if (reversalRate > 0.05f) score -= 0.1f;
+    if (reversalRate > 0.10f) score -= 0.1f;
+  } else {
+    score -= 0.2f;
+  }
   // Probe health penalty
   if (strcmp(probeHealth, "Fair") == 0) score -= 0.1f;
   else if (strcmp(probeHealth, "Replace") == 0) score -= 0.2f;
@@ -1149,12 +1179,17 @@ KHResult measureKH() {
   setMeasPhase(1);  // wash phase
   setMultiWashContext(numWashes);
   float sampRpm = configStore.getSamplePumpRPM();
+  // Scavenge (if enabled) only before the LAST fill — that's the one whose
+  // residual defines the actual sample volume
+  int scavRevs = configStore.getScavengeEnabled() ? max(1, sampleFillRevs / 10) : 0;
   for (int w = 0; w < numWashes; w++) {
-    if (!washSampleVol(sampleRemoveRevs, sampleFillRevs, sampRpm)) {
+    if (!washSampleVol(sampleRemoveRevs, sampleFillRevs, sampRpm,
+                       (w == numWashes - 1) ? scavRevs : 0)) {
       clearMultiWashContext();
       static char washErr[64];
       snprintf(washErr, sizeof(washErr), "Error: sample pump timeout during wash (%d/%d)", w + 1, numWashes);
       publishError(washErr);
+      digitalWrite(EN_PIN2, HIGH);  // titration driver was left enabled after fill
       isMeasuringKH = false; setMeasPhase(0);
       return result;
     }
@@ -1199,7 +1234,8 @@ KHResult measureKH() {
     setMultiWashContext(2);
     bool rinse1 = washSampleVol((int)(sampleFillRevs * 1.5f), sampleFillRevs, sampRpm);
     delay(2000);
-    bool rinse2 = washSampleVol(sampleRemoveRevs, sampleFillRevs, sampRpm);
+    // rinse2 takes the actual sample — scavenge like the normal final wash
+    bool rinse2 = washSampleVol(sampleRemoveRevs, sampleFillRevs, sampRpm, scavRevs);
     clearMultiWashContext();
     if (!rinse1 || !rinse2) {
       publishError("Warning: sample pump timeout during extra rinse");
@@ -1208,6 +1244,14 @@ KHResult measureKH() {
     delay(100);
     startStirrer();
     delay(STIRRER_WARMUP_MS);
+    // Same probe settle as the first attempt — without it the retry reads a
+    // systematically lower (still-settling) pH and can falsely fail or pass
+    { unsigned long settleEnd = millis() + PROBE_SETTLE_MS;
+      while (millis() < settleEnd) {
+        delay(500);
+        measurementYield();
+      }
+    }
     measurePH(isExternalADCActive() ? 20 : 100);
     if (isnan(pH) || pH < minStartPH) {
       startPH = isnan(pH) ? 0 : pH;
@@ -1307,12 +1351,13 @@ KHResult measureKH() {
         errorMessage = "Error: pH probe not working!";
         errorflag = 1;
       } else {
-        // Store data points near the endpoint even during fast phase
+        // Store data points near the endpoint even during fast phase.
+        // These are unstabilized (phase 0) — used for endpoint interpolation
+        // only; the Gran regression skips them.
         if (pH < DATA_STORE_PH && nPoints < MAX_TITRATION_POINTS) {
           int16_t mvI = isnan(voltage) ? 0 : (int16_t)constrain((int)lroundf(voltage), -32768, 32767);
-          dataPoints[nPoints++] = {(float)units, pH, mvI, 0, 0, 0};
+          dataPoints[nPoints++] = {(float)units, pH, mvI, 0, TITRATION_PHASE_FAST, 0};
         }
-        if (pH < GRAN_REGION_PH) granCount++;
 
         if (pH > lastFastPH - 0.02) {
           stallCount++;
@@ -1368,6 +1413,7 @@ KHResult measureKH() {
     float cachedGranRPM      = configStore.getGranBurstRPM();
     uint32_t cachedGranAccel = configStore.getGranBurstAccel();
     int cachedMixDelay       = configStore.getMixDelay();
+    int cachedGranReadings   = configStore.getGranReadings();
 
     while (!isnan(pH) && pH > stopPH && units < maxUnits
            && errorflag == 0) {
@@ -1418,18 +1464,19 @@ KHResult measureKH() {
         }
         if (abortRequested) { errorMessage = "Measurement aborted"; errorflag = 1; break; }
         waitForPHStabilization();
-        measurePHStabilized(isExternalADCActive() ? configStore.getGranReadings() : 20);
+        measurePHStabilized(isExternalADCActive() ? cachedGranReadings : 20);
       }
       units += stepVol;
 
       // Store data points near the endpoint for Gran analysis and interpolation
       if (pH < DATA_STORE_PH && nPoints < MAX_TITRATION_POINTS) {
-        uint16_t sMs = (curPhase == 2) ? (uint16_t)min((unsigned long)0xFFFF, getLastStabilizationMs()) : (uint16_t)0;
-        uint8_t fl = (curPhase == 2 && getLastStabilizationTimedOut()) ? 1 : 0;
+        uint16_t sMs = (curPhase == TITRATION_PHASE_GRAN) ? (uint16_t)min((unsigned long)0xFFFF, getLastStabilizationMs()) : (uint16_t)0;
+        uint8_t fl = (curPhase == TITRATION_PHASE_GRAN && getLastStabilizationTimedOut()) ? 1 : 0;
         int16_t mvI = isnan(voltage) ? 0 : (int16_t)constrain((int)lroundf(voltage), -32768, 32767);
         dataPoints[nPoints++] = {(float)units, pH, mvI, sMs, curPhase, fl};
       }
-      if (pH < GRAN_REGION_PH) granCount++;
+      // Count only Gran-zone (stabilized) points — the regression uses nothing else
+      if (curPhase == TITRATION_PHASE_GRAN && pH < GRAN_REGION_PH) granCount++;
 
       // Track step-to-step noise in Gran zone
       if (curPhase == 2 && !isnan(pH)) {
@@ -1465,7 +1512,9 @@ KHResult measureKH() {
         preciseStall = 0;
         lastPrecisePH = pH;
       }
-      if (units >= maxUnits - stepVol) {
+      // Acid cap reached — only an error if the endpoint was NOT reached on
+      // this very step (otherwise the titration completed legitimately)
+      if (units >= maxUnits - stepVol && !isnan(pH) && pH > stopPH) {
         errorMessage = "Error: reached acid max!";
         errorflag = 1;
       }
@@ -1721,16 +1770,10 @@ KHResult measureKH() {
     subtractHCl(units);
   }
 
-  // Anti-suckback: small reverse to prevent drip from titration nozzle
-  unsigned int suckbackUs = (unsigned int)rpmToHalfPeriodUs(MOTOR_START_RPM);
-  digitalWrite(DIR_PIN2, HIGH);  // Reverse
-  for (int i = 0; i < ANTI_SUCKBACK_STEPS; i++) {
-    digitalWrite(STEP_PIN2, HIGH);
-    delayMicroseconds(suckbackUs);
-    digitalWrite(STEP_PIN2, LOW);
-    delayMicroseconds(suckbackUs);
-  }
-  digitalWrite(DIR_PIN2, LOW);   // Restore forward
+  // Anti-suckback: small reverse to prevent drip from titration nozzle.
+  // Must go through FastAccelStepper — raw digitalWrite pulses never reach
+  // the driver because the pins are routed to the RMT peripheral.
+  titrationAntiSuckback(ANTI_SUCKBACK_STEPS);
   digitalWrite(EN_PIN2, HIGH);
 
   Serial.println("Stopping stirrer (post-titration)");
@@ -1755,7 +1798,10 @@ KHResult measureKH() {
   int postRemoveRevs = (int)(postFillRevs * (1.5f + hclPart));
   if (!washSampleVol(postRemoveRevs, postFillRevs, configStore.getSamplePumpRPM())) {
     publishError("Warning: sample pump timeout during post-wash");
-    errorflag = 1;  // Flag result as unreliable — incomplete wash risks contaminating next measurement
+    errorflag = 1;
+    // Incomplete wash risks contaminating the NEXT measurement — reduce the
+    // published confidence so the result is visibly marked as unreliable
+    if (!isnan(result.khValue)) result.confidence *= 0.8f;
   }
 
   // Post-wash pH verification: quick check to detect incomplete wash
@@ -1986,8 +2032,8 @@ void setup() {
   {
     int reason = esp_reset_reason();
     Serial.printf("Reset reason: %d\n", reason);
-    char bootBuf[64];
-    snprintf(bootBuf, sizeof(bootBuf), "BOOT (reason=%d, heap=%u)", reason, ESP.getFreeHeap());
+    char bootBuf[96];
+    snprintf(bootBuf, sizeof(bootBuf), "BOOT %s (reason=%d, heap=%u)", FW_BUILD, reason, ESP.getFreeHeap());
     publishMessage(bootBuf);
     if (reason == ESP_RST_PANIC || reason == ESP_RST_INT_WDT || reason == ESP_RST_TASK_WDT) {
       // Build persistent crash info from RTC hints — stays in UI until clean boot

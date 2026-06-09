@@ -225,7 +225,7 @@ void test_gran_no_points_in_region(void) {
   // All points have pH > 5.0 — none in Gran region
   TitrationPoint pts[10];
   for (int i = 0; i < 10; i++) {
-    pts[i] = {(float)(1000 + i * 100), 6.0f + i * 0.1f, 0, 0, 0, 0};
+    pts[i] = {(float)(1000 + i * 100), 6.0f + i * 0.1f, 0, 0, TITRATION_PHASE_GRAN, 0};
   }
   testSetGranMinR2(0.99f);
   float r2 = 0;
@@ -277,7 +277,7 @@ void test_gran_regression_min_points(void) {
   TitrationPoint pts[7];
   float k = REAL_TIT_VOL / REAL_CAL_UNITS;
   for (int i = 0; i < 7; i++) {
-    pts[i] = {(float)(15500 + i * 50), 3.8f + i * 0.05f, 0, 0, 0, 0};
+    pts[i] = {(float)(15500 + i * 50), 3.8f + i * 0.05f, 0, 0, TITRATION_PHASE_GRAN, 0};
   }
   bool excluded[7] = {};
   float slope, intercept, r2, ssRes;
@@ -292,7 +292,7 @@ void test_gran_regression_at_min_points(void) {
   TitrationPoint pts[8];
   float k = REAL_TIT_VOL / REAL_CAL_UNITS;
   for (int i = 0; i < 8; i++) {
-    pts[i] = {(float)(15500 + i * 50), 3.8f + i * 0.05f, 0, 0, 0, 0};
+    pts[i] = {(float)(15500 + i * 50), 3.8f + i * 0.05f, 0, 0, TITRATION_PHASE_GRAN, 0};
   }
   bool excluded[8] = {};
   float slope, intercept, r2, ssRes;
@@ -310,12 +310,57 @@ void test_gran_negative_slope_nan(void) {
   float k = 10.0f / 15000.0f;
   for (int i = 0; i < 10; i++) {
     // pH INCREASES as units increase -> Gran fn decreases (wrong direction)
-    pts[i] = {(float)(15000 + i * 100), 3.5f + i * 0.1f, 0, 0, 0, 0};
+    pts[i] = {(float)(15000 + i * 100), 3.5f + i * 0.1f, 0, 0, TITRATION_PHASE_GRAN, 0};
   }
   testSetGranMinR2(0.5f);  // Very low threshold to not mask the negative slope
   float r2 = 0;
   float eq = tryGranWindow(pts, 10, 80.0f, k, 3.4f, 4.6f, &r2);
   TEST_ASSERT_TRUE(isnan(eq));
+}
+
+void test_gran_phase_filter_excludes_unstabilized(void) {
+  // Fast/medium-phase points (unstabilized, ±0.3 pH) inside the Gran window
+  // must NOT affect the regression — only phase-2 points participate.
+  testSetGranMinR2(0.99f);
+  float r2Clean = 0;
+  float eqClean = granAnalysis(realData, REAL_DATA_COUNT, REAL_SAMPLE_VOL,
+                               REAL_TIT_VOL, REAL_CAL_UNITS, &r2Clean);
+  TEST_ASSERT_FALSE(isnan(eqClean));
+
+  // Append garbage fast-phase (0) and medium-phase (1) points inside the window
+  TitrationPoint withJunk[REAL_DATA_COUNT + 4];
+  memcpy(withJunk, realData, sizeof(realData));
+  withJunk[REAL_DATA_COUNT + 0] = {15600.0f, 4.30f, 0, 0, TITRATION_PHASE_FAST, 0};
+  withJunk[REAL_DATA_COUNT + 1] = {15800.0f, 4.45f, 0, 0, TITRATION_PHASE_FAST, 0};
+  withJunk[REAL_DATA_COUNT + 2] = {16000.0f, 3.60f, 0, 0, TITRATION_PHASE_MEDIUM, 0};
+  withJunk[REAL_DATA_COUNT + 3] = {16200.0f, 4.10f, 0, 0, TITRATION_PHASE_MEDIUM, 0};
+
+  float r2Junk = 0;
+  float eqJunk = granAnalysis(withJunk, REAL_DATA_COUNT + 4, REAL_SAMPLE_VOL,
+                              REAL_TIT_VOL, REAL_CAL_UNITS, &r2Junk);
+  TEST_ASSERT_FALSE(isnan(eqJunk));
+  // Identical result: the junk points are invisible to the fit
+  TEST_ASSERT_FLOAT_WITHIN(0.5f, eqClean, eqJunk);
+  TEST_ASSERT_FLOAT_WITHIN(0.0005f, r2Clean, r2Junk);
+}
+
+void test_gran_regression_only_phase2_counted(void) {
+  // 8 phase-2 points + 4 in-window phase-0 points -> regression count must be 8
+  TitrationPoint pts[12];
+  float k = REAL_TIT_VOL / REAL_CAL_UNITS;
+  for (int i = 0; i < 8; i++) {
+    pts[i] = {(float)(15500 + i * 50), 3.8f + i * 0.05f, 0, 0, TITRATION_PHASE_GRAN, 0};
+  }
+  for (int i = 8; i < 12; i++) {
+    pts[i] = {(float)(15500 + i * 50), 3.9f, 0, 0, TITRATION_PHASE_FAST, 0};
+  }
+  bool excluded[12] = {};
+  float slope, intercept, r2, ssRes;
+  int count;
+  bool ok = granRegression(pts, 12, 80.0f, k, excluded, 3.5f, 4.5f,
+                           &slope, &intercept, &r2, &ssRes, &count);
+  TEST_ASSERT_TRUE(ok);
+  TEST_ASSERT_EQUAL_INT(8, count);
 }
 
 // --- Test runner ---
@@ -334,4 +379,6 @@ void run_gran_tests(void) {
   RUN_TEST(test_gran_regression_min_points);
   RUN_TEST(test_gran_regression_at_min_points);
   RUN_TEST(test_gran_negative_slope_nan);
+  RUN_TEST(test_gran_phase_filter_excludes_unstabilized);
+  RUN_TEST(test_gran_regression_only_phase2_counted);
 }

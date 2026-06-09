@@ -70,8 +70,6 @@ public:
   void setBufferPH10(float v);
   int getSlopeWindowHours();      // KH slope lookback window in hours (default 72, range 24-168)
   void setSlopeWindowHours(int h);
-  int getStirrerSpeed();           // Stirrer speed in percent (default 90, range 80-100)
-  void setStirrerSpeed(int pct);
   float getSamplePumpRPM();        // Sample pump speed in RPM (default MOTOR_TARGET_RPM, range 20-400)
   void setSamplePumpRPM(float rpm);
   float getSampleCalRevsPerML();   // Sample pump calibration: revolutions per mL (default ~4.55)
@@ -88,6 +86,14 @@ public:
   void setKHEMA(float v);
   float getKHEMAAlpha();           // EMA smoothing factor (default 0.3, range 0.1-1.0)
   void setKHEMAAlpha(float a);
+
+  // EMA of Gran-vs-endpoint cross-val diff — baseline for outlier detection (default NAN)
+  float getCrossValEMA();
+  void setCrossValEMA(float v);
+
+  // Scavenge pass before the final sample fill (default false)
+  bool getScavengeEnabled();
+  void setScavengeEnabled(bool v);
 
   // pH sensor type: 0=auto, 1=internal, 2=ADS1115, 3=EZO
   uint8_t getPhSensorType();

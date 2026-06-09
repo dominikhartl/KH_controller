@@ -26,10 +26,24 @@ float bufferPHAtTemp(int nominal, float tempC) {
 
 // --- Gran transformation endpoint detection ---
 
+// Returns true if a point may participate in the Gran regression: not excluded,
+// inside the pH window, and measured in the Gran zone (phase 2 — full mix delay
+// plus stabilization). Fast/medium-phase points (phase 0/1) are unstabilized
+// (±0.3 pH fast mode) and would silently degrade the fit if fast_ph is
+// configured low enough to push them into the regression window.
+static inline bool granUsable(const TitrationPoint& p, const bool* excluded, int i,
+                              float pHLow, float pHHigh) {
+  if (excluded && excluded[i]) return false;
+  if (p.phase != TITRATION_PHASE_GRAN) return false;
+  return p.pH < pHHigh && p.pH > pHLow;
+}
+
 // OLS regression on Gran function values within a pH window.
 // OLS (w=1) is the standard practice for Gran analysis (USGS, Dickson SOP 3b, textbooks).
 // Previous experiments with w=1/y² and w=1/|y| showed no precision benefit and introduced
 // pathological weight sensitivity near the equivalence point.
+// Internally accumulates in double on mean-centered x: raw float sums of x²
+// (x up to ~16k units) suffer catastrophic cancellation in n·Σx²−(Σx)².
 // excluded[] marks points to skip; returns false if regression fails.
 bool granRegression(TitrationPoint* points, int nPoints,
                     float sampleVol, float k, bool* excluded,
@@ -39,60 +53,52 @@ bool granRegression(TitrationPoint* points, int nPoints,
                     float* outVarSlope,
                     float* outVarIntercept,
                     float* outCovSI) {
-  float sumW = 0, sumWX = 0, sumWY = 0, sumWXX = 0, sumWXY = 0, sumWYY = 0;
+  // Pass 1: means
+  double sumX = 0, sumY = 0;
   int count = 0;
-
   for (int i = 0; i < nPoints; i++) {
-    if (excluded[i]) continue;
-    if (points[i].pH < pHHigh && points[i].pH > pHLow) {
-      float x = points[i].units;
-      float totalVol = sampleVol + x * k;
-      float y = totalVol * powf(10.0f, -points[i].pH);
-      float w = 1.0f;  // OLS — standard practice for Gran analysis
-      sumW += w;
-      sumWX += w * x;
-      sumWY += w * y;
-      sumWXX += w * x * x;
-      sumWXY += w * x * y;
-      sumWYY += w * y * y;
-      count++;
-    }
+    if (!granUsable(points[i], excluded, i, pHLow, pHHigh)) continue;
+    double x = points[i].units;
+    double y = (sampleVol + x * k) * pow(10.0, -(double)points[i].pH);
+    sumX += x;
+    sumY += y;
+    count++;
   }
 
   if (count < MIN_GRAN_POINTS) return false;
+  double meanX = sumX / count;
+  double meanY = sumY / count;
 
-  float denom = sumW * sumWXX - sumWX * sumWX;
-  if (fabsf(denom) < 1e-12f) return false;
-
-  *outSlope = (sumW * sumWXY - sumWX * sumWY) / denom;
-  *outIntercept = (sumWY - *outSlope * sumWX) / sumW;
-  *outCount = count;
-
-  // Compute weighted R²
-  float meanWY = sumWY / sumW;
-  float ssTot = sumWYY - sumW * meanWY * meanWY;
-  float ssRes = 0;
+  // Pass 2: centered second moments
+  double sxx = 0, sxy = 0, syy = 0;
   for (int i = 0; i < nPoints; i++) {
-    if (excluded[i]) continue;
-    if (points[i].pH < pHHigh && points[i].pH > pHLow) {
-      float x = points[i].units;
-      float totalVol = sampleVol + x * k;
-      float y = totalVol * powf(10.0f, -points[i].pH);
-      float w = 1.0f;
-      float pred = *outSlope * x + *outIntercept;
-      float res = y - pred;
-      ssRes += w * res * res;
-    }
+    if (!granUsable(points[i], excluded, i, pHLow, pHHigh)) continue;
+    double dx = (double)points[i].units - meanX;
+    double dy = (sampleVol + (double)points[i].units * k) * pow(10.0, -(double)points[i].pH) - meanY;
+    sxx += dx * dx;
+    sxy += dx * dy;
+    syy += dy * dy;
   }
-  *outR2 = (ssTot > 1e-12f) ? 1.0f - ssRes / ssTot : 0.0f;
-  *outSsRes = ssRes;
+
+  if (sxx < 1e-12) return false;
+
+  double slope = sxy / sxx;
+  double intercept = meanY - slope * meanX;
+  double ssRes = syy - slope * sxy;  // residual SS of the OLS fit
+  if (ssRes < 0) ssRes = 0;          // guard against rounding
+
+  *outSlope = (float)slope;
+  *outIntercept = (float)intercept;
+  *outCount = count;
+  *outR2 = (syy > 1e-12) ? (float)(1.0 - ssRes / syy) : 0.0f;
+  *outSsRes = (float)ssRes;
 
   // Parameter variances for confidence interval computation
   if (count > 2 && (outVarSlope || outVarIntercept || outCovSI)) {
-    float s2 = ssRes / (float)(count - 2);
-    if (outVarSlope) *outVarSlope = sumW / denom * s2;
-    if (outVarIntercept) *outVarIntercept = sumWXX / denom * s2;
-    if (outCovSI) *outCovSI = -sumWX / denom * s2;
+    double s2 = ssRes / (double)(count - 2);
+    if (outVarSlope) *outVarSlope = (float)(s2 / sxx);
+    if (outVarIntercept) *outVarIntercept = (float)(s2 * (1.0 / count + meanX * meanX / sxx));
+    if (outCovSI) *outCovSI = (float)(-meanX * s2 / sxx);
   }
   return true;
 }
@@ -128,6 +134,7 @@ float tryGranWindow(TitrationPoint* points, int nPoints,
     int worstIdx = -1;
 
     for (int i = 0; i < nPoints; i++) {
+      if (points[i].phase != TITRATION_PHASE_GRAN) continue;
       if (excluded[i]) continue;
       if (points[i].pH < pHHigh && points[i].pH > pHLow) {
         float x = points[i].units;
@@ -190,8 +197,11 @@ float granAnalysis(TitrationPoint* points, int nPoints,
   // Sanity check: require at least MIN_GRAN_POINTS in the Gran region. Without
   // this, a probe-failure or aborted titration that produced a handful of low-pH
   // points could pass through to regression and yield a false-confidence result.
+  // Only Gran-zone (phase 2) points count — fast/medium points are unstabilized
+  // and are excluded from the regression as well.
   int granRegionCount = 0;
   for (int i = 0; i < nPoints; i++) {
+    if (points[i].phase != TITRATION_PHASE_GRAN) continue;
     if (points[i].pH < GRAN_REGION_PH && points[i].pH > GRAN_STOP_PH - 0.5f) granRegionCount++;
   }
   if (granRegionCount < MIN_GRAN_POINTS) {
@@ -213,6 +223,7 @@ float granAnalysis(TitrationPoint* points, int nPoints,
     int granCount = 0;
     float minPH = 99.0f;
     for (int i = 0; i < nPoints; i++) {
+      if (points[i].phase != TITRATION_PHASE_GRAN) continue;
       if (points[i].pH < GRAN_REGION_PH && points[i].pH > GRAN_STOP_PH - 0.5f) {
         granCount++;
         if (points[i].pH < minPH) minPH = points[i].pH;
@@ -226,6 +237,7 @@ float granAnalysis(TitrationPoint* points, int nPoints,
         float sorted[MAX_TITRATION_POINTS];
         int n = 0;
         for (int i = 0; i < nPoints; i++) {
+          if (points[i].phase != TITRATION_PHASE_GRAN) continue;
           if (points[i].pH < GRAN_REGION_PH && points[i].pH > GRAN_STOP_PH - 0.5f) {
             sorted[n++] = points[i].pH;
           }

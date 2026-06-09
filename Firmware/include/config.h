@@ -12,6 +12,9 @@ static const int mqtt_port = 1883;
 // Runtime name is stored in NVS and loaded into global `deviceName` at boot
 static const char DEFAULT_DEVICE_NAME[] = "KHpro";
 static const char FW_VERSION[] = "0.5";
+// Build timestamp — the only reliable way to tell WHICH build is deployed
+// (FW_VERSION is rarely bumped). Shown in /api/diagnostics and the boot message.
+static const char FW_BUILD[] = __DATE__ " " __TIME__;
 
 // ADC configuration (full-precision mode)
 #define ADC_OVERSAMPLING 64
@@ -49,11 +52,6 @@ static const float CROSS_VALIDATION_THRESHOLD_DKH = 0.3f; // Re-measure if Gran 
 // Motor configuration
 static const int STEPS_PER_REVOLUTION = 1600;
 
-// Convert RPM to stepper half-period in microseconds
-// 1 rev = STEPS_PER_REVOLUTION steps, each step = 2 half-periods
-// half_period_us = 60e6 / (2 * RPM * STEPS_PER_REVOLUTION) = 18750 / RPM
-inline float rpmToHalfPeriodUs(float rpm) { return 18750.0f / rpm; }
-
 // Motor speeds (RPM) — all stepper speeds defined here, converted to us internally
 static const float MOTOR_TARGET_RPM   = 80.0f;   // Sample pump cruising speed
 static const float MOTOR_START_RPM    = 9.4f;     // Acceleration ramp start speed (~2000 us)
@@ -66,13 +64,11 @@ static const int   FILL_BURST_COUNT = 10;     // Default phase-1 detach burst co
 static const int   FILL_PULSE_COUNT = 5;      // Default phase-2 flush pulse count
 
 // Titration tuning parameters
-static const int TITRATION_STEP_SIZE = 2;        // Base units per titration step
 static const int MOTOR_STEPS_PER_UNIT = 16;      // Motor steps per titration unit
 static const int TITRATION_MIX_DELAY_FAST_MS = 200;  // Mixing delay far from endpoint
-static const int TITRATION_MIX_DELAY_MEDIUM_MS = 1000; // Medium zone mixing (stabilization inside measurePH)
+static const int TITRATION_MIX_DELAY_MEDIUM_MS = 1000; // Pump-calibration medium phase pacing
 static const int TITRATION_MIX_DELAY_GRAN_MS = 3500;   // Gran zone mixing (explicit stabilization follows)
 static const int MAX_TITRATION_UNITS = 50000;  // Absolute hard cap (user sets soft limit via max_acid_ml)
-static const int FILL_VOLUME = 100;
 static const int STIRRER_SPEED_PCT = 90;           // Stirrer duty cycle (%)
 static const float SAMPLE_MAX_RPM = 250.0f;        // Sample pump max speed (RPM)
 static const float TITRATE_MAX_RPM = 300.0f;       // Titration pump max speed (RPM)
@@ -87,16 +83,8 @@ static const int SAMPLE_CAL_REVOLUTIONS = 350;    // Revolutions used during sam
 static const int CALIBRATION_TARGET_UNITS = 6000;
 static const float FAST_TITRATION_PH_DEFAULT = 5.0f; // pH threshold: fast→precise titration
 
-// Medium zone step multiplier (TITRATION_STEP_SIZE * this = units per medium step)
-// Smaller steps yield more data points for Gran regression
-static const int MEDIUM_STEP_MULTIPLIER = 12;  // 2 * 12 = 24 units per step
-
-// Gran zone step multiplier — smaller = more data points for regression robustness
-static const int GRAN_STEP_MULTIPLIER = 8;     // 2 * 8 = 16 units per step
-
-// Adaptive fast-phase batch sizing — reduces batch as pH approaches threshold
-static const int FAST_BATCH_MAX = 200;
-static const int FAST_BATCH_MIN = 20;
+// Adaptive fast-phase batch sizing — actual batch limits are derived from the
+// fast_step_ul config; this only sets where the ramp-down begins
 static const float FAST_RAMP_START_PH = 6.0f;  // Start reducing batch size below this pH
 
 // Motor timing
