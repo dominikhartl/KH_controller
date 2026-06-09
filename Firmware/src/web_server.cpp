@@ -2037,7 +2037,11 @@ void setupWebServer() {
                 pn, mn, r.highNoiseCount, sn, r.phReversals, r.granStepCount,
                 reversalPct, pmp);
             } else {
-              n = 0;  // No noise data without measurement
+              // Must emit ≥1 byte: returning 0 from a chunked-response callback
+              // means "response complete" and truncates the JSON mid-document
+              // (happens when diagnostics is queried between boot and the
+              // first completed measurement).
+              n = snprintf(b, maxLen, "\"noise\":{\"available\":false},");
             }
             ds = 4;
             break;

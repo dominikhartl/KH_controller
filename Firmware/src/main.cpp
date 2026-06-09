@@ -1680,8 +1680,8 @@ KHResult measureKH() {
                 result.granSlopeRatio > GRAN_SLOPE_RATIO_MAX) {
               char sgBuf[128];
               snprintf(sgBuf, sizeof(sgBuf),
-                       "Warning: Gran slope ratio %.2f (healthy 0.45-0.75) — acid delivery anomaly (stall/air/siphon), KH suspect",
-                       result.granSlopeRatio);
+                       "Warning: Gran slope ratio %.2f (healthy %.2f-%.2f) — acid delivery anomaly (stall/air/siphon), KH suspect",
+                       result.granSlopeRatio, GRAN_SLOPE_RATIO_MIN, GRAN_SLOPE_RATIO_MAX);
               publishError(sgBuf);
             }
           }
