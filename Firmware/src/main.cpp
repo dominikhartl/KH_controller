@@ -145,12 +145,15 @@ static void publishKHResult(const KHResult& r) {
   uint32_t ts = (uint32_t)time(nullptr);
   appendHistory("kh", r.khValue, ts);
   appendHistory("ph", r.startPH, ts);
-  appendGranHistory(r.granR2, r.hclUsed, r.endpointPH, r.usedGran, r.confidence, r.khGran, r.khEndpoint, r.probeNoiseMv, r.phReversals, configStore.getDropVolumeUL(), configStore.getGranBurstRPM(), r.khCI, ts, r.startPH, getAcidEfficiency(), r.granWinLow, r.granWinHigh);
+  appendGranHistory(r.granR2, r.hclUsed, r.endpointPH, r.usedGran, r.confidence, r.khGran, r.khEndpoint, r.probeNoiseMv, r.phReversals, configStore.getDropVolumeUL(), configStore.getGranBurstRPM(), r.khCI, ts, r.startPH, getAcidEfficiency(), r.granWinLow, r.granWinHigh, isnan(r.granSlopeRatio) ? 0 : r.granSlopeRatio);
 
   // Track the systematic Gran-vs-endpoint offset (chemistry: true eq pH ≈4.3
   // vs fixed 4.5 endpoint). isSuspect() compares each run's cross-val diff
-  // against this baseline instead of the raw value.
-  if (!isnan(r.crossValDiff)) {
+  // against this baseline instead of the raw value. Runs with an acid-delivery
+  // anomaly (Gran slope out of band) are excluded — they would corrupt it.
+  bool slopeOk = isnan(r.granSlopeRatio) ||
+                 (r.granSlopeRatio >= GRAN_SLOPE_RATIO_MIN && r.granSlopeRatio <= GRAN_SLOPE_RATIO_MAX);
+  if (!isnan(r.crossValDiff) && slopeOk) {
     float prev = configStore.getCrossValEMA();
     float ema = isnan(prev) ? r.crossValDiff : 0.2f * r.crossValDiff + 0.8f * prev;
     configStore.setCrossValEMA(ema);
@@ -363,6 +366,12 @@ static bool isSuspect(const KHResult& r, const KHPrediction& pred, char* reasonB
   }
   if (r.granR2 > 0 && r.granR2 < configStore.getGranMinR2()) {
     snprintf(reasonBuf, reasonLen, "Poor Gran fit (R²=%.3f)", r.granR2);
+    return true;
+  }
+  // Acid-delivery anomaly: Gran slope physically out of band (stall/air/siphon)
+  if (!isnan(r.granSlopeRatio) &&
+      (r.granSlopeRatio < GRAN_SLOPE_RATIO_MIN || r.granSlopeRatio > GRAN_SLOPE_RATIO_MAX)) {
+    snprintf(reasonBuf, reasonLen, "Acid delivery anomaly (Gran slope ratio %.2f)", r.granSlopeRatio);
     return true;
   }
   return false;
@@ -1085,6 +1094,7 @@ KHResult measureKH() {
   KHResult result = {};
   result.khValue = NAN;
   result.crossValDiff = NAN;
+  result.granSlopeRatio = NAN;
 
   // Re-entrancy guard: prevent concurrent measurements
   if (isMeasuringKH) {
@@ -1657,6 +1667,25 @@ KHResult measureKH() {
           float hclUsed = (exactUnits / calUnits) * titVol;
           float khValue = (hclUsed / samVol) * 2800.0f * hclMol * corrF;
 
+          // Acid-delivery sanity: the Gran slope beyond the equivalence point
+          // physically equals the effective acid normality in the chamber
+          // (≈0.56 × [HCl], see GRAN_SLOPE_RATIO_*). A collapsed slope means
+          // indicated acid never arrived (stall/lost steps, air in line) or
+          // was neutralized by inflow — the KH result is then inflated.
+          if (usedGran && hclMol > 0) {
+            float kSlope = titVol / calUnits;             // mL per unit
+            float slopeML2 = granSlope / kSlope;          // F per mL
+            result.granSlopeRatio = slopeML2 / hclMol;
+            if (result.granSlopeRatio < GRAN_SLOPE_RATIO_MIN ||
+                result.granSlopeRatio > GRAN_SLOPE_RATIO_MAX) {
+              char sgBuf[128];
+              snprintf(sgBuf, sizeof(sgBuf),
+                       "Warning: Gran slope ratio %.2f (healthy 0.45-0.75) — acid delivery anomaly (stall/air/siphon), KH suspect",
+                       result.granSlopeRatio);
+              publishError(sgBuf);
+            }
+          }
+
           // Compute 95% confidence interval from Gran regression SE
           float khCI = NAN;
           if (usedGran && eqUnitsSE > 0 && exactUnits > 0) {
@@ -1768,6 +1797,18 @@ KHResult measureKH() {
   // right after sampling (it is flushed before the sample).
   if (units > 0) {
     subtractHCl(units);
+  }
+
+  // Titration driver thermal check — the driver stays energized for the whole
+  // titration (25+ min; longer on back-to-back precision-test runs). Overtemp
+  // means torque derating → lost steps → under-delivery (see Gran slope guard).
+  if (isTMCDetected()) {
+    uint32_t drv = getTitrateDrvStatus();
+    if (drv & 0x2) {
+      publishError("Warning: titration driver OVERTEMP shutdown occurred — steps were lost");
+    } else if (drv & 0x1) {
+      publishError("Warning: titration driver overtemp warning — torque derating possible (stall risk)");
+    }
   }
 
   // Anti-suckback: small reverse to prevent drip from titration nozzle.

@@ -1314,7 +1314,7 @@ void appendHistory(const char* sensor, float value, uint32_t ts) {
   }
 }
 
-void appendGranHistory(float r2, float eqML, float endpointPH, bool usedGran, float confidence, float khGran, float khEndpoint, float probeNoiseMv, int phReversals, float dropUL, float titrationRPM, float khCI, uint32_t ts, float startPH, float acidEff, float winLow, float winHigh) {
+void appendGranHistory(float r2, float eqML, float endpointPH, bool usedGran, float confidence, float khGran, float khEndpoint, float probeNoiseMv, int phReversals, float dropUL, float titrationRPM, float khCI, uint32_t ts, float startPH, float acidEff, float winLow, float winHigh, float slopeRatio) {
   const char* filename = "/history/gran.csv";
 
   if (!LittleFS.exists("/history")) {
@@ -1371,14 +1371,16 @@ void appendGranHistory(float r2, float eqML, float endpointPH, bool usedGran, fl
   File f = LittleFS.open(filename, "a");
   if (f) {
     // Columns 16/17 (winLow/winHigh): the pH window the adaptive Gran selection
-    // chose — needed to monitor window-selection jitter across runs
-    f.printf("%u,%.5f,%.3f,%.2f,%d,%.2f,%.2f,%.2f,%.2f,%d,%.1f,%.1f,%.3f,%.2f,%.1f,%.2f,%.2f\n", ts, r2, eqML, endpointPH, usedGran ? 1 : 0, confidence,
+    // chose — needed to monitor window-selection jitter across runs.
+    // Column 18 (slopeRatio): Gran slope ÷ HCl molarity (healthy ≈0.56) —
+    // acid-delivery health per run (stall/air detection).
+    f.printf("%u,%.5f,%.3f,%.2f,%d,%.2f,%.2f,%.2f,%.2f,%d,%.1f,%.1f,%.3f,%.2f,%.1f,%.2f,%.2f,%.3f\n", ts, r2, eqML, endpointPH, usedGran ? 1 : 0, confidence,
              isnan(khGran) ? 0.0f : khGran, isnan(khEndpoint) ? 0.0f : khEndpoint,
              isnan(probeNoiseMv) ? 0.0f : probeNoiseMv, phReversals, dropUL, titrationRPM,
              isnan(khCI) ? 0.0f : khCI,
              isnan(startPH) ? 0.0f : startPH,
              isnan(acidEff) ? 0.0f : acidEff,
-             winLow, winHigh);
+             winLow, winHigh, slopeRatio);
     f.close();
   } else {
     Serial.println("Warning: failed to append to gran.csv");
@@ -1973,7 +1975,7 @@ void setupWebServer() {
               n = snprintf(b, maxLen, "\"measurement\":{\"available\":false},");
             } else {
               const KHResult& r = lastKHResult;
-              char sv[16],sg[16],se[16],sp[16],sh[16],sr[16],ep[16],co[16],cv[16];
+              char sv[16],sg[16],se[16],sp[16],sh[16],sr[16],ep[16],co[16],cv[16],sl[16];
               diagFloat(sv, 16, r.khValue, 2);
               diagFloat(sg, 16, r.khGran, 2);
               diagFloat(se, 16, r.khEndpoint, 2);
@@ -1983,6 +1985,7 @@ void setupWebServer() {
               diagFloat(ep, 16, r.endpointPH, 2);
               diagFloat(co, 16, r.confidence, 2);
               diagFloat(cv, 16, r.crossValDiff, 2);
+              diagFloat(sl, 16, r.granSlopeRatio, 3);
               n = snprintf(b, maxLen,
                 "\"measurement\":{\"available\":true,"
                 "\"timestamp\":%u,"
@@ -1992,12 +1995,13 @@ void setupWebServer() {
                 "\"used_gran\":%s,\"confidence\":%s,"
                 "\"data_points\":%d,\"stab_timeouts\":%d,"
                 "\"elapsed_sec\":%lu,\"cross_val_diff\":%s,"
+                "\"gran_slope_ratio\":%s,"
                 "\"rssi_min\":%d,\"rssi_max\":%d},",
                 lastMeasTimestamp,
                 sv, sg, se, sp, sh, sr, ep,
                 r.usedGran ? "true" : "false",
                 co, r.dataPointCount, r.stabTimeouts,
-                r.elapsedSec, cv,
+                r.elapsedSec, cv, sl,
                 (int)r.rssiMin, (int)r.rssiMax);
             }
             ds = 3;

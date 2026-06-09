@@ -111,6 +111,15 @@ static const float MIN_START_PH_DEFAULT = 7.5f;    // Minimum acceptable startin
 static const float CARRYOVER_RETRY_PH = 7.0f;      // Below this: hard error; above but below min: retry
 static const float POST_WASH_PH_THRESHOLD = 6.0f;  // Warn if post-wash pH is below this
 
+// Gran slope sanity band. Beyond the equivalence point dF/dV equals the
+// effective acid normality in the chamber: [HCl] × γ_H (≈0.72 in seawater)
+// × free-H⁺ fraction after HSO₄⁻ binding (≈0.78) ≈ 0.56 × [HCl]. A collapsed
+// ratio means part of the indicated acid never neutralized anything — motor
+// stall/lost steps, air in the titration line, or dilution by inflow.
+// Healthy device baseline measured 2026-06: 0.56.
+static const float GRAN_SLOPE_RATIO_MIN = 0.45f;
+static const float GRAN_SLOPE_RATIO_MAX = 0.75f;
+
 // Gran transformation endpoint detection
 static const float GRAN_REGION_PH       = 5.0f;  // Points below this used for Gran regression
 static const float GRAN_STOP_PH         = 3.5f;   // Stop titrating at this pH (standard practice: pH 3.0–3.5)
