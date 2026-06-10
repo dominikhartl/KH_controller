@@ -472,6 +472,7 @@ static const int PRECISION_TEST_COUNT = 3;
 static void measureKHPrecisionTest() {
   abortRequested = false;  // Clear any stale abort from a previous measurement
   float results[PRECISION_TEST_COUNT];
+  float resultHours[PRECISION_TEST_COUNT];  // completion time in hours since test start
   int validCount = 0;
   unsigned long testStart = millis();
 
@@ -497,6 +498,7 @@ static void measureKHPrecisionTest() {
 
     // Publish and log like a normal measurement
     publishKHResult(r);
+    resultHours[validCount] = (millis() - testStart) / 3600000.0f;
     results[validCount++] = r.khValue;
 
     snprintf(buf, sizeof(buf), "Precision test %d/%d: %.2f dKH", i + 1, PRECISION_TEST_COUNT, r.khValue);
@@ -523,6 +525,33 @@ static void measureKHPrecisionTest() {
   }
   float sd = sqrtf(ssq / (validCount - 1));
 
+  // Drift-corrected SD: back-to-back runs span 1-1.5h, during which the tank's
+  // real KH moves (diurnal consumption/dosing). Remove a linear trend so the
+  // residual SD reflects measurement repeatability, not tank dynamics.
+  // With n=3 this has 1 degree of freedom — treat it as indicative, not exact.
+  float sdDetrended = NAN;
+  float trendPerHour = NAN;
+  if (validCount >= 3) {
+    float mh = 0;
+    for (int i = 0; i < validCount; i++) mh += resultHours[i];
+    mh /= validCount;
+    float sxx = 0, sxy = 0;
+    for (int i = 0; i < validCount; i++) {
+      float dx = resultHours[i] - mh;
+      sxx += dx * dx;
+      sxy += dx * (results[i] - mean);
+    }
+    if (sxx > 1e-6f) {
+      trendPerHour = sxy / sxx;
+      float ssr = 0;
+      for (int i = 0; i < validCount; i++) {
+        float res = (results[i] - mean) - trendPerHour * (resultHours[i] - mh);
+        ssr += res * res;
+      }
+      sdDetrended = sqrtf(ssr / (validCount - 2));
+    }
+  }
+
   // Find min/max
   float vmin = results[0], vmax = results[0];
   for (int i = 1; i < validCount; i++) {
@@ -535,10 +564,18 @@ static void measureKHPrecisionTest() {
     "Precision: ±%.3f dKH SD (n=%d, mean=%.2f, range=%.2f–%.2f, %lum%lus)",
     sd, validCount, mean, vmin, vmax, elapsed / 60, elapsed % 60);
   publishMessage(buf);
+  if (!isnan(sdDetrended)) {
+    snprintf(buf, sizeof(buf),
+      "Drift-corrected: ±%.3f dKH SD (tank trend %+.2f dKH/h removed)",
+      sdDetrended, trendPerHour);
+    publishMessage(buf);
+  }
 
   // Store persistently
   uint32_t ts = (uint32_t)time(nullptr);
-  appendPrecisionHistory(ts, validCount, mean, sd, vmin, vmax, elapsed);
+  appendPrecisionHistory(ts, validCount, mean, sd, vmin, vmax, elapsed,
+                         isnan(sdDetrended) ? 0 : sdDetrended,
+                         isnan(trendPerHour) ? 0 : trendPerHour);
 }
 
 void calibrateSamplePump();               // forward declaration

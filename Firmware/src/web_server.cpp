@@ -1388,7 +1388,7 @@ void appendGranHistory(float r2, float eqML, float endpointPH, bool usedGran, fl
   clearFSCrashHint();
 }
 
-void appendPrecisionHistory(uint32_t ts, int n, float mean, float sd, float vmin, float vmax, unsigned long elapsedSec) {
+void appendPrecisionHistory(uint32_t ts, int n, float mean, float sd, float vmin, float vmax, unsigned long elapsedSec, float sdDetrended, float trendPerHour) {
   const char* filename = "/history/precision.csv";
 
   if (!LittleFS.exists("/history")) {
@@ -1423,7 +1423,8 @@ void appendPrecisionHistory(uint32_t ts, int n, float mean, float sd, float vmin
 
   File f = LittleFS.open(filename, "a");
   if (f) {
-    f.printf("%u,%d,%.2f,%.3f,%.2f,%.2f,%lu\n", ts, n, mean, sd, vmin, vmax, elapsedSec);
+    // Cols 8/9: linearly-detrended SD (tank drift removed) + trend in dKH/h
+    f.printf("%u,%d,%.2f,%.3f,%.2f,%.2f,%lu,%.3f,%.3f\n", ts, n, mean, sd, vmin, vmax, elapsedSec, sdDetrended, trendPerHour);
     f.close();
   }
 }

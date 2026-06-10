@@ -64,7 +64,7 @@ void broadcastGranData(float r2, float eqML, bool usedGran,
                        GranWindowResult* windows = nullptr, int nWindows = 0);
 void appendHistory(const char* sensor, float value, uint32_t ts);
 void appendGranHistory(float r2, float eqML, float endpointPH, bool usedGran, float confidence, float khGran, float khEndpoint, float probeNoiseMv, int phReversals, float dropUL, float titrationRPM, float khCI, uint32_t ts, float startPH = NAN, float acidEff = NAN, float winLow = 0, float winHigh = 0, float slopeRatio = 0);
-void appendPrecisionHistory(uint32_t ts, int n, float mean, float sd, float vmin, float vmax, unsigned long elapsedSec);
+void appendPrecisionHistory(uint32_t ts, int n, float mean, float sd, float vmin, float vmax, unsigned long elapsedSec, float sdDetrended = 0, float trendPerHour = 0);
 int getRecentKHValues(float* outValues, int maxCount);
 int getRecentKHValuesWithTime(uint32_t* outTimestamps, float* outValues, int maxCount);
 float computeKHSlope();
