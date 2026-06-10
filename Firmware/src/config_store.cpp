@@ -192,6 +192,12 @@ void ConfigStore::setKHEMAAlpha(float a)         { prefs.putFloat("kh_ema_a", cl
 float ConfigStore::getCrossValEMA()              { return prefs.getFloat("cv_ema", NAN); }
 void ConfigStore::setCrossValEMA(float v)        { prefs.putFloat("cv_ema", v); }
 
+// Gran slope-ratio baseline (tube-wear reference, re-captured after each pump cal)
+float ConfigStore::getSlopeRatioBase()           { return prefs.getFloat("sr_base", NAN); }
+void ConfigStore::setSlopeRatioBase(float v)     { prefs.putFloat("sr_base", v); }
+uint32_t ConfigStore::getSlopeRatioBaseTs()      { return prefs.getUInt("sr_base_ts", 0); }
+void ConfigStore::setSlopeRatioBaseTs(uint32_t ts) { prefs.putUInt("sr_base_ts", ts); }
+
 // Scavenge pass: extra stir+remove before the final sample fill (residual-volume consistency)
 bool ConfigStore::getScavengeEnabled()           { return prefs.getBool("scavenge", false); }
 void ConfigStore::setScavengeEnabled(bool v)     { prefs.putBool("scavenge", v); }

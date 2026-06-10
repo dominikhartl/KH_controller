@@ -159,6 +159,17 @@ static void publishKHResult(const KHResult& r) {
     configStore.setCrossValEMA(ema);
   }
 
+  // Tube-wear reference: the first healthy run after each titration pump
+  // calibration defines the slope-ratio baseline; later drift from it tracks
+  // how far the tube's real-titration delivery has moved from calibration.
+  if (!isnan(r.granSlopeRatio) && slopeOk) {
+    if (isnan(configStore.getSlopeRatioBase()) ||
+        configStore.getSlopeRatioBaseTs() < configStore.getTitrationCalTimestamp()) {
+      configStore.setSlopeRatioBase(r.granSlopeRatio);
+      configStore.setSlopeRatioBaseTs(ts);
+    }
+  }
+
   // Quality metrics
   { char mqBuf[16]; snprintf(mqBuf, sizeof(mqBuf), "%.5f", r.granR2);
     mqttManager.publish(MQgranR2, mqBuf, true); }
@@ -1157,8 +1168,15 @@ static void runDispenseTest(char mode) {
 static float computeConfidence(float granR2, bool usedGran, int nPoints,
                                 int stabTimeouts, const char* probeHealth,
                                 float crossValDiff, float probeNoiseMv,
-                                int phReversals, int granStepCount) {
+                                int phReversals, int granStepCount,
+                                float granSlopeRatio) {
   float score = 1.0f;
+  // Acid-delivery anomaly (Gran slope out of physical band): the KH value is
+  // built on a corrupted volume axis — heavy penalty
+  if (!isnan(granSlopeRatio) &&
+      (granSlopeRatio < GRAN_SLOPE_RATIO_MIN || granSlopeRatio > GRAN_SLOPE_RATIO_MAX)) {
+    score -= 0.3f;
+  }
   // Gran R² — continuous: R²=0.99 → -0.20, R²=0.999 → -0.02
   if (usedGran && granR2 > 0) {
     score -= (1.0f - granR2) * 20.0f;
@@ -1903,7 +1921,8 @@ KHResult measureKH() {
           result.confidence = computeConfidence(granR2, usedGran, nPoints,
                                                  result.stabTimeouts, getProbeHealth(),
                                                  crossValDiff, result.probeNoiseMv,
-                                                 phReversals, granStepCount);
+                                                 phReversals, granStepCount,
+                                                 result.granSlopeRatio);
           result.khCI = khCI;
 
           // KH value deferred to publishKHResult() after validation

@@ -390,18 +390,19 @@ static void processHistoryRequest(const PendingHistoryReq& req) {
       if (readCSVLine(f, line, sizeof(line)) == 0) continue;
       uint32_t ts;
       float r2, eq, eph, conf = 0, khG = 0, khE = 0, noiseMv = 0, ci = 0;
-      float dropUL = 0, titRPM = 0;
+      float dropUL = 0, titRPM = 0, sPH = 0, aEff = 0, wLo = 0, wHi = 0, slopeR = 0;
       int mth = 0, reversals = 0;
-      int parsed = sscanf(line, "%u,%f,%f,%f,%d,%f,%f,%f,%f,%d,%f,%f,%f",
+      int parsed = sscanf(line, "%u,%f,%f,%f,%d,%f,%f,%f,%f,%d,%f,%f,%f,%f,%f,%f,%f,%f",
                           &ts, &r2, &eq, &eph, &mth, &conf, &khG, &khE,
-                          &noiseMv, &reversals, &dropUL, &titRPM, &ci);
+                          &noiseMv, &reversals, &dropUL, &titRPM, &ci, &sPH, &aEff, &wLo, &wHi, &slopeR);
       if (parsed < 4) continue;
       if (ts < cutoff) continue;
-      // JSON field order matches existing browser expectations
+      // JSON field order matches existing browser expectations; index 11 = slope ratio
       JsonArray pt = dataArr.add<JsonArray>();
       pt.add(ts); pt.add(r2); pt.add(eq); pt.add(eph);
       pt.add(mth); pt.add(khG); pt.add(khE);
       pt.add(noiseMv); pt.add(reversals); pt.add(conf); pt.add(ci);
+      pt.add(parsed >= 18 ? slopeR : 0);
     }
   } else {
     // KH/pH CSV: timestamp,value
@@ -964,6 +965,16 @@ void broadcastState() {
     if (avgNoise > 0) probe["noise"] = serialized(String(avgNoise, 1));
   }
   probe["health"] = getProbeHealth();
+  // Tube state: last run's Gran slope ratio vs post-calibration baseline.
+  // Drift = real-titration delivery diverging from calibration = tube wear.
+  if (hasLastKHResult && !isnan(lastKHResult.granSlopeRatio)) {
+    probe["tubeRatio"] = serialized(String(lastKHResult.granSlopeRatio, 3));
+    float base = configStore.getSlopeRatioBase();
+    if (!isnan(base) && base > 0) {
+      probe["tubeBase"] = serialized(String(base, 3));
+      probe["tubeDriftPct"] = serialized(String((lastKHResult.granSlopeRatio / base - 1.0f) * 100.0f, 1));
+    }
+  }
   uint32_t calTs = configStore.getCalTimestamp();
   if (calTs > 0) {
     time_t now = time(nullptr);

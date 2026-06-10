@@ -91,6 +91,13 @@ public:
   float getCrossValEMA();
   void setCrossValEMA(float v);
 
+  // Gran slope-ratio baseline: captured on the first healthy run after each
+  // titration pump calibration; drift from it indicates tube wear (default NAN)
+  float getSlopeRatioBase();
+  void setSlopeRatioBase(float v);
+  uint32_t getSlopeRatioBaseTs();
+  void setSlopeRatioBaseTs(uint32_t ts);
+
   // Scavenge pass before the final sample fill (default false)
   bool getScavengeEnabled();
   void setScavengeEnabled(bool v);

@@ -387,10 +387,15 @@
           <span class="probe-label">Cal mV (4/7/10)</span>
           <span class="probe-value" id="probe-cal-v">--</span>
         </div>
+        <div class="probe-item">
+          <span class="probe-label">Tube (Gran slope)</span>
+          <span class="probe-value" id="probe-tube">--</span>
+        </div>
       </div>
       <div class="probe-charts">
         <div class="probe-chart-container"><canvas id="chart-efficiency"></canvas></div>
         <div class="probe-chart-container"><canvas id="chart-noise"></canvas></div>
+        <div class="probe-chart-container"><canvas id="chart-slope"></canvas></div>
       </div>
     </div>
 
@@ -456,6 +461,6 @@
   </footer>
 
   <script src="chart.min.js?v=3"></script>
-  <script src="app.js?v=53"></script>
+  <script src="app.js?v=54"></script>
 </body>
 </html>

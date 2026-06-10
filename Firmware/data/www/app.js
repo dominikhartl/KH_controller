@@ -555,6 +555,23 @@
       calVEl.innerHTML = fmt(p.v4) + ' / ' + fmt(p.v7) + ' / ' + fmt(p.v10) + ' <small>mV</small>';
     }
 
+    // Tube state from Gran slope ratio: value + drift vs post-calibration baseline
+    var tubeEl = document.getElementById('probe-tube');
+    if (tubeEl) {
+      if (p.tubeRatio != null && !isNaN(p.tubeRatio)) {
+        var t = p.tubeRatio.toFixed(2);
+        if (p.tubeDriftPct != null && !isNaN(p.tubeDriftPct)) {
+          t += ' <small>(' + (p.tubeDriftPct >= 0 ? '+' : '') + p.tubeDriftPct.toFixed(1) + '% vs base)</small>';
+        }
+        tubeEl.innerHTML = t;
+        var drift = Math.abs(p.tubeDriftPct || 0);
+        tubeEl.style.color = (p.tubeRatio < 0.8 || p.tubeRatio > 1.3) ? '#ff453a'
+                           : (drift > 5) ? '#ff9f0a' : '';
+      } else {
+        tubeEl.textContent = '--';
+      }
+    }
+
     // pH calibration mV per column
     var fmv = function(v) { return (isNaN(v) || v === 0) ? '--' : v.toFixed(0) + ' mV'; };
     var mv4 = document.getElementById('cal-mv-4');
@@ -589,6 +606,7 @@
 
     // Noise trend chart (from gran history data)
     renderNoiseTrend();
+    renderSlopeTrend();
   }
 
   function updateEZOUI(cfg) {
@@ -646,6 +664,28 @@
     noiseChart.options.scales.x.min = data[0][0];
     noiseChart.options.scales.x.max = data[data.length - 1][0];
     noiseChart.update();
+  }
+
+  // Gran slope ratio per run (index 11): in-situ acid-delivery gauge.
+  // Stable = healthy tube; drift from the post-calibration baseline = wear;
+  // outside 0.80-1.30 = delivery anomaly (stall/air).
+  function renderSlopeTrend() {
+    if (!slopeChart) return;
+    if (!granHistoryData || granHistoryData.length < 1) return;
+    var data = [];
+    for (var i = 0; i < granHistoryData.length; i++) {
+      var sr = granHistoryData[i][11];
+      if (sr > 0) data.push([granHistoryData[i][0], sr]);
+    }
+    if (data.length === 0) return;
+    slopeChart.data.datasets[0].data = data.map(function(e) { return {x: e[0], y: e[1]}; });
+    var last = data[data.length - 1][1];
+    var sColor = (last >= 0.8 && last <= 1.3) ? '#30d158' : '#ff453a';
+    slopeChart.data.datasets[0].borderColor = sColor;
+    slopeChart.data.datasets[0].pointBackgroundColor = sColor;
+    slopeChart.options.scales.x.min = data[0][0];
+    slopeChart.options.scales.x.max = data[data.length - 1][0];
+    slopeChart.update();
   }
 
   function updateLivePH(d) {
@@ -725,6 +765,7 @@
       updateGranHistChart();
       renderKHChart(); // gran data used for score coloring
       renderNoiseTrend();
+      renderSlopeTrend();
       return;
     }
     if (d.sensor === 'precision') {
@@ -920,7 +961,7 @@
   }
 
   // --- Charts ---
-  var khChart, phChart, liveChart, granChart, granHistChart, effChart, noiseChart, precisionChart;
+  var khChart, phChart, liveChart, granChart, granHistChart, effChart, noiseChart, precisionChart, slopeChart;
   var sparkKhChart, sparkPhChart;     // hero-card mini charts
   var phHistoryData = null;            // last fetched pH history (matches chart range)
   var sparkKhData = null;              // dedicated 7-day window for hero KH spark
@@ -1052,6 +1093,15 @@
       data: { datasets: [{ data: [], borderColor: '#30d158', borderWidth: 2, pointRadius: 3, pointBackgroundColor: '#30d158', showLine: true, tension: 0.1 }] },
       options: probeChartOpts('Probe Noise', 'mV')
     });
+
+    var slopeCanvas = document.getElementById('chart-slope');
+    if (slopeCanvas) {
+      slopeChart = new Chart(slopeCanvas, {
+        type: 'scatter',
+        data: { datasets: [{ data: [], borderColor: '#30d158', borderWidth: 2, pointRadius: 3, pointBackgroundColor: '#30d158', showLine: true, tension: 0.1 }] },
+        options: probeChartOpts('Gran Slope Ratio (tube state)', '')
+      });
+    }
 
     var precCanvas = document.getElementById('precision-chart');
     if (precCanvas) {
