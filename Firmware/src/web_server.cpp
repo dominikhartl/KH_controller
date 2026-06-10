@@ -693,7 +693,7 @@ void calibratePH(int bufferPH) {
     float prevCalTemp = configStore.getCalTempC();
     if (configStore.getCalTimestamp() > 0 && fabsf(calTemp - prevCalTemp) > 1.0f) {
       char tw[96];
-      snprintf(tw, sizeof(tw), "Warning: cal temp %.1f°C differs from previous %.1f°C — calibrate all buffers in one session",
+      snprintf(tw, sizeof(tw), "Warning: cal temp %.1fC differs from previous %.1fC - calibrate all buffers in one session",
                calTemp, prevCalTemp);
       publishError(tw);
     }
@@ -1154,7 +1154,8 @@ void broadcastMessage(const char* msg) {
   JsonDocument doc;
   doc["type"] = "msg";
   doc["text"] = msg;
-  char buf[128];
+  // 256: a truncated multi-byte char makes an invalid-UTF8 WS frame (1007)
+  char buf[256];
   serializeJson(doc, buf, sizeof(buf));
   safeTextAll(buf);
 }
@@ -1166,7 +1167,7 @@ void broadcastError(const char* msg) {
   JsonDocument doc;
   doc["type"] = "error";
   doc["text"] = msg;
-  char buf[128];
+  char buf[256];
   serializeJson(doc, buf, sizeof(buf));
   safeTextAll(buf);
 }

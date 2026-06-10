@@ -1094,11 +1094,13 @@ static void runDispenseTest(char mode) {
   float unitsPerUL = calU / (titV * 1000.0f);
   float expectedML = (float)DISPENSE_TEST_UNITS / unitsPerUL / 1000.0f;
 
-  const char* label = (mode == 'X') ? "fast mode"
-                    : (mode == 'Y') ? "Gran bursts, 200ms spacing"
-                    :                 "Gran bursts, 7s spacing (realistic)";
+  // Labels and messages stay short + ASCII: broadcastMessage serializes into a
+  // bounded buffer and the activity log stores 95 chars — a multi-byte char
+  // truncated mid-sequence produces an invalid WS text frame (closes strict
+  // clients with 1007).
+  const char* label = (mode == 'X') ? "fast" : (mode == 'Y') ? "gran-200ms" : "gran-7s";
   char buf[128];
-  snprintf(buf, sizeof(buf), "Dispense test: %d units as %s (expect ~%.3f mL)",
+  snprintf(buf, sizeof(buf), "Dispense test: %d units, %s mode (expect ~%.3f mL)",
            DISPENSE_TEST_UNITS, label, expectedML);
   publishMessage(buf);
 
@@ -1143,7 +1145,7 @@ static void runDispenseTest(char mode) {
     snprintf(buf, sizeof(buf), "Dispense test aborted at %d units", dispensed);
     publishMessage(buf);
   } else {
-    snprintf(buf, sizeof(buf), "Dispense test done: %d units (%s) — weigh; calibration predicts %.3f mL",
+    snprintf(buf, sizeof(buf), "Dispense test done: %d units (%s), cal predicts %.3f mL",
              dispensed, label, expectedML);
     publishMessage(buf);
   }
@@ -1799,7 +1801,7 @@ KHResult measureKH() {
                 result.granSlopeRatio > GRAN_SLOPE_RATIO_MAX) {
               char sgBuf[128];
               snprintf(sgBuf, sizeof(sgBuf),
-                       "Warning: Gran slope ratio %.2f (healthy %.2f-%.2f) — acid delivery anomaly (stall/air/siphon), KH suspect",
+                       "Warning: Gran slope ratio %.2f (healthy %.2f-%.2f) - acid delivery anomaly, KH suspect",
                        result.granSlopeRatio, GRAN_SLOPE_RATIO_MIN, GRAN_SLOPE_RATIO_MAX);
               publishError(sgBuf);
             }
@@ -1924,9 +1926,9 @@ KHResult measureKH() {
   if (isTMCDetected()) {
     uint32_t drv = getTitrateDrvStatus();
     if (drv & 0x2) {
-      publishError("Warning: titration driver OVERTEMP shutdown occurred — steps were lost");
+      publishError("Warning: titration driver OVERTEMP shutdown - steps were lost");
     } else if (drv & 0x1) {
-      publishError("Warning: titration driver overtemp warning — torque derating possible (stall risk)");
+      publishError("Warning: titration driver overtemp - torque derating (stall risk)");
     }
   }
 
