@@ -829,6 +829,18 @@ void executeCommand(const char* cmd) {
     // Titration pump diagnostics only
     queueCommand('C');
     return;
+  } else if (strcmp(cmd, "dispfast") == 0) {
+    // Single-mode dispense test: fast-phase replica (gravimetric)
+    queueCommand('X');
+    return;
+  } else if (strcmp(cmd, "dispgran") == 0) {
+    // Single-mode dispense test: Gran bursts, 200ms spacing
+    queueCommand('Y');
+    return;
+  } else if (strcmp(cmd, "dispgranslow") == 0) {
+    // Single-mode dispense test: Gran bursts, realistic 7s spacing
+    queueCommand('Z');
+    return;
   } else if (strcmp(cmd, "H") == 0) {
     // Defer hardware diagnostics to loopTask — runs ~90-120s
     queueCommand('H');

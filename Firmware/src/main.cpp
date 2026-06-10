@@ -581,6 +581,7 @@ static void measureKHPrecisionTest() {
 void calibrateSamplePump();               // forward declaration
 
 static void runMotorDiagnostic(char mode);
+static void runDispenseTest(char mode);
 
 void processPendingCommand() {
   char cmd = pendingCmd.load(std::memory_order_acquire);
@@ -790,6 +791,11 @@ void processPendingCommand() {
     case 'P':
       measureKHPrecisionTest();
       broadcastState();
+      break;
+    case 'X':  // dispense test: fast mode
+    case 'Y':  // dispense test: Gran bursts 200ms
+    case 'Z':  // dispense test: Gran bursts 7s (realistic)
+      runDispenseTest(cmd);
       break;
   }
 }
@@ -1066,6 +1072,82 @@ void calibrateTitrationPump() {
   configStore.setTitrationCalTimestamp((uint32_t)time(nullptr));
   publishMessage("Pump calibration done");
   broadcastProgress(100);
+}
+
+// --- Single-mode dispense test ---
+// Dispenses a fixed quantity using exactly ONE dosing mode so each mode can be
+// weighed separately and compared against the blended pump calibration (which
+// mixes fast/medium/Gran phases in proportions a real titration doesn't use).
+// Discriminates speed-dependent slip (fast vs Gran-200ms) from dwell-time
+// effects like in-line bubble growth (Gran-200ms vs Gran-realistic-7s).
+// 7500 units ≈ 4.9 mL at current calibration → ±5 mg scale = ±0.1%.
+static const int DISPENSE_TEST_UNITS = 7500;
+
+static void runDispenseTest(char mode) {
+  abortRequested = false;
+  float calU = (float)configStore.getCalUnits();
+  float titV = configStore.getTitrationVolume();
+  if (calU <= 0 || titV <= 0) {
+    publishError("Error: invalid pump calibration for dispense test");
+    return;
+  }
+  float unitsPerUL = calU / (titV * 1000.0f);
+  float expectedML = (float)DISPENSE_TEST_UNITS / unitsPerUL / 1000.0f;
+
+  const char* label = (mode == 'X') ? "fast mode"
+                    : (mode == 'Y') ? "Gran bursts, 200ms spacing"
+                    :                 "Gran bursts, 7s spacing (realistic)";
+  char buf[128];
+  snprintf(buf, sizeof(buf), "Dispense test: %d units as %s (expect ~%.3f mL)",
+           DISPENSE_TEST_UNITS, label, expectedML);
+  publishMessage(buf);
+
+  int dispensed = 0;
+  bool ok = true;
+  if (mode == 'X') {
+    // Fast-phase replica: full batches at fast RPM, 200ms apart
+    int batch = max(20, (int)round(configStore.getFastStepUL() * unitsPerUL));
+    float rpm = configStore.getFastPhaseRPM();
+    while (dispensed < DISPENSE_TEST_UNITS && ok && !abortRequested) {
+      int step = min(batch, DISPENSE_TEST_UNITS - dispensed);
+      ok = titrate(step, rpm);
+      if (ok) dispensed += step;
+      delay(TITRATION_MIX_DELAY_FAST_MS);
+      measurementYield();
+    }
+  } else {
+    // Gran replica: drop-sized bursts at burst RPM/accel
+    int step = max(2, (int)round(configStore.getDropVolumeUL() * unitsPerUL));
+    float rpm = configStore.getGranBurstRPM();
+    uint32_t accel = configStore.getGranBurstAccel();
+    int pauseMs = (mode == 'Y') ? 200 : 7000;
+    while (dispensed < DISPENSE_TEST_UNITS && ok && !abortRequested) {
+      int s = min(step, DISPENSE_TEST_UNITS - dispensed);
+      ok = titrate(s, rpm, false, accel);
+      if (ok) dispensed += s;
+      unsigned long pauseEnd = millis() + pauseMs;
+      while (millis() < pauseEnd && !abortRequested) {
+        delay(100);
+        esp_task_wdt_reset();
+        if (pauseMs > 1000) measurementYield();
+      }
+    }
+  }
+  if (dispensed > 0) subtractHCl(dispensed);
+  digitalWrite(EN_PIN2, HIGH);
+
+  if (!ok) {
+    publishError("Error: titration pump timeout during dispense test");
+  } else if (abortRequested) {
+    abortRequested = false;
+    snprintf(buf, sizeof(buf), "Dispense test aborted at %d units", dispensed);
+    publishMessage(buf);
+  } else {
+    snprintf(buf, sizeof(buf), "Dispense test done: %d units (%s) — weigh; calibration predicts %.3f mL",
+             dispensed, label, expectedML);
+    publishMessage(buf);
+  }
+  broadcastState();
 }
 
 // --- Measurement confidence score ---
