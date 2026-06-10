@@ -31,6 +31,9 @@ bool initTMCDrivers() {
   if (sampleVer == 0x21 && titrateVer == 0x21) {
     configureDriver(sampleDriver, TMC_SAMPLE_RMS_MA);
     configureDriver(titrateDriver, TMC_TITRATE_RMS_MA);
+    // Pin titrate hold current at ~440 mA: run current is raised for burst
+    // torque, but standstill heating (the heat-soak driver) must not rise
+    titrateDriver->rms_current(TMC_TITRATE_RMS_MA, TMC_TITRATE_HOLD_MULT);
     sampleDriver->en_spreadCycle(configStore.getSampleSpreadCycle());
     titrateDriver->en_spreadCycle(configStore.getTitrateSpreadCycle());
     tmcDetected = true;

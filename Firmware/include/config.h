@@ -191,7 +191,11 @@ static const float ADS_EMA_ALPHA  = 0.3f;      // EMA smoothing factor (0.3 = ~3
 #define TMC_SAMPLE_ADDR     0b00    // MS1=LOW, MS2=LOW → address 0
 #define TMC_TITRATE_ADDR    0b01    // MS1=HIGH, MS2=LOW → address 1
 static const int TMC_SAMPLE_RMS_MA  = 900;   // Sample pump RMS current (mA)
-static const int TMC_TITRATE_RMS_MA = 900;   // Titration pump RMS current (mA)
+// Titration: 1100 mA for stall margin on the higher-torque fresh tube (2026-06:
+// stalled at 150rpm/150k during measurements at 900 mA). Motor is a 1.2 A-class
+// 42-stepper; hold is pinned via TMC_TITRATE_HOLD_MULT so idle heat is unchanged.
+static const int TMC_TITRATE_RMS_MA = 1100;
+static const float TMC_TITRATE_HOLD_MULT = 0.4f;  // 440 mA hold ≈ previous 450
 static const float TMC_R_SENSE      = 0.11f; // Current sense resistor (ohms)
 static const int TMC_MICROSTEPS     = 8;     // Must match STEPS_PER_REVOLUTION / 200
 
