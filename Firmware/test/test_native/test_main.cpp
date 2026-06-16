@@ -6,6 +6,7 @@ extern void run_interpolate_tests(void);
 extern void run_buffer_tests(void);
 extern void run_volume_tests(void);
 extern void run_scheduler_tests(void);
+extern void run_titration_program_tests(void);
 
 // Test helper
 extern "C" void testResetConfig(void);
@@ -23,5 +24,6 @@ int main(int argc, char** argv) {
   run_buffer_tests();
   run_volume_tests();
   run_scheduler_tests();
+  run_titration_program_tests();
   return UNITY_END();
 }

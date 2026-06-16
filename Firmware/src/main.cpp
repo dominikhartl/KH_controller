@@ -21,6 +21,8 @@
 #include "temperature.h"
 #include "tmc_driver.h"
 #include "hw_diagnostics.h"
+#include "titration_program.h"
+#include "default_titration_program.h"
 
 // Device name (loaded from NVS at boot, used by mDNS, MQTT, HA, OTA, web UI)
 char deviceName[21] = "KHpro";
@@ -125,6 +127,25 @@ static void checkBootButton();
 void subtractHCl(int unitsUsed);
 int runBurstFill(bool &ok);
 
+// --- Titration step program (recorder + calibration replay) ---
+// Every titrate() call in measureKH is logged here as {units, mode, dwellMs}.
+// On a successful measurement the program is persisted to LittleFS; titration-pump
+// calibration replays it verbatim so the units->mL factor is produced under the same
+// fast/gran mode-mix the device actually uses. See docs/superpowers/specs/.
+// Heap-allocated once at boot (DRAM BSS is tight); null = recording disabled.
+static TitrationStep* g_titrProgram = nullptr;
+static int  g_titrProgramLen = 0;
+static bool g_titrProgramTrunc = false;
+
+static inline void recordTitrationStep(int stepUnits, uint8_t mode, uint32_t dwellMs) {
+  if (!g_titrProgram || g_titrProgramLen >= MAX_PROGRAM_STEPS) { g_titrProgramTrunc = true; return; }
+  if (stepUnits < 0) stepUnits = 0; else if (stepUnits > 0xFFFF) stepUnits = 0xFFFF;
+  g_titrProgram[g_titrProgramLen].units   = (uint16_t)stepUnits;
+  g_titrProgram[g_titrProgramLen].mode    = mode;
+  g_titrProgram[g_titrProgramLen].dwellMs = (uint16_t)(dwellMs > 0xFFFF ? 0xFFFF : dwellMs);
+  g_titrProgramLen++;
+}
+
 KHResult measureKH();
 void measureKHWithValidation();
 
@@ -146,6 +167,13 @@ static void publishKHResult(const KHResult& r) {
   appendHistory("kh", r.khValue, ts);
   appendHistory("ph", r.startPH, ts);
   appendGranHistory(r.granR2, r.hclUsed, r.endpointPH, r.usedGran, r.confidence, r.khGran, r.khEndpoint, r.probeNoiseMv, r.phReversals, configStore.getDropVolumeUL(), configStore.getGranBurstRPM(), r.khCI, ts, r.startPH, getAcidEfficiency(), r.granWinLow, r.granWinHigh, isnan(r.granSlopeRatio) ? 0 : r.granSlopeRatio);
+
+  // Persist this run's titration step program so pump calibration can replay it.
+  if (g_titrProgramLen > 0) {
+    if (g_titrProgramTrunc)
+      Serial.printf("Warning: titration program truncated at %d steps\n", g_titrProgramLen);
+    saveTitrationProgram(g_titrProgram, g_titrProgramLen);
+  }
 
   // Track the systematic Gran-vs-endpoint offset (chemistry: true eq pH ≈4.3
   // vs fixed 4.5 endpoint). isSuspect() compares each run's cross-val diff
@@ -995,38 +1023,57 @@ void calibrateSamplePump() {
 }
 
 void calibrateTitrationPump() {
-  int targetUnits = configStore.getCalUnits();
-  char buf[80];
-  snprintf(buf, sizeof(buf), "Calibrating titration pump (%d revolutions)", targetUnits / 100);
+  // Replay the recorded step program of the last successful measurement (or the
+  // embedded reference run if none is stored) so the dispensed volume reflects the
+  // exact fast/Gran mode-mix a real measurement uses — each mode delivers a slightly
+  // different µL/unit, so matching the mix is what keeps the units->mL factor
+  // unbiased. The user weighs the output and enters it as Titration Volume; cal_units
+  // is set to the replayed total so units->mL stays consistent.
+  int progLen = g_titrProgram ? loadTitrationProgram(g_titrProgram, MAX_PROGRAM_STEPS) : 0;
+  const TitrationStep* prog;
+  bool fromFile;
+  if (progLen > 0) {
+    prog = g_titrProgram;
+    fromFile = true;
+  } else {
+    prog = DEFAULT_TITRATION_PROGRAM;
+    progLen = DEFAULT_TITRATION_PROGRAM_LEN;
+    fromFile = false;
+  }
+  if (progLen <= 0) {  // defensive: the embedded default is never empty
+    publishError("Error: no titration program available to replay");
+    return;
+  }
+
+  long totalUnits = 0;
+  for (int i = 0; i < progLen; i++) totalUnits += prog[i].units;
+
+  // mL estimate uses the PRIOR calibration (captured before cal_units is overwritten).
+  float oldCalU = (float)configStore.getCalUnits();
+  float oldTitV = configStore.getTitrationVolume();
+  float mlEst = (oldCalU > 0) ? (float)totalUnits * oldTitV / oldCalU : 0.0f;
+
+  char buf[128];
+  snprintf(buf, sizeof(buf), "Calibrating: replaying %s (%d steps, %ld units, ~%.2f mL)",
+           fromFile ? "last measurement" : "embedded reference run",
+           progLen, totalUnits, mlEst);
   publishMessage(buf);
   broadcastProgress(0);
+  abortRequested = false;  // clear any stale abort before the replay
+
+  float fastRPM      = configStore.getFastPhaseRPM();
+  float granRPM      = configStore.getGranBurstRPM();
+  uint32_t granAccel = configStore.getGranBurstAccel();
 
   units = 0;
-  float calU_cal       = (float)configStore.getCalUnits();
-  float titV_cal       = configStore.getTitrationVolume();
-  float unitsPerUL_cal = (titV_cal > 0) ? calU_cal / (titV_cal * 1000.0f) : 1.0f;
-
-  // Match measurement's three-phase titration structure so the calibration
-  // volume reflects the same mix of fast/medium/Gran-speed dispensing.
-  const int FAST_STEP  = max(4, (int)round(configStore.getFastStepUL() * unitsPerUL_cal));
-  float fastRPM_cal    = configStore.getFastPhaseRPM();
-
-  // Medium phase: ~40 µL steps at fast RPM (matches measurement's medium zone)
-  const int MEDIUM_STEP       = max(4, (int)round(40.0f * unitsPerUL_cal));
-  const int MEDIUM_STEPS      = 20;
-  const int mediumPhaseUnits  = MEDIUM_STEPS * MEDIUM_STEP;
-
-  // Gran phase: drop-sized steps at Gran RPM (~100 steps, matches measurement's Gran zone)
-  const int GRAN_STEP         = max(2, (int)round(configStore.getDropVolumeUL() * unitsPerUL_cal));
-  const int GRAN_STEPS        = 100;
-  const int granPhaseUnits    = GRAN_STEPS * GRAN_STEP;
-
-  const int fastPhaseTarget   = max(0, targetUnits - mediumPhaseUnits - granPhaseUnits);
-
-  // --- Fast phase ---
-  while (units < fastPhaseTarget) {
-    int batch = min(FAST_STEP, fastPhaseTarget - units);
-    if (!titrate(batch, fastRPM_cal)) {
+  for (int i = 0; i < progLen; i++) {
+    int stepVol = prog[i].units;
+    bool gran = (prog[i].mode == TITR_MODE_GRAN);
+    // Same titrate() call shape per mode as measureKH: fast/medium at fast RPM
+    // (default accel), Gran at Gran RPM + Gran accel.
+    bool ok = gran ? titrate(stepVol, granRPM, false, granAccel)
+                   : titrate(stepVol, fastRPM);
+    if (!ok) {
       publishError("Error: titration pump timeout during calibration");
       if (units > 0) subtractHCl(units);
       units = 0;
@@ -1034,54 +1081,41 @@ void calibrateTitrationPump() {
       broadcastProgress(100);
       return;
     }
-    units += batch;
-    broadcastProgress((units * 99) / targetUnits);
-    delay(TITRATION_MIX_DELAY_FAST_MS);
-    ArduinoOTA.handle();
-  }
+    units += stepVol;
 
-  // --- Medium phase ---
-  int mediumTarget = fastPhaseTarget + mediumPhaseUnits;
-  while (units < mediumTarget && units < targetUnits) {
-    int step = min(MEDIUM_STEP, mediumTarget - units);
-    if (!titrate(step, fastRPM_cal)) {
-      publishError("Error: titration pump timeout during calibration");
+    // Reproduce the recorded dwell (full mix/stabilization timing), yielding for
+    // WiFi/MQTT/OTA and honoring abort — same cadence as measureKH's mix loops.
+    unsigned long dwellEnd = millis() + prog[i].dwellMs;
+    while (millis() < dwellEnd) {
+      if (abortRequested) break;
+      delay(250);
+      measurementYield();
+    }
+    broadcastProgress(totalUnits > 0 ? (int)((long)units * 99 / totalUnits) : 99);
+    ArduinoOTA.handle();
+
+    if (abortRequested) {
+      publishMessage("Calibration aborted");
       if (units > 0) subtractHCl(units);
       units = 0;
       digitalWrite(EN_PIN2, HIGH);
       broadcastProgress(100);
       return;
     }
-    units += step;
-    broadcastProgress((units * 99) / targetUnits);
-    delay(TITRATION_MIX_DELAY_MEDIUM_MS);
-    ArduinoOTA.handle();
   }
 
-  // --- Gran phase ---
-  float granRPM_cal      = configStore.getGranBurstRPM();
-  uint32_t granAccel_cal = configStore.getGranBurstAccel();
-  while (units < targetUnits) {
-    int step = min(GRAN_STEP, targetUnits - units);
-    if (!titrate(step, granRPM_cal, false, granAccel_cal)) {
-      publishError("Error: titration pump timeout during calibration");
-      if (units > 0) subtractHCl(units);
-      units = 0;
-      digitalWrite(EN_PIN2, HIGH);
-      broadcastProgress(100);
-      return;
-    }
-    units += step;
-    broadcastProgress((units * 99) / targetUnits);
-    delay(TITRATION_MIX_DELAY_FAST_MS);
-    ArduinoOTA.handle();
-  }
-
-  subtractHCl(targetUnits);
+  subtractHCl(units);
+  configStore.setCalUnits((int)totalUnits);   // weighed volume now maps to this count
   units = 0;
   digitalWrite(EN_PIN2, HIGH);
   configStore.setTitrationCalTimestamp((uint32_t)time(nullptr));
-  publishMessage("Pump calibration done");
+
+  snprintf(buf, sizeof(buf),
+           "Calibration done: dispensed %ld units (~%.2f mL). Weigh the acid and enter it as Titration Volume.",
+           totalUnits, mlEst);
+  publishMessage(buf);
+  if (!fromFile)
+    publishMessage("Note: no recorded measurement yet — replayed the embedded reference run. Run a measurement first for a run-specific calibration.");
   broadcastProgress(100);
 }
 
@@ -1242,6 +1276,10 @@ KHResult measureKH() {
   }
   isMeasuringKH = true;
   abortRequested = false;  // Clear any stale abort
+
+  // Start a fresh titration-step recording for this run (persisted on success).
+  g_titrProgramLen = 0;
+  g_titrProgramTrunc = false;
 
   // Read water temperature from sensor (or use default if no sensor)
   float waterTemp = getWaterTemperatureC();
@@ -1480,6 +1518,7 @@ KHResult measureKH() {
         errorflag = 1;
         break;
       }
+      unsigned long stepT0 = millis();  // dwell start: pump move complete
       units += batch;
       int mixDelay = TITRATION_MIX_DELAY_FAST_MS +
           max(0, fastBatchMax - batch) * 600 / fastBatchMax;
@@ -1519,6 +1558,8 @@ KHResult measureKH() {
           lastFastPH = pH;
         }
       }
+      // Record this fast step (size + non-pumping dwell) for calibration replay.
+      recordTitrationStep(batch, TITR_MODE_FAST, millis() - stepT0);
     }
 
     // --- Precise phase: adaptive steps with Gran transformation ---
@@ -1570,6 +1611,7 @@ KHResult measureKH() {
 
       int stepVol;
       uint8_t curPhase;
+      unsigned long stepT0 = 0;  // dwell start: set after each pump move
       if (pH > GRAN_REGION_PH) {
         // Medium zone (pH above Gran region): large steps, rough tracking only
         // No stabilization needed — we just need to detect when to enter Gran zone
@@ -1580,6 +1622,7 @@ KHResult measureKH() {
           errorflag = 1;
           break;
         }
+        stepT0 = millis();  // dwell start: pump move complete
         { unsigned long mixEnd = millis() + cachedMixDelay;
           while (millis() < mixEnd) {
             if (abortRequested) break;  // Don't make user wait full mix delay on abort
@@ -1598,6 +1641,7 @@ KHResult measureKH() {
           errorflag = 1;
           break;
         }
+        stepT0 = millis();  // dwell start: pump move complete
         // First Gran-zone dose: probe is still settling from the fast/medium
         // phase exit. Give it extra mix time so this first Gran data point is read
         // on a properly settled solution. (Noise capture is already off here.)
@@ -1616,6 +1660,8 @@ KHResult measureKH() {
         measurePHStabilized(isExternalADCActive() ? cachedGranReadings : 20);
       }
       units += stepVol;
+      // Record this precise step (size + mode + non-pumping dwell) for calibration replay.
+      recordTitrationStep(stepVol, curPhase, millis() - stepT0);
 
       // Store data points near the endpoint for Gran analysis and interpolation
       if (pH < DATA_STORE_PH && nPoints < MAX_TITRATION_POINTS) {
@@ -2041,6 +2087,11 @@ void onMqttMessage(char* topic, byte* message, unsigned int length) {
 void setup() {
   // Suppress Preferences "NOT_FOUND" errors for optional NVS keys (they return defaults)
   esp_log_level_set("Preferences", ESP_LOG_NONE);
+
+  // Titration-step recorder buffer (heap, not BSS — DRAM static segment is tight).
+  // If allocation fails, recording is disabled and calibration uses the embedded run.
+  g_titrProgram = (TitrationStep*)malloc(MAX_PROGRAM_STEPS * sizeof(TitrationStep));
+  if (!g_titrProgram) Serial.println("Warning: titration program buffer alloc failed");
 
   pinMode(EN_PIN1, OUTPUT);
   pinMode(STEP_PIN1, OUTPUT);

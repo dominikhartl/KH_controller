@@ -37,6 +37,13 @@ struct KHResult {
 void storeLastKHResult(const KHResult& r);
 struct TitrationPoint;
 void storeAnalysisPoints(const TitrationPoint* points, int count);
+
+// Titration step program (for calibration replay): persist the last successful
+// measurement's program, and load it back. loadTitrationProgram returns 0 if no
+// valid program is stored (caller falls back to the embedded default).
+struct TitrationStep;
+void saveTitrationProgram(const TitrationStep* steps, int len);
+int  loadTitrationProgram(TitrationStep* out, int maxSteps);
 void setupWebServer();
 void setupAPWebServer();
 void registerOTAUploadHandler();

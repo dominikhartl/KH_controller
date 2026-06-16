@@ -66,7 +66,6 @@ static const int   FILL_PULSE_COUNT = 5;      // Default phase-2 flush pulse cou
 // Titration tuning parameters
 static const int MOTOR_STEPS_PER_UNIT = 16;      // Motor steps per titration unit
 static const int TITRATION_MIX_DELAY_FAST_MS = 200;  // Mixing delay far from endpoint
-static const int TITRATION_MIX_DELAY_MEDIUM_MS = 1000; // Pump-calibration medium phase pacing
 static const int TITRATION_MIX_DELAY_GRAN_MS = 3500;   // Gran zone mixing (explicit stabilization follows)
 static const int MAX_TITRATION_UNITS = 50000;  // Absolute hard cap (user sets soft limit via max_acid_ml)
 static const int STIRRER_SPEED_PCT = 90;           // Stirrer duty cycle (%)

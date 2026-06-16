@@ -5,3 +5,4 @@
 // Keep this list in sync with `build_src_filter` in platformio.ini ([env:native]).
 #include "gran_analysis.cpp"
 #include "scheduler.cpp"
+#include "titration_program.cpp"

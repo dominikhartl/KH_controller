@@ -11,6 +11,7 @@
 #include "tmc_driver.h"
 #include "hw_diagnostics.h"
 #include "setup_page.h"
+#include "titration_program.h"
 #include <ArduinoJson.h>
 #include <LittleFS.h>
 #include <Update.h>
@@ -1410,6 +1411,52 @@ void appendGranHistory(float r2, float eqML, float endpointPH, bool usedGran, fl
     Serial.println("Warning: failed to append to gran.csv");
   }
   clearFSCrashHint();
+}
+
+// --- Titration step program persistence (for calibration replay) ---
+// The serialize/parse scratch is malloc'd transiently (a few KB, called only at
+// measurement end / calibration start) — DRAM static segment is tight, so nothing
+// is held permanently.
+
+void saveTitrationProgram(const TitrationStep* steps, int len) {
+  if (len <= 0) return;
+  if (!LittleFS.exists("/history")) {
+    if (!LittleFS.mkdir("/history")) {
+      Serial.println("Error: failed to create /history for titration program");
+      return;
+    }
+  }
+  size_t cap = TITR_PROG_HEADER_BYTES + (size_t)len * TITR_STEP_WIRE_BYTES;
+  uint8_t* buf = (uint8_t*)malloc(cap);
+  if (!buf) { Serial.println("Warning: titration program buffer alloc failed"); return; }
+  size_t n = titrationProgramSerialize(buf, cap, steps, len, (uint32_t)time(nullptr));
+  if (n == 0) { free(buf); Serial.println("Warning: titration program serialize failed"); return; }
+  setFSCrashHint("saveTitrProg");
+  File f = LittleFS.open("/history/last_titration.prog", "w");
+  if (f) {
+    if (f.write(buf, n) != n) Serial.println("Warning: short write of titration program");
+    f.close();
+  } else {
+    Serial.println("Warning: failed to open last_titration.prog for write");
+  }
+  clearFSCrashHint();
+  free(buf);
+}
+
+int loadTitrationProgram(TitrationStep* out, int maxSteps) {
+  if (!LittleFS.exists("/history/last_titration.prog")) return 0;
+  File f = LittleFS.open("/history/last_titration.prog", "r");
+  if (!f) return 0;
+  size_t sz = f.size();
+  size_t cap = TITR_PROG_HEADER_BYTES + (size_t)maxSteps * TITR_STEP_WIRE_BYTES;
+  if (sz == 0 || sz > cap) { f.close(); return 0; }
+  uint8_t* buf = (uint8_t*)malloc(sz);
+  if (!buf) { f.close(); return 0; }
+  size_t rd = f.read(buf, sz);
+  f.close();
+  int c = (rd == sz) ? titrationProgramParse(buf, rd, out, maxSteps, nullptr) : -1;
+  free(buf);
+  return (c > 0) ? c : 0;
 }
 
 void appendPrecisionHistory(uint32_t ts, int n, float mean, float sd, float vmin, float vmax, unsigned long elapsedSec, float sdDetrended, float trendPerHour) {
